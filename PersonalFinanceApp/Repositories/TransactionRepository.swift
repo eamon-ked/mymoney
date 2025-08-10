@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 
+@MainActor
 class TransactionRepository: ObservableObject {
     private let localDB = LocalDatabaseManager.shared
     private let syncManager = SyncManager.shared
@@ -54,10 +55,8 @@ class TransactionRepository: ObservableObject {
             // Update account balance
             updateAccountBalance(for: transaction)
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
@@ -70,10 +69,11 @@ class TransactionRepository: ObservableObject {
             try localDB.save()
             loadTransactions()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Update account balance
+            updateAccountBalance(for: transaction)
+            
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
@@ -81,16 +81,14 @@ class TransactionRepository: ObservableObject {
     
     func deleteTransaction(_ transaction: Transaction) {
         do {
-            // Reverse account balance change
-            reverseAccountBalance(for: transaction)
-            
             try localDB.delete(transaction)
             loadTransactions()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Update account balance
+            updateAccountBalance(for: transaction)
+            
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }

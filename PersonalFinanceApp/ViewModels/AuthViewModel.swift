@@ -7,7 +7,9 @@
 
 import Foundation
 import Combine
+import Network
 
+@MainActor
 class AuthViewModel: ObservableObject {
     @Published var isAuthenticated = false
     @Published var isLoading = false
@@ -18,15 +20,28 @@ class AuthViewModel: ObservableObject {
     @Published var isSignUpMode = false
     
     private let supabaseManager = SupabaseManager.shared
+    private let syncManager = SyncManager.shared
     private var cancellables = Set<AnyCancellable>()
+    private var isOnline = true
     
     init() {
         supabaseManager.$isAuthenticated
             .assign(to: \.isAuthenticated, on: self)
             .store(in: &cancellables)
+
+        // Observe online status from SyncManager
+        syncManager.$isOnline
+            .sink { [weak self] online in self?.isOnline = online }
+            .store(in: &cancellables)
     }
     
     func signIn() async {
+        guard isOnline else {
+            await MainActor.run {
+                self.error = "You need to be online to sign in."
+            }
+            return
+        }
         guard !email.isEmpty, !password.isEmpty else {
             await MainActor.run {
                 self.error = "Please fill in all fields"

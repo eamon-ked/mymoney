@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UILaunchStoryboardName</key>
+    <string></string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Enable Face ID to sign in securely.</string>
+    <key>SUPABASE_URL</key>
+    <string>https://xpecaaphvvgsfjrtiawq.supabase.co</string>
+    <key>SUPABASE_ANON_KEY</key>
+    <string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwZWNhYXBodnZnc2ZqcnRpYXdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2Mzg0NTYsImV4cCI6MjA3MDIxNDQ1Nn0.Q64cwpza1A8CRKJOlN4CHYHVEPWPYZkcCdZQ8CwqLL8</string>
+</dict>
+</plist>
+

@@ -63,11 +63,14 @@ struct TransactionsView: View {
                         TransactionRowView(transaction: transaction)
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button("Delete", role: .destructive) {
-                                    repository.deleteTransaction(transaction)
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        repository.deleteTransaction(transaction)
+                                    }
                                 }
                             }
                     }
                 }
+                .animation(.default, value: filteredTransactions.map { $0.id })
                 .searchable(text: $searchText, prompt: "Search transactions...")
             }
             .navigationTitle("Transactions")
@@ -84,8 +87,14 @@ struct TransactionsView: View {
                     accountRepository: accountRepository,
                     categoryRepository: categoryRepository
                 )
+                .onAppear {
+                    // Ensure the latest accounts are available in the picker
+                    accountRepository.loadAccounts()
+                }
             }
             .refreshable {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
                 repository.loadTransactions()
             }
         }
@@ -158,7 +167,8 @@ struct TransactionRowView: View {
     private var amountString: String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
-        formatter.currencyCode = "USD"
+        let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
+        formatter.currencyCode = code.isEmpty ? "USD" : code
         
         let amount = formatter.string(from: transaction.amount as NSDecimalNumber) ?? "$0.00"
         
@@ -199,9 +209,12 @@ struct AddTransactionView: View {
     @State private var date = Date()
     @State private var tags: [String] = []
     @State private var newTag = ""
+    @State private var isRecurring = false
+    @State private var recurringFrequency = "Monthly"
     
     var availableCategories: [Category] {
-        categoryRepository.getCategoriesByType(selectedType == .transfer ? .expense : selectedType)
+        let categoryType: CategoryType = (selectedType == .income) ? .income : .expense
+        return categoryRepository.getCategoriesByType(categoryType)
     }
     
     var body: some View {
@@ -218,11 +231,25 @@ struct AddTransactionView: View {
                             Text(type.displayName).tag(type)
                         }
                     }
-                    .onChange(of: selectedType) { _ in
+                    .onChange(of: selectedType) { _, _ in
                         selectedCategory = nil
                     }
                     
                     DatePicker("Date", selection: $date, displayedComponents: .date)
+                }
+
+                Section("Recurring") {
+                    Toggle("Repeat", isOn: $isRecurring)
+                        .disabled(selectedType != .income)
+                    Picker("Frequency", selection: $recurringFrequency) {
+                        Text("Weekly").tag("Weekly")
+                        Text("Monthly").tag("Monthly")
+                        Text("Yearly").tag("Yearly")
+                    }
+                    .disabled(!isRecurring || selectedType != .income)
+                    Text("Tip: For salary, choose Income and enable Repeat.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 
                 Section("Account") {
@@ -338,6 +365,8 @@ struct AddTransactionView: View {
             transactionDescription: description,
             notes: notes.isEmpty ? nil : notes,
             transactionDate: date,
+            isRecurring: isRecurring && selectedType == .income,
+            recurringFrequency: (isRecurring && selectedType == .income) ? recurringFrequency : nil,
             tags: tags
         )
         

@@ -7,29 +7,40 @@
 
 import Foundation
 import Combine
+import Network
 
+@MainActor
 class SyncManager: ObservableObject {
     static let shared = SyncManager()
     
     @Published var isSyncing = false
     @Published var lastSyncDate: Date?
     @Published var syncError: String?
+    @Published var isOnline: Bool = true
     
     private let supabaseManager = SupabaseManager.shared
     private let localDB = LocalDatabaseManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     private let syncQueue = DispatchQueue(label: "sync.queue", qos: .background)
+    private let pathMonitor = NWPathMonitor()
     private var syncTimer: Timer?
+    private var pendingSyncWorkItem: DispatchWorkItem?
+    
+    // Performance optimizations
+    private var lastSyncAttempt: Date = Date.distantPast
+    private let minimumSyncInterval: TimeInterval = 30 // 30 seconds between syncs
+    private let syncDebounceInterval: TimeInterval = 2 // 2 seconds debounce
     
     private init() {
         setupPeriodicSync()
         loadLastSyncDate()
+        startNetworkMonitoring()
     }
     
     private func setupPeriodicSync() {
-        // Sync every 5 minutes when app is active
-        syncTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
+        // Sync every 10 minutes when app is active (reduced from 5 minutes)
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
             Task {
                 await self.performSync()
             }
@@ -41,13 +52,53 @@ class SyncManager: ObservableObject {
     }
     
     private func saveLastSyncDate() {
+        lastSyncDate = Date()
         UserDefaults.standard.set(lastSyncDate, forKey: "lastSyncDate")
+    }
+    
+    private func startNetworkMonitoring() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                let nowOnline = (path.status == .satisfied)
+                let wasOffline = (self?.isOnline == false)
+                self?.isOnline = nowOnline
+                // Auto-sync when coming back online, but only if we have pending changes
+                if nowOnline && wasOffline {
+                    await self?.performSyncIfNeeded()
+                }
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "network.monitor"))
     }
     
     // MARK: - Public Sync Methods
     
     func performSync() async {
+        await performSyncIfNeeded()
+    }
+    
+    private func performSyncIfNeeded() async {
+        // Check if we have pending changes first
+        let hasPendingChanges = await checkForPendingChanges()
+        guard hasPendingChanges else {
+            print("🔄 No pending changes, skipping sync")
+            return
+        }
+        
+        // Rate limiting
+        let timeSinceLastSync = Date().timeIntervalSince(lastSyncAttempt)
+        guard timeSinceLastSync >= minimumSyncInterval else {
+            print("🔄 Sync rate limited, last sync was \(Int(timeSinceLastSync))s ago")
+            return
+        }
+        
+        await performSyncInternal()
+    }
+    
+    private func performSyncInternal() async {
         guard supabaseManager.isAuthenticated else { return }
+        
+        lastSyncAttempt = Date()
         
         await MainActor.run {
             isSyncing = true
@@ -62,7 +113,6 @@ class SyncManager: ObservableObject {
             try await pullRemoteChanges()
             
             await MainActor.run {
-                self.lastSyncDate = Date()
                 self.saveLastSyncDate()
                 self.isSyncing = false
             }
@@ -75,7 +125,53 @@ class SyncManager: ObservableObject {
     }
     
     func forceSyncNow() async {
-        await performSync()
+        await performSyncInternal()
+    }
+    
+    // Called from UI when offline; will sync immediately if back online
+    func reconnectNow() async {
+        if isOnline {
+            await performSyncInternal()
+        }
+    }
+    
+    // Debounced sync for UI operations
+    func triggerSync() {
+        pendingSyncWorkItem?.cancel()
+        
+        let workItem = DispatchWorkItem {
+            Task {
+                await self.performSyncIfNeeded()
+            }
+        }
+        
+        pendingSyncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + syncDebounceInterval, execute: workItem)
+    }
+    
+    // MARK: - Check for Pending Changes
+    
+    private func checkForPendingChanges() async -> Bool {
+        do {
+            let pendingAccounts = try localDB.fetchPendingSyncAccounts()
+            let pendingTransactions = try localDB.fetchPendingSyncTransactions()
+            let pendingCategories = try localDB.fetchPendingSyncCategories()
+            let pendingGoals = try localDB.fetchPendingSyncGoals()
+            let pendingLoans = try localDB.fetchPendingSyncPrivateLoans()
+            
+            let hasPending = !pendingAccounts.isEmpty || 
+                           !pendingTransactions.isEmpty || 
+                           !pendingCategories.isEmpty || 
+                           !pendingGoals.isEmpty || 
+                           !pendingLoans.isEmpty
+            
+            print("🔍 Pending changes: accounts(\(pendingAccounts.count)), transactions(\(pendingTransactions.count)), categories(\(pendingCategories.count)), goals(\(pendingGoals.count)), loans(\(pendingLoans.count))")
+            
+            return hasPending
+        } catch {
+            print("❌ Error checking pending changes: \(error)")
+            return true // Assume there are changes if we can't check
+        }
     }
     
     // MARK: - Push Local Changes
@@ -296,25 +392,36 @@ class SyncManager: ObservableObject {
                   let type = CategoryType(rawValue: typeString) else {
                 continue
             }
-            
-            let newCategory = Category(
-                id: id,
-                userId: UUID(uuidString: categoryData["user_id"] as? String ?? ""),
-                name: name,
-                type: type,
-                color: categoryData["color"] as? String ?? "#007AFF",
-                icon: categoryData["icon"] as? String ?? "folder",
-                isDefault: categoryData["is_default"] as? Bool ?? false,
-                syncStatus: "synced",
-                lastSyncedAt: Date()
-            )
-            
-            if let createdAtString = categoryData["created_at"] as? String,
-               let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
-                newCategory.createdAt = createdAt
+            if let existing = try localDB.fetchCategory(by: id) {
+                existing.name = name
+                existing.type = type
+                existing.color = categoryData["color"] as? String ?? existing.color
+                existing.icon = categoryData["icon"] as? String ?? existing.icon
+                existing.isDefault = categoryData["is_default"] as? Bool ?? existing.isDefault
+                existing.syncStatus = "synced"
+                existing.lastSyncedAt = Date()
+                if let createdAtString = categoryData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    existing.createdAt = createdAt
+                }
+            } else {
+                let newCategory = Category(
+                    id: id,
+                    userId: UUID(uuidString: categoryData["user_id"] as? String ?? ""),
+                    name: name,
+                    type: type,
+                    color: categoryData["color"] as? String ?? "#007AFF",
+                    icon: categoryData["icon"] as? String ?? "folder",
+                    isDefault: categoryData["is_default"] as? Bool ?? false,
+                    syncStatus: "synced",
+                    lastSyncedAt: Date()
+                )
+                if let createdAtString = categoryData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    newCategory.createdAt = createdAt
+                }
+                try localDB.insert(newCategory)
             }
-            
-            try localDB.insert(newCategory)
         }
         
         try localDB.save()
@@ -335,38 +442,61 @@ class SyncManager: ObservableObject {
                 continue
             }
             
-            let newTransaction = Transaction(
-                id: id,
-                userId: UUID(uuidString: transactionData["user_id"] as? String ?? ""),
-                accountId: accountId,
-                categoryId: UUID(uuidString: transactionData["category_id"] as? String ?? ""),
-                amount: Decimal(amount),
-                type: type,
-                transactionDescription: description,
-                notes: transactionData["notes"] as? String,
-                isRecurring: transactionData["is_recurring"] as? Bool ?? false,
-                recurringFrequency: transactionData["recurring_frequency"] as? String,
-                tags: transactionData["tags"] as? [String] ?? [],
-                syncStatus: "synced",
-                lastSyncedAt: Date()
-            )
-            
-            if let transactionDateString = transactionData["transaction_date"] as? String,
-               let transactionDate = ISO8601DateFormatter().date(from: transactionDateString) {
-                newTransaction.transactionDate = transactionDate
+            if let existing = try localDB.fetchTransaction(by: id) {
+                existing.userId = UUID(uuidString: transactionData["user_id"] as? String ?? existing.userId?.uuidString ?? "")
+                existing.accountId = accountId
+                existing.categoryId = UUID(uuidString: transactionData["category_id"] as? String ?? existing.categoryId?.uuidString ?? "")
+                existing.amount = Decimal(amount)
+                existing.type = type
+                existing.transactionDescription = description
+                existing.notes = transactionData["notes"] as? String
+                existing.isRecurring = transactionData["is_recurring"] as? Bool ?? existing.isRecurring
+                existing.recurringFrequency = transactionData["recurring_frequency"] as? String
+                existing.tags = transactionData["tags"] as? [String] ?? existing.tags
+                existing.syncStatus = "synced"
+                existing.lastSyncedAt = Date()
+                if let transactionDateString = transactionData["transaction_date"] as? String,
+                   let transactionDate = ISO8601DateFormatter().date(from: transactionDateString) {
+                    existing.transactionDate = transactionDate
+                }
+                if let createdAtString = transactionData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    existing.createdAt = createdAt
+                }
+                if let updatedAtString = transactionData["updated_at"] as? String,
+                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                    existing.updatedAt = updatedAt
+                }
+            } else {
+                let newTransaction = Transaction(
+                    id: id,
+                    userId: UUID(uuidString: transactionData["user_id"] as? String ?? ""),
+                    accountId: accountId,
+                    categoryId: UUID(uuidString: transactionData["category_id"] as? String ?? ""),
+                    amount: Decimal(amount),
+                    type: type,
+                    transactionDescription: description,
+                    notes: transactionData["notes"] as? String,
+                    isRecurring: transactionData["is_recurring"] as? Bool ?? false,
+                    recurringFrequency: transactionData["recurring_frequency"] as? String,
+                    tags: transactionData["tags"] as? [String] ?? [],
+                    syncStatus: "synced",
+                    lastSyncedAt: Date()
+                )
+                if let transactionDateString = transactionData["transaction_date"] as? String,
+                   let transactionDate = ISO8601DateFormatter().date(from: transactionDateString) {
+                    newTransaction.transactionDate = transactionDate
+                }
+                if let createdAtString = transactionData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    newTransaction.createdAt = createdAt
+                }
+                if let updatedAtString = transactionData["updated_at"] as? String,
+                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                    newTransaction.updatedAt = updatedAt
+                }
+                try localDB.insert(newTransaction)
             }
-            
-            if let createdAtString = transactionData["created_at"] as? String,
-               let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
-                newTransaction.createdAt = createdAt
-            }
-            
-            if let updatedAtString = transactionData["updated_at"] as? String,
-               let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
-                newTransaction.updatedAt = updatedAt
-            }
-            
-            try localDB.insert(newTransaction)
         }
         
         try localDB.save()
@@ -383,36 +513,57 @@ class SyncManager: ObservableObject {
                 continue
             }
             
-            let newGoal = Goal(
-                id: id,
-                userId: UUID(uuidString: goalData["user_id"] as? String ?? ""),
-                title: title,
-                goalDescription: goalData["description"] as? String,
-                targetAmount: Decimal(targetAmount),
-                currentAmount: Decimal(goalData["current_amount"] as? Double ?? 0),
-                category: goalData["category"] as? String,
-                priority: goalData["priority"] as? String,
-                status: goalData["status"] as? String ?? "active",
-                syncStatus: "synced",
-                lastSyncedAt: Date()
-            )
-            
-            if let targetDateString = goalData["target_date"] as? String,
-               let targetDate = ISO8601DateFormatter().date(from: targetDateString) {
-                newGoal.targetDate = targetDate
+            if let existing = try localDB.fetchGoal(by: id) {
+                existing.userId = UUID(uuidString: goalData["user_id"] as? String ?? existing.userId?.uuidString ?? "")
+                existing.title = title
+                existing.goalDescription = goalData["description"] as? String
+                existing.targetAmount = Decimal(targetAmount)
+                existing.currentAmount = Decimal(goalData["current_amount"] as? Double ?? 0)
+                existing.category = goalData["category"] as? String
+                existing.priority = goalData["priority"] as? String
+                existing.status = goalData["status"] as? String ?? existing.status
+                existing.syncStatus = "synced"
+                existing.lastSyncedAt = Date()
+                if let targetDateString = goalData["target_date"] as? String,
+                   let targetDate = ISO8601DateFormatter().date(from: targetDateString) {
+                    existing.targetDate = targetDate
+                }
+                if let createdAtString = goalData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    existing.createdAt = createdAt
+                }
+                if let updatedAtString = goalData["updated_at"] as? String,
+                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                    existing.updatedAt = updatedAt
+                }
+            } else {
+                let newGoal = Goal(
+                    id: id,
+                    userId: UUID(uuidString: goalData["user_id"] as? String ?? ""),
+                    title: title,
+                    goalDescription: goalData["description"] as? String,
+                    targetAmount: Decimal(targetAmount),
+                    currentAmount: Decimal(goalData["current_amount"] as? Double ?? 0),
+                    category: goalData["category"] as? String,
+                    priority: goalData["priority"] as? String,
+                    status: goalData["status"] as? String ?? "active",
+                    syncStatus: "synced",
+                    lastSyncedAt: Date()
+                )
+                if let targetDateString = goalData["target_date"] as? String,
+                   let targetDate = ISO8601DateFormatter().date(from: targetDateString) {
+                    newGoal.targetDate = targetDate
+                }
+                if let createdAtString = goalData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    newGoal.createdAt = createdAt
+                }
+                if let updatedAtString = goalData["updated_at"] as? String,
+                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                    newGoal.updatedAt = updatedAt
+                }
+                try localDB.insert(newGoal)
             }
-            
-            if let createdAtString = goalData["created_at"] as? String,
-               let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
-                newGoal.createdAt = createdAt
-            }
-            
-            if let updatedAtString = goalData["updated_at"] as? String,
-               let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
-                newGoal.updatedAt = updatedAt
-            }
-            
-            try localDB.insert(newGoal)
         }
         
         try localDB.save()
@@ -432,47 +583,75 @@ class SyncManager: ObservableObject {
                 continue
             }
             
-            let newLoan = PrivateLoan(
-                id: id,
-                userId: UUID(uuidString: loanData["user_id"] as? String ?? ""),
-                loanName: loanName,
-                loanType: loanData["loan_type"] as? String,
-                lenderName: loanData["lender_name"] as? String,
-                originalAmount: Decimal(originalAmount),
-                remainingBalance: Decimal(remainingBalance),
-                interestRate: Decimal(interestRate),
-                monthlyPayment: Decimal(monthlyPayment),
-                status: loanData["status"] as? String ?? "active",
-                syncStatus: "synced",
-                lastSyncedAt: Date()
-            )
-            
-            if let startDateString = loanData["start_date"] as? String,
-               let startDate = ISO8601DateFormatter().date(from: startDateString) {
-                newLoan.startDate = startDate
+            if let existing = try localDB.fetchPrivateLoan(by: id) {
+                existing.userId = UUID(uuidString: loanData["user_id"] as? String ?? existing.userId?.uuidString ?? "")
+                existing.loanName = loanName
+                existing.loanType = loanData["loan_type"] as? String
+                existing.lenderName = loanData["lender_name"] as? String
+                existing.originalAmount = Decimal(originalAmount)
+                existing.remainingBalance = Decimal(remainingBalance)
+                existing.interestRate = Decimal(interestRate)
+                existing.monthlyPayment = Decimal(monthlyPayment)
+                existing.status = loanData["status"] as? String ?? existing.status
+                existing.syncStatus = "synced"
+                existing.lastSyncedAt = Date()
+                if let startDateString = loanData["start_date"] as? String,
+                   let startDate = ISO8601DateFormatter().date(from: startDateString) {
+                    existing.startDate = startDate
+                }
+                if let endDateString = loanData["end_date"] as? String,
+                   let endDate = ISO8601DateFormatter().date(from: endDateString) {
+                    existing.endDate = endDate
+                }
+                if let nextPaymentDateString = loanData["next_payment_date"] as? String,
+                   let nextPaymentDate = ISO8601DateFormatter().date(from: nextPaymentDateString) {
+                    existing.nextPaymentDate = nextPaymentDate
+                }
+                if let createdAtString = loanData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    existing.createdAt = createdAt
+                }
+                if let updatedAtString = loanData["updated_at"] as? String,
+                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                    existing.updatedAt = updatedAt
+                }
+            } else {
+                let newLoan = PrivateLoan(
+                    id: id,
+                    userId: UUID(uuidString: loanData["user_id"] as? String ?? ""),
+                    loanName: loanName,
+                    loanType: loanData["loan_type"] as? String,
+                    lenderName: loanData["lender_name"] as? String,
+                    originalAmount: Decimal(originalAmount),
+                    remainingBalance: Decimal(remainingBalance),
+                    interestRate: Decimal(interestRate),
+                    monthlyPayment: Decimal(monthlyPayment),
+                    status: loanData["status"] as? String ?? "active",
+                    syncStatus: "synced",
+                    lastSyncedAt: Date()
+                )
+                if let startDateString = loanData["start_date"] as? String,
+                   let startDate = ISO8601DateFormatter().date(from: startDateString) {
+                    newLoan.startDate = startDate
+                }
+                if let endDateString = loanData["end_date"] as? String,
+                   let endDate = ISO8601DateFormatter().date(from: endDateString) {
+                    newLoan.endDate = endDate
+                }
+                if let nextPaymentDateString = loanData["next_payment_date"] as? String,
+                   let nextPaymentDate = ISO8601DateFormatter().date(from: nextPaymentDateString) {
+                    newLoan.nextPaymentDate = nextPaymentDate
+                }
+                if let createdAtString = loanData["created_at"] as? String,
+                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                    newLoan.createdAt = createdAt
+                }
+                if let updatedAtString = loanData["updated_at"] as? String,
+                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                    newLoan.updatedAt = updatedAt
+                }
+                try localDB.insert(newLoan)
             }
-            
-            if let endDateString = loanData["end_date"] as? String,
-               let endDate = ISO8601DateFormatter().date(from: endDateString) {
-                newLoan.endDate = endDate
-            }
-            
-            if let nextPaymentDateString = loanData["next_payment_date"] as? String,
-               let nextPaymentDate = ISO8601DateFormatter().date(from: nextPaymentDateString) {
-                newLoan.nextPaymentDate = nextPaymentDate
-            }
-            
-            if let createdAtString = loanData["created_at"] as? String,
-               let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
-                newLoan.createdAt = createdAt
-            }
-            
-            if let updatedAtString = loanData["updated_at"] as? String,
-               let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
-                newLoan.updatedAt = updatedAt
-            }
-            
-            try localDB.insert(newLoan)
         }
         
         try localDB.save()

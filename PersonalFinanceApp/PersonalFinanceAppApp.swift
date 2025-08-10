@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import LocalAuthentication
 import SwiftData
 
 @main
@@ -31,7 +32,17 @@ struct PersonalFinanceAppApp: App {
     var body: some Scene {
         WindowGroup {
             MainTabView()
+                .task { await requestBiometricPermission() }
         }
         .modelContainer(sharedModelContainer)
+    }
+}
+
+@MainActor
+func requestBiometricPermission() async {
+    let context = LAContext()
+    var error: NSError?
+    if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+        _ = try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Enable Face ID / Touch ID sign-in")
     }
 }

@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 
+@MainActor
 class AccountRepository: ObservableObject {
     private let localDB = LocalDatabaseManager.shared
     private let syncManager = SyncManager.shared
@@ -38,10 +39,8 @@ class AccountRepository: ObservableObject {
             try localDB.insert(account)
             loadAccounts()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
@@ -54,10 +53,8 @@ class AccountRepository: ObservableObject {
             try localDB.save()
             loadAccounts()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
@@ -68,10 +65,8 @@ class AccountRepository: ObservableObject {
             try localDB.delete(account)
             loadAccounts()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }

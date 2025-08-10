@@ -21,6 +21,7 @@ struct AccountsView: View {
                 }
                 .onDelete(perform: deleteAccounts)
             }
+            .animation(.default, value: repository.accounts.map { $0.id })
             .navigationTitle("Accounts")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -33,6 +34,8 @@ struct AccountsView: View {
                 AddAccountView(repository: repository)
             }
             .refreshable {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
                 repository.loadAccounts()
             }
         }
@@ -247,7 +250,7 @@ extension AccountType {
     var iconName: String {
         switch self {
         case .checking: return "banknote"
-        case .savings: return "piggybank"
+        case .savings: return "piggy.bank"
         case .creditCard: return "creditcard"
         case .cash: return "dollarsign.circle"
         case .investment: return "chart.line.uptrend.xyaxis"
@@ -293,12 +296,13 @@ extension Color {
     }
 }
 
-private let currencyFormatter: NumberFormatter = {
+private var currencyFormatter: NumberFormatter {
     let formatter = NumberFormatter()
     formatter.numberStyle = .currency
-    formatter.currencyCode = "USD"
+    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
+    formatter.currencyCode = code.isEmpty ? "USD" : code
     return formatter
-}()
+}
 
 #Preview {
     AccountsView()

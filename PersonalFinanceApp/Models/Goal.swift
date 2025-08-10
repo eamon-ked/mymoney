@@ -28,7 +28,10 @@ final class Goal {
     var progress: Double {
         let target = Double(truncating: targetAmount as NSDecimalNumber)
         let current = Double(truncating: currentAmount as NSDecimalNumber)
-        return target > 0 ? min(current / target, 1.0) : 0.0
+        guard target.isFinite, current.isFinite, target > 0 else { return 0.0 }
+        let ratio = current / target
+        if !ratio.isFinite || ratio.isNaN { return 0.0 }
+        return min(max(ratio, 0.0), 1.0)
     }
     
     init(

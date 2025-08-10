@@ -8,6 +8,7 @@
 import Foundation
 import SwiftData
 
+@MainActor
 class LocalDatabaseManager: ObservableObject {
     static let shared = LocalDatabaseManager()
     
@@ -73,6 +74,34 @@ class LocalDatabaseManager: ObservableObject {
         )
         return try modelContext.fetch(descriptor).first
     }
+
+    func fetchTransaction(by id: UUID) throws -> Transaction? {
+        let descriptor = FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.id == id }
+        )
+        return try modelContext.fetch(descriptor).first
+    }
+
+    func fetchCategory(by id: UUID) throws -> Category? {
+        let descriptor = FetchDescriptor<Category>(
+            predicate: #Predicate { $0.id == id }
+        )
+        return try modelContext.fetch(descriptor).first
+    }
+
+    func fetchGoal(by id: UUID) throws -> Goal? {
+        let descriptor = FetchDescriptor<Goal>(
+            predicate: #Predicate { $0.id == id }
+        )
+        return try modelContext.fetch(descriptor).first
+    }
+
+    func fetchPrivateLoan(by id: UUID) throws -> PrivateLoan? {
+        let descriptor = FetchDescriptor<PrivateLoan>(
+            predicate: #Predicate { $0.id == id }
+        )
+        return try modelContext.fetch(descriptor).first
+    }
     
     func fetchPendingSyncAccounts() throws -> [Account] {
         let descriptor = FetchDescriptor<Account>(
@@ -80,77 +109,101 @@ class LocalDatabaseManager: ObservableObject {
         )
         return try modelContext.fetch(descriptor)
     }
+
+    // MARK: - User Profile Operations
+    func fetchUserProfiles() throws -> [UserProfile] {
+        let descriptor = FetchDescriptor<UserProfile>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor)
+    }
+
+    func fetchUserProfile() throws -> UserProfile? {
+        let descriptor = FetchDescriptor<UserProfile>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor).first
+    }
     
     // MARK: - Transaction Operations
     
     func fetchTransactions(limit: Int = 100) throws -> [Transaction] {
-        let descriptor = FetchDescriptor<Transaction>(
-            sortBy: [SortDescriptor(\.transactionDate, order: .reverse)],
-            fetchLimit: limit
+        var descriptor = FetchDescriptor<Transaction>(
+            sortBy: [SortDescriptor(\.transactionDate, order: .reverse)]
         )
+        descriptor.fetchLimit = limit
+        descriptor.fetchOffset = 0
         return try modelContext.fetch(descriptor)
     }
     
     func fetchTransactions(for accountId: UUID) throws -> [Transaction] {
-        let descriptor = FetchDescriptor<Transaction>(
+        var descriptor = FetchDescriptor<Transaction>(
             predicate: #Predicate { $0.accountId == accountId },
             sortBy: [SortDescriptor(\.transactionDate, order: .reverse)]
         )
+        descriptor.fetchLimit = 50 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
     func fetchPendingSyncTransactions() throws -> [Transaction] {
-        let descriptor = FetchDescriptor<Transaction>(
+        var descriptor = FetchDescriptor<Transaction>(
             predicate: #Predicate { $0.syncStatus == "pending" }
         )
+        descriptor.fetchLimit = 100 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
     // MARK: - Category Operations
     
     func fetchCategories() throws -> [Category] {
-        let descriptor = FetchDescriptor<Category>(
+        var descriptor = FetchDescriptor<Category>(
             sortBy: [SortDescriptor(\.name)]
         )
+        descriptor.fetchLimit = 200 // Reasonable limit for categories
         return try modelContext.fetch(descriptor)
     }
     
     func fetchPendingSyncCategories() throws -> [Category] {
-        let descriptor = FetchDescriptor<Category>(
+        var descriptor = FetchDescriptor<Category>(
             predicate: #Predicate { $0.syncStatus == "pending" }
         )
+        descriptor.fetchLimit = 50 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
     // MARK: - Goal Operations
     
     func fetchGoals() throws -> [Goal] {
-        let descriptor = FetchDescriptor<Goal>(
+        var descriptor = FetchDescriptor<Goal>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
+        descriptor.fetchLimit = 100 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
     func fetchPendingSyncGoals() throws -> [Goal] {
-        let descriptor = FetchDescriptor<Goal>(
+        var descriptor = FetchDescriptor<Goal>(
             predicate: #Predicate { $0.syncStatus == "pending" }
         )
+        descriptor.fetchLimit = 50 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
     // MARK: - Private Loan Operations
     
     func fetchPrivateLoans() throws -> [PrivateLoan] {
-        let descriptor = FetchDescriptor<PrivateLoan>(
+        var descriptor = FetchDescriptor<PrivateLoan>(
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
+        descriptor.fetchLimit = 50 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
     func fetchPendingSyncPrivateLoans() throws -> [PrivateLoan] {
-        let descriptor = FetchDescriptor<PrivateLoan>(
+        var descriptor = FetchDescriptor<PrivateLoan>(
             predicate: #Predicate { $0.syncStatus == "pending" }
         )
+        descriptor.fetchLimit = 50 // Limit for performance
         return try modelContext.fetch(descriptor)
     }
     
@@ -173,6 +226,30 @@ class LocalDatabaseManager: ObservableObject {
             loan.syncStatus = status
             loan.lastSyncedAt = lastSyncedAt
         }
+        try save()
+    }
+
+    // MARK: - Destructive Operations
+    func wipeAllData() throws {
+        // Delete in dependency order to avoid relationship constraints
+        let allTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
+        allTransactions.forEach { modelContext.delete($0) }
+
+        let allGoals = try modelContext.fetch(FetchDescriptor<Goal>())
+        allGoals.forEach { modelContext.delete($0) }
+
+        let allCategories = try modelContext.fetch(FetchDescriptor<Category>())
+        allCategories.forEach { modelContext.delete($0) }
+
+        let allLoans = try modelContext.fetch(FetchDescriptor<PrivateLoan>())
+        allLoans.forEach { modelContext.delete($0) }
+
+        let allAccounts = try modelContext.fetch(FetchDescriptor<Account>())
+        allAccounts.forEach { modelContext.delete($0) }
+
+        let allProfiles = try modelContext.fetch(FetchDescriptor<UserProfile>())
+        allProfiles.forEach { modelContext.delete($0) }
+
         try save()
     }
 }

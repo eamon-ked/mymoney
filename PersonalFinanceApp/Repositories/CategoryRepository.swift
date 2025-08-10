@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 
+@MainActor
 class CategoryRepository: ObservableObject {
     private let localDB = LocalDatabaseManager.shared
     private let syncManager = SyncManager.shared
@@ -18,7 +19,9 @@ class CategoryRepository: ObservableObject {
     
     init() {
         loadCategories()
-        createDefaultCategories()
+        ensureUniqueCategories()
+        // Create defaults only once (and avoid server duplicates by checking remote first)
+        Task { await seedDefaultsIfNeeded() }
     }
     
     func loadCategories() {
@@ -39,10 +42,8 @@ class CategoryRepository: ObservableObject {
             try localDB.insert(category)
             loadCategories()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
@@ -54,10 +55,8 @@ class CategoryRepository: ObservableObject {
             try localDB.save()
             loadCategories()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
@@ -68,23 +67,52 @@ class CategoryRepository: ObservableObject {
             try localDB.delete(category)
             loadCategories()
             
-            // Trigger sync in background
-            Task {
-                await syncManager.performSync()
-            }
+            // Trigger debounced sync instead of immediate sync
+            syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
     }
     
     func getCategoriesByType(_ type: CategoryType) -> [Category] {
-        return categories.filter { $0.type == type }
+        // Deduplicate by id to avoid ForEach warnings if defaults were seeded multiple times previously
+        var seen = Set<UUID>()
+        var unique: [Category] = []
+        for category in categories where category.type == type {
+            if !seen.contains(category.id) {
+                seen.insert(category.id)
+                unique.append(category)
+            }
+        }
+        return unique
     }
     
     func getCategory(by id: UUID) -> Category? {
         return categories.first { $0.id == id }
     }
     
+    private func ensureUniqueCategories() {
+        // Remove duplicates by id if they exist in the persistent store
+        var seen = Set<UUID>()
+        var duplicates: [Category] = []
+        for category in categories {
+            if seen.contains(category.id) {
+                duplicates.append(category)
+            } else {
+                seen.insert(category.id)
+            }
+        }
+        guard !duplicates.isEmpty else { return }
+        do {
+            for dup in duplicates {
+                try localDB.delete(dup)
+            }
+            loadCategories()
+        } catch {
+            // Best-effort cleanup; ignore errors
+        }
+    }
+
     private func createDefaultCategories() {
         // Only create if no categories exist
         guard categories.isEmpty else { return }
@@ -108,9 +136,68 @@ class CategoryRepository: ObservableObject {
             Category(name: "Other Expenses", type: .expense, color: "#795548", icon: "minus.circle")
         ]
         
-        for category in defaultCategories {
-            category.isDefault = true
+        // Avoid duplicate IDs across runs: generate new UUIDs
+        for template in defaultCategories {
+            let category = Category(
+                id: UUID(),
+                userId: template.userId,
+                name: template.name,
+                type: template.type,
+                color: template.color,
+                icon: template.icon,
+                isDefault: true,
+                syncStatus: template.syncStatus,
+                lastSyncedAt: template.lastSyncedAt,
+                createdAt: template.createdAt
+            )
             addCategory(category)
         }
+    }
+
+    private func categoryExistsRemotely(name: String, type: CategoryType) async -> Bool {
+        do {
+            let rows = try await SupabaseManager.shared.fetchCategories(lastSyncedAt: nil)
+            let exists = rows.contains { row in
+                (row["name"] as? String)?.caseInsensitiveCompare(name) == .orderedSame &&
+                (row["type"] as? String) == type.rawValue
+            }
+            return exists
+        } catch { return false }
+    }
+
+    private func seedDefaultsIfNeeded() async {
+        guard categories.isEmpty else { return }
+        // Check remote to avoid duplicates across devices
+        let defaults: [(String, CategoryType, String, String)] = [
+            ("Salary", .income, "#4CAF50", "dollarsign.circle"),
+            ("Freelance", .income, "#2196F3", "briefcase"),
+            ("Investment", .income, "#FF9800", "chart.line.uptrend.xyaxis"),
+            ("Other Income", .income, "#9C27B0", "plus.circle"),
+            ("Food & Dining", .expense, "#F44336", "fork.knife"),
+            ("Transportation", .expense, "#3F51B5", "car"),
+            ("Shopping", .expense, "#E91E63", "bag"),
+            ("Entertainment", .expense, "#9C27B0", "tv"),
+            ("Bills & Utilities", .expense, "#607D8B", "bolt"),
+            ("Healthcare", .expense, "#4CAF50", "cross.case"),
+            ("Education", .expense, "#FF5722", "book"),
+            ("Travel", .expense, "#00BCD4", "airplane"),
+            ("Other Expenses", .expense, "#795548", "minus.circle")
+        ]
+        var createdAny = false
+        for (name, type, color, icon) in defaults {
+            let exists = await categoryExistsRemotely(name: name, type: type)
+            if exists { continue }
+            let category = Category(
+                id: UUID(),
+                name: name,
+                type: type,
+                color: color,
+                icon: icon,
+                isDefault: true
+            )
+            addCategory(category)
+            createdAny = true
+        }
+        if createdAny { loadCategories() }
     }
 }

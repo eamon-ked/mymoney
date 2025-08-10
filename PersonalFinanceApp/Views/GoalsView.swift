@@ -104,7 +104,7 @@ struct GoalRowView: View {
                     }
                 }
                 
-                ProgressView(value: goal.progress)
+                ProgressView(value: goal.progress.isFinite ? goal.progress : 0.0)
                     .progressViewStyle(LinearProgressViewStyle(tint: progressColor))
             }
         }
@@ -224,12 +224,13 @@ struct AddGoalView: View {
     }
 }
 
-private let currencyFormatter: NumberFormatter = {
+private var currencyFormatter: NumberFormatter {
     let formatter = NumberFormatter()
     formatter.numberStyle = .currency
-    formatter.currencyCode = "USD"
+    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
+    formatter.currencyCode = code.isEmpty ? "USD" : code
     return formatter
-}()
+}
 
 #Preview {
     GoalsView()

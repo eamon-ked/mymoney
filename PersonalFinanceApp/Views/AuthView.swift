@@ -9,6 +9,7 @@ import SwiftUI
 
 struct AuthView: View {
     @StateObject private var viewModel = AuthViewModel()
+    @State private var showOnboarding = true
     
     var body: some View {
         NavigationView {
@@ -29,6 +30,17 @@ struct AuthView: View {
                 }
                 .padding(.top, 40)
                 
+                // Onboarding Carousel (lightweight)
+                if showOnboarding && viewModel.isSignUpMode {
+                    TabView {
+                        OnboardingSlide(title: "Track Everything", subtitle: "Accounts, budgets, goals and more in one place.", symbol: "chart.pie.fill")
+                        OnboardingSlide(title: "Sync Securely", subtitle: "Your data syncs when online; works offline too.", symbol: "arrow.triangle.2.circlepath")
+                        OnboardingSlide(title: "Privacy First", subtitle: "Data is private to your account.", symbol: "lock.fill")
+                    }
+                    .tabViewStyle(PageTabViewStyle())
+                    .frame(height: 160)
+                }
+
                 // Form
                 VStack(spacing: 16) {
                     if viewModel.isSignUpMode {
@@ -94,6 +106,25 @@ struct AuthView: View {
                 Spacer()
             }
             .navigationBarHidden(true)
+        }
+    }
+}
+
+struct OnboardingSlide: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 36))
+                .foregroundColor(.blue)
+            Text(title).font(.headline)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
         }
     }
 }

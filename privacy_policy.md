@@ -1,4 +1,4 @@
-# Privacy Policy for My Money App
+# Privacy Policy for Nokael Money App
 
 **Last updated: [08/Aug/2025]**
 

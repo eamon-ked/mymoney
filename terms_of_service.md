@@ -1,14 +1,14 @@
-# Terms of Service for My Money App
+# Terms of Service for Nokael Money App
 
 **Last updated: [Date]**
 
 ## 1. Acceptance of Terms
 
-By downloading, installing, or using the My Money App ("the App"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
+By downloading, installing, or using the Nokael Money App ("the App"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
 
 ## 2. Description of Service
 
-The My Money App is a financial management application that allows users to:
+The Nokael Money App is a financial management application that allows users to:
 - Track personal finances and accounts
 - Manage transactions and budgets
 - Set and monitor financial goals

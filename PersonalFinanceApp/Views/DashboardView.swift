@@ -41,6 +41,12 @@ struct DashboardView: View {
                         loanPayments: viewModel.loanPaymentsThisMonth,
                         plannedGoalSavings: viewModel.plannedGoalSavingsThisMonth
                     )
+
+                    // Explanatory note (caption-sized) about how totals are calculated
+                    Text("Savings = balances in Checking, Savings, Cash, and Investment. Credit Cards count as debt and are subtracted from Net Worth. Monthly Expenses = Expense transactions this month plus any planned loan payments/goal savings you’ve chosen to include.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     
                     // Debt & Loans Summary
                     if viewModel.totalDebt > 0 {

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PersonalFinanceApp Support</title>
+  <style>
+    :root { --bg: #0f172a; --card: #111827; --text: #e5e7eb; --muted: #9ca3af; --accent: #60a5fa; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif; }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; }
+    .hero { text-align: center; padding: 24px 0 8px; }
+    .hero h1 { margin: 0 0 8px; font-size: 28px; font-weight: 700; }
+    .hero p { margin: 0; color: var(--muted); }
+    .grid { display: grid; gap: 16px; grid-template-columns: 1fr; margin-top: 24px; }
+    @media (min-width: 768px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .card { background: var(--card); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; }
+    .card h2 { margin: 0 0 8px; font-size: 18px; }
+    .card p { margin: 8px 0; color: var(--muted); }
+    .list { margin: 12px 0 0; padding: 0 0 0 18px; color: var(--muted); }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .btn { display: inline-block; padding: 10px 14px; border-radius: 10px; color: #0b1220; background: var(--accent); text-decoration: none; font-weight: 600; }
+    .btn.secondary { background: transparent; color: var(--text); border: 1px solid rgba(255,255,255,0.15); }
+    footer { margin-top: 40px; text-align: center; color: var(--muted); font-size: 13px; }
+    code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>PersonalFinanceApp — Support</h1>
+      <p>Get help, report an issue, or suggest a feature.</p>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Quick Help</h2>
+        <p>Common answers for getting started and preparing for release.</p>
+        <ul class="list">
+          <li>Supabase setup: add <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> in your app’s Info.plist.</li>
+          <li>Sign-in issues: ensure your device has internet and your anon key is valid with proper RLS.</li>
+          <li>Delete Account: Settings → Account → Delete Account. This signs out and clears local data. Server deletion requires the deployed edge function.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Contact</h2>
+        <p>We usually respond within 2–3 business days.</p>
+        <div class="cta-row">
+          <a class="btn" href="https://github.com/eamon-ked/mymoney/issues" rel="noopener noreferrer" target="_blank">Open a Support Ticket</a>
+          <a class="btn secondary" href="mailto:support@example.com">Email Support</a>
+        </div>
+        <p style="margin-top:8px; font-size: 13px;">Prefer email? Use the address above and include your device model and iOS version.</p>
+      </div>
+
+      <div class="card">
+        <h2>FAQ</h2>
+        <p><strong>How are savings and credit cards calculated?</strong><br />Savings = balances in Checking, Savings, Cash, and Investment. Credit Cards count as debt and subtract from Net Worth.</p>
+        <p><strong>What counts as monthly expenses?</strong><br />Expense transactions this month plus any planned loan payments/goal savings you choose to include.</p>
+        <p><strong>How do I delete my data?</strong><br />Use Delete Account in Settings. Local data is wiped; server deletion is handled by the edge function when deployed.</p>
+      </div>
+
+      <div class="card">
+        <h2>Status</h2>
+        <p>If you’re seeing sync issues, check your connection and try again. We also recommend verifying your Supabase project status.</p>
+        <div class="cta-row">
+          <a class="btn secondary" href="https://status.supabase.com" rel="noopener noreferrer" target="_blank">Supabase Status</a>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p>© <span id="year"></span> PersonalFinanceApp. All rights reserved.</p>
+    </footer>
+  </main>
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>
+

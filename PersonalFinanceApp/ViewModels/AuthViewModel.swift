@@ -56,6 +56,9 @@ class AuthViewModel: ObservableObject {
         
         do {
             try await supabaseManager.signIn(email: email, password: password)
+            // Ensure we do a full pull right after a successful sign-in on a device
+            await MainActor.run { self.syncManager.resetSyncState() }
+            await self.syncManager.forceSyncNow()
             await MainActor.run {
                 self.isLoading = false
                 self.clearFields()

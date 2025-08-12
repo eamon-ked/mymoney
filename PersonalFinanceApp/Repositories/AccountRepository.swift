@@ -33,6 +33,11 @@ class AccountRepository: ObservableObject {
             isLoading = false
         }
     }
+
+    // Called after a remote pull to ensure local cache is fresh
+    func reloadFromLocalStore() {
+        do { accounts = try localDB.fetchAccounts() } catch { }
+    }
     
     func addAccount(_ account: Account) {
         do {

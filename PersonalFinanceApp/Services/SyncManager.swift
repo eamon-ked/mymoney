@@ -55,6 +55,13 @@ class SyncManager: ObservableObject {
         lastSyncDate = Date()
         UserDefaults.standard.set(lastSyncDate, forKey: "lastSyncDate")
     }
+
+    // Reset sync checkpoints so a new sign-in (or first sign-in on a device)
+    // performs a full pull from the server.
+    func resetSyncState() {
+        lastSyncDate = nil
+        UserDefaults.standard.removeObject(forKey: "lastSyncDate")
+    }
     
     private func startNetworkMonitoring() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -379,6 +386,8 @@ class SyncManager: ObservableObject {
         }
         
         try localDB.save()
+        // Notify repositories to reload
+        AccountRepository().loadAccounts() // lightweight refresh for UI listeners
     }
     
     private func pullCategories() async throws {
@@ -425,6 +434,7 @@ class SyncManager: ObservableObject {
         }
         
         try localDB.save()
+        // No-op: category repo observes changes
     }
     
     private func pullTransactions() async throws {

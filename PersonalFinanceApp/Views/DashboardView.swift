@@ -24,6 +24,14 @@ struct DashboardView: View {
                         netWorthAfterDebt: viewModel.netWorthAfterDebt
                     )
                     
+                    // Financial Health Overview
+                    FinancialHealthCard(
+                        totalSavings: viewModel.totalSavings,
+                        totalDebt: viewModel.totalDebt,
+                        debtToIncomeRatio: viewModel.debtToIncomeRatio,
+                        emergencyFundStatus: viewModel.emergencyFundStatus
+                    )
+                    
                     // Monthly Overview
                     MonthlyOverviewCard(
                         income: viewModel.monthlyIncome,
@@ -33,6 +41,26 @@ struct DashboardView: View {
                         loanPayments: viewModel.loanPaymentsThisMonth,
                         plannedGoalSavings: viewModel.plannedGoalSavingsThisMonth
                     )
+                    
+                    // Debt & Loans Summary
+                    if viewModel.totalDebt > 0 {
+                        DebtLoansSummaryCard(
+                            totalDebt: viewModel.totalDebt,
+                            activeLoans: viewModel.activeLoans,
+                            totalMonthlyPayments: viewModel.totalMonthlyLoanPayments,
+                            averageInterestRate: viewModel.averageInterestRate
+                        )
+                    }
+                    
+                    // Goals Progress Summary
+                    if viewModel.activeGoals > 0 {
+                        GoalsProgressCard(
+                            activeGoals: viewModel.activeGoals,
+                            totalGoalAmount: viewModel.totalGoalAmount,
+                            totalSavedForGoals: viewModel.totalSavedForGoals,
+                            averageGoalProgress: viewModel.averageGoalProgress
+                        )
+                    }
                     
                     // Top Spending
                     if !viewModel.topSpendingCategories.isEmpty {
@@ -75,6 +103,223 @@ struct DashboardView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - Financial Health Card
+struct FinancialHealthCard: View {
+    let totalSavings: Decimal
+    let totalDebt: Decimal
+    let debtToIncomeRatio: Double
+    let emergencyFundStatus: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Financial Health")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Image(systemName: "heart.fill")
+                    .foregroundColor(.green)
+            }
+            
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Total Savings")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    AnimatedNumber(totalSavings)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.green)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Total Debt")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    AnimatedNumber(totalDebt)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.red)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Debt/Income")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(Int(debtToIncomeRatio))%")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(debtToIncomeRatio > 40 ? .red : debtToIncomeRatio > 20 ? .orange : .green)
+                }
+            }
+            
+            HStack {
+                Text("Emergency Fund:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(emergencyFundStatus)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(emergencyFundStatus == "Good" ? .green : emergencyFundStatus == "Fair" ? .orange : .red)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+}
+
+// MARK: - Debt & Loans Summary Card
+struct DebtLoansSummaryCard: View {
+    let totalDebt: Decimal
+    let activeLoans: Int
+    let totalMonthlyPayments: Decimal
+    let averageInterestRate: Double
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Debt & Loans")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                NavigationLink("See Loans", destination: LoansView())
+                    .font(.caption)
+                    .foregroundColor(.blue)
+            }
+            
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Total Debt")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    AnimatedNumber(totalDebt)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.red)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Active Loans")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(activeLoans)")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Avg. Interest")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(String(format: "%.1f", averageInterestRate))%")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.orange)
+                }
+            }
+            
+            HStack {
+                Text("Monthly Payments:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                AnimatedNumber(totalMonthlyPayments)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.red)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+}
+
+// MARK: - Goals Progress Card
+struct GoalsProgressCard: View {
+    let activeGoals: Int
+    let totalGoalAmount: Decimal
+    let totalSavedForGoals: Decimal
+    let averageGoalProgress: Double
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Goals Progress")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                NavigationLink("See Goals", destination: GoalsView())
+                    .font(.caption)
+                    .foregroundColor(.blue)
+            }
+            
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Active Goals")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(activeGoals)")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Total Target")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    AnimatedNumber(totalGoalAmount)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.blue)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Avg. Progress")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(Int(averageGoalProgress))%")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.green)
+                }
+            }
+            
+            HStack {
+                Text("Total Saved:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                AnimatedNumber(totalSavedForGoals)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.green)
+            }
+            
+            // Progress bar
+            ProgressView(value: averageGoalProgress / 100)
+                .progressViewStyle(LinearProgressViewStyle(tint: .green))
+                .scaleEffect(x: 1, y: 2, anchor: .center)
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 }
 

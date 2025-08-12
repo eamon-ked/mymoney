@@ -24,6 +24,18 @@ class DashboardViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     
+    // New properties for enhanced dashboard
+    @Published var totalSavings: Decimal = 0
+    @Published var debtToIncomeRatio: Double = 0
+    @Published var emergencyFundStatus: String = "Poor"
+    @Published var activeLoans: Int = 0
+    @Published var totalMonthlyLoanPayments: Decimal = 0
+    @Published var averageInterestRate: Double = 0
+    @Published var activeGoals: Int = 0
+    @Published var totalGoalAmount: Decimal = 0
+    @Published var totalSavedForGoals: Decimal = 0
+    @Published var averageGoalProgress: Double = 0
+    
     private let accountRepository = AccountRepository()
     private let transactionRepository = TransactionRepository()
     private let goalRepository = GoalRepository()
@@ -96,6 +108,44 @@ class DashboardViewModel: ObservableObject {
     private func calculateNetWorth() {
         netWorth = accountRepository.getTotalBalance()
         netWorthAfterDebt = netWorth - totalDebt
+        calculateTotalSavings()
+    }
+    
+    private func calculateTotalSavings() {
+        // Calculate total savings from accounts (excluding debt accounts)
+        let accounts = accountRepository.accounts
+        totalSavings = accounts.filter { $0.type != .creditCard }.reduce(0) { $0 + $1.balance }
+    }
+    
+    private func calculateDebtToIncomeRatio() {
+        let monthlyIncomeDouble = Double(truncating: monthlyIncome as NSDecimalNumber)
+        let totalDebtDouble = Double(truncating: totalDebt as NSDecimalNumber)
+        
+        if monthlyIncomeDouble > 0 {
+            // Convert monthly income to annual for debt-to-income ratio
+            let annualIncome = monthlyIncomeDouble * 12
+            debtToIncomeRatio = (totalDebtDouble / annualIncome) * 100
+        } else {
+            debtToIncomeRatio = 0
+        }
+    }
+    
+    private func calculateEmergencyFundStatus() {
+        let monthlyExpensesDouble = Double(truncating: monthlyExpenses as NSDecimalNumber)
+        let totalSavingsDouble = Double(truncating: totalSavings as NSDecimalNumber)
+        
+        if monthlyExpensesDouble > 0 {
+            let monthsOfExpenses = totalSavingsDouble / monthlyExpensesDouble
+            if monthsOfExpenses >= 6 {
+                emergencyFundStatus = "Good"
+            } else if monthsOfExpenses >= 3 {
+                emergencyFundStatus = "Fair"
+            } else {
+                emergencyFundStatus = "Poor"
+            }
+        } else {
+            emergencyFundStatus = "Good"
+        }
     }
     
     private func calculateMonthlyTotals() {
@@ -116,6 +166,10 @@ class DashboardViewModel: ObservableObject {
         let goals = includeGoals ? plannedGoalSavingsThisMonth : 0
         // Forecasted scheduled items
         monthlyExpenses = baseExpenses + loans + goals
+        
+        // Calculate derived metrics
+        calculateDebtToIncomeRatio()
+        calculateEmergencyFundStatus()
     }
 
     private func calculateTopSpending(transactions: [Transaction]) {
@@ -158,21 +212,49 @@ class DashboardViewModel: ObservableObject {
         let thisMonth = calendar.dateInterval(of: .month, for: now)
         var debt: Decimal = 0
         var payments: Decimal = 0
+        var totalMonthlyPayments: Decimal = 0
+        var totalInterestRate: Decimal = 0
+        var activeLoanCount = 0
+        
         for loan in loans where loan.status == "active" {
             debt += loan.remainingBalance
+            totalMonthlyPayments += loan.monthlyPayment
+            totalInterestRate += loan.interestRate
+            activeLoanCount += 1
+            
             if let due = loan.nextPaymentDate, let month = thisMonth, (due >= month.start && due <= month.end) {
                 payments += loan.monthlyPayment
             }
         }
+        
         totalDebt = debt
         loanPaymentsThisMonth = payments
+        self.activeLoans = activeLoanCount
+        self.totalMonthlyLoanPayments = totalMonthlyPayments
+        
+        // Calculate average interest rate
+        if activeLoanCount > 0 {
+            averageInterestRate = Double(truncating: (totalInterestRate / Decimal(activeLoanCount)) as NSDecimalNumber)
+        } else {
+            averageInterestRate = 0
+        }
     }
 
     private func calculatePlannedGoalSavings(goals: [Goal]) {
         let calendar = Calendar.current
         let now = Date()
         var planned: Decimal = 0
+        var totalAmount: Decimal = 0
+        var totalSaved: Decimal = 0
+        var activeGoalCount = 0
+        var totalProgress: Double = 0
+        
         for goal in goals where goal.status == "active" {
+            activeGoalCount += 1
+            totalAmount += goal.targetAmount
+            totalSaved += goal.currentAmount
+            totalProgress += goal.progress
+            
             guard let targetDate = goal.targetDate else { continue }
             let remaining = max(0, goal.targetAmount - goal.currentAmount)
             if remaining == 0 { continue }
@@ -185,7 +267,18 @@ class DashboardViewModel: ObservableObject {
                 planned += remaining
             }
         }
+        
         plannedGoalSavingsThisMonth = planned
+        self.activeGoals = activeGoalCount
+        self.totalGoalAmount = totalAmount
+        self.totalSavedForGoals = totalSaved
+        
+        // Calculate average goal progress
+        if activeGoalCount > 0 {
+            averageGoalProgress = totalProgress / Double(activeGoalCount) * 100
+        } else {
+            averageGoalProgress = 0
+        }
     }
 
     private func getBoolPreference(_ key: String, defaultValue: Bool) -> Bool {

@@ -20,7 +20,7 @@ struct AuthView: View {
                         .font(.system(size: 60))
                         .foregroundColor(.blue)
                     
-                    Text("Personal Finance")
+                    Text("Nokael Money")
                         .font(.largeTitle)
                         .fontWeight(.bold)
                     

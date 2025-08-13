@@ -3,6 +3,8 @@ import SwiftUI
 struct LoansView: View {
     @StateObject private var repository = LoanRepository()
     @State private var showingAddLoan = false
+    @State private var showingUpdateLoan = false
+    @State private var loanToUpdate: PrivateLoan? = nil
     
     var body: some View {
         NavigationView {
@@ -14,6 +16,10 @@ struct LoansView: View {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     repository.deleteLoan(loan)
                                 }
+                            }
+                            Button("Update") {
+                                loanToUpdate = loan
+                                showingUpdateLoan = true
                             }
                         }
                 }
@@ -28,6 +34,11 @@ struct LoansView: View {
             }
             .sheet(isPresented: $showingAddLoan) {
                 AddLoanView(repository: repository)
+            }
+            .sheet(isPresented: $showingUpdateLoan) {
+                if let loan = loanToUpdate {
+                    UpdateLoanProgressView(repository: repository, loan: loan)
+                }
             }
             .refreshable { repository.loadLoans() }
         }
@@ -152,6 +163,56 @@ struct AddLoanView: View {
             nextPaymentDate: nextPaymentDate
         )
         repository.addLoan(loan)
+        dismiss()
+    }
+}
+
+struct UpdateLoanProgressView: View {
+    @ObservedObject var repository: LoanRepository
+    let loan: PrivateLoan
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var newRemainingBalance: String = ""
+    @State private var nextPaymentDate: Date? = nil
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Update Progress") {
+                    TextField("New Remaining Balance", text: $newRemainingBalance)
+                        .keyboardType(.decimalPad)
+                    Toggle("Update Next Payment Date", isOn: Binding(
+                        get: { nextPaymentDate != nil },
+                        set: { has in nextPaymentDate = has ? (loan.nextPaymentDate ?? Date()) : nil }
+                    ))
+                    if let _ = nextPaymentDate {
+                        DatePicker("Next Payment", selection: Binding(get: { nextPaymentDate ?? Date() }, set: { nextPaymentDate = $0 }), displayedComponents: .date)
+                    }
+                }
+            }
+            .navigationTitle("Update Loan")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") { save() }
+                        .disabled(Decimal(string: newRemainingBalance) == nil)
+                }
+            }
+            .onAppear {
+                newRemainingBalance = (loan.remainingBalance as NSDecimalNumber).stringValue
+                nextPaymentDate = loan.nextPaymentDate
+            }
+        }
+    }
+
+    private func save() {
+        guard let remaining = Decimal(string: newRemainingBalance) else { return }
+        loan.remainingBalance = remaining
+        if let date = nextPaymentDate { loan.nextPaymentDate = date }
+        loan.updatedAt = Date()
+        loan.syncStatus = "pending"
+        repository.updateLoan(loan)
         dismiss()
     }
 }

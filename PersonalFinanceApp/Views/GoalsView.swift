@@ -10,6 +10,8 @@ import SwiftUI
 struct GoalsView: View {
     @StateObject private var repository = GoalRepository()
     @State private var showingAddGoal = false
+    @State private var showingUpdateGoal = false
+    @State private var goalToUpdate: Goal? = nil
     
     var body: some View {
         NavigationView {
@@ -19,6 +21,10 @@ struct GoalsView: View {
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) {
                                 repository.deleteGoal(goal)
+                            }
+                            Button("Update") {
+                                goalToUpdate = goal
+                                showingUpdateGoal = true
                             }
                         }
                 }
@@ -33,6 +39,11 @@ struct GoalsView: View {
             }
             .sheet(isPresented: $showingAddGoal) {
                 AddGoalView(repository: repository)
+            }
+            .sheet(isPresented: $showingUpdateGoal) {
+                if let goal = goalToUpdate {
+                    UpdateGoalProgressView(repository: repository, goal: goal)
+                }
             }
             .refreshable {
                 repository.loadGoals()
@@ -220,6 +231,41 @@ struct AddGoalView: View {
         )
         
         repository.addGoal(goal)
+        dismiss()
+    }
+}
+
+struct UpdateGoalProgressView: View {
+    @ObservedObject var repository: GoalRepository
+    let goal: Goal
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var newCurrentAmount: String = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Update Progress") {
+                    TextField("New Current Amount", text: $newCurrentAmount)
+                        .keyboardType(.decimalPad)
+                }
+            }
+            .navigationTitle("Update Goal")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") { save() }
+                        .disabled(Decimal(string: newCurrentAmount) == nil)
+                }
+            }
+            .onAppear { newCurrentAmount = (goal.currentAmount as NSDecimalNumber).stringValue }
+        }
+    }
+
+    private func save() {
+        guard let amount = Decimal(string: newCurrentAmount) else { return }
+        repository.updateGoalProgress(goal, amount: amount)
         dismiss()
     }
 }

@@ -9,7 +9,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class Goal {
+final class Goal: Identifiable {
     var id: UUID
     var userId: UUID?
     var title: String

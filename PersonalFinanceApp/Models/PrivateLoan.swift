@@ -9,7 +9,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class PrivateLoan {
+final class PrivateLoan: Identifiable {
     var id: UUID
     var userId: UUID?
     var loanName: String

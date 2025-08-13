@@ -35,10 +35,8 @@ struct LoansView: View {
             .sheet(isPresented: $showingAddLoan) {
                 AddLoanView(repository: repository)
             }
-            .sheet(isPresented: $showingUpdateLoan) {
-                if let loan = loanToUpdate {
-                    UpdateLoanProgressView(repository: repository, loan: loan)
-                }
+            .sheet(item: $loanToUpdate) { loan in
+                UpdateLoanProgressView(repository: repository, loan: loan)
             }
             .refreshable { repository.loadLoans() }
         }

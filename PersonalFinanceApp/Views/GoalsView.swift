@@ -10,7 +10,6 @@ import SwiftUI
 struct GoalsView: View {
     @StateObject private var repository = GoalRepository()
     @State private var showingAddGoal = false
-    @State private var showingUpdateGoal = false
     @State private var goalToUpdate: Goal? = nil
     
     var body: some View {
@@ -22,10 +21,7 @@ struct GoalsView: View {
                             Button("Delete", role: .destructive) {
                                 repository.deleteGoal(goal)
                             }
-                            Button("Update") {
-                                goalToUpdate = goal
-                                showingUpdateGoal = true
-                            }
+                            Button("Update") { goalToUpdate = goal }
                         }
                 }
             }
@@ -40,10 +36,8 @@ struct GoalsView: View {
             .sheet(isPresented: $showingAddGoal) {
                 AddGoalView(repository: repository)
             }
-            .sheet(isPresented: $showingUpdateGoal) {
-                if let goal = goalToUpdate {
-                    UpdateGoalProgressView(repository: repository, goal: goal)
-                }
+            .sheet(item: $goalToUpdate) { goal in
+                UpdateGoalProgressView(repository: repository, goal: goal)
             }
             .refreshable {
                 repository.loadGoals()

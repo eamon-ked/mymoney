@@ -12,6 +12,7 @@ import Network
 @MainActor
 class AuthViewModel: ObservableObject {
     @Published var isAuthenticated = false
+    @Published var isGuest = false
     @Published var isLoading = false
     @Published var error: String?
     @Published var email = ""
@@ -25,8 +26,15 @@ class AuthViewModel: ObservableObject {
     private var isOnline = true
     
     init() {
+        // Restore guest mode state
+        isGuest = UserDefaults.standard.bool(forKey: "guestMode")
+        isAuthenticated = isGuest || supabaseManager.isAuthenticated
+
         supabaseManager.$isAuthenticated
-            .assign(to: \.isAuthenticated, on: self)
+            .sink { [weak self] signedIn in
+                guard let self = self else { return }
+                self.isAuthenticated = self.isGuest || signedIn
+            }
             .store(in: &cancellables)
 
         // Observe online status from SyncManager
@@ -59,6 +67,11 @@ class AuthViewModel: ObservableObject {
             // Ensure we do a full pull right after a successful sign-in on a device
             await MainActor.run { self.syncManager.resetSyncState() }
             await self.syncManager.forceSyncNow()
+            await MainActor.run {
+                self.isGuest = false
+                UserDefaults.standard.set(false, forKey: "guestMode")
+                self.isAuthenticated = true
+            }
             await MainActor.run {
                 self.isLoading = false
                 self.clearFields()
@@ -96,6 +109,9 @@ class AuthViewModel: ObservableObject {
             await MainActor.run {
                 self.isLoading = false
                 self.clearFields()
+                self.isGuest = false
+                UserDefaults.standard.set(false, forKey: "guestMode")
+                self.isAuthenticated = true
             }
         } catch {
             await MainActor.run {
@@ -106,14 +122,25 @@ class AuthViewModel: ObservableObject {
     }
     
     func signOut() async {
-        await MainActor.run {
-            self.isLoading = true
+        await MainActor.run { self.isLoading = true }
+
+        // If guest, just reset local state without contacting server
+        if isGuest {
+            await MainActor.run {
+                self.isGuest = false
+                UserDefaults.standard.set(false, forKey: "guestMode")
+                self.isAuthenticated = false
+                self.isLoading = false
+                self.clearFields()
+            }
+            return
         }
-        
+
         do {
             try await supabaseManager.signOut()
             await MainActor.run {
                 self.isLoading = false
+                self.isAuthenticated = false
                 self.clearFields()
             }
         } catch {
@@ -134,5 +161,12 @@ class AuthViewModel: ObservableObject {
         password = ""
         fullName = ""
         error = nil
+    }
+
+    // Guest entry point to satisfy App Store guideline 5.1.1
+    func continueAsGuest() {
+        isGuest = true
+        UserDefaults.standard.set(true, forKey: "guestMode")
+        isAuthenticated = true
     }
 }

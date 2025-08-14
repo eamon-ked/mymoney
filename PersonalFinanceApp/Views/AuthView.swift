@@ -95,6 +95,13 @@ struct AuthView: View {
                 }
                 .disabled(viewModel.isLoading)
                 .padding(.horizontal)
+
+                // Guest entry to comply with guideline 5.1.1 (non-account access)
+                Button(action: { viewModel.continueAsGuest() }) {
+                    Text("Continue as Guest")
+                        .font(.footnote)
+                        .foregroundColor(.blue)
+                }
                 
                 // Toggle mode
                 Button(action: viewModel.toggleMode) {

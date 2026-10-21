@@ -263,21 +263,34 @@ class SupabaseManager: ObservableObject {
             .execute()
     }
     
-    func fetchTransactions(lastSyncedAt: Date?) async throws -> [[String: Any]] {
-        var q = client
-            .from("transactions")
-            .select()
-        if let uid = currentUser?.id.uuidString {
-            q = q.eq("user_id", value: uid)
+    /// Every transaction changed at or after `updatedSince` (server time), or
+    /// all of them when it is nil. Paged in blocks of 1,000 with no row cap.
+    /// Soft-deleted rows are included so other devices learn about the delete.
+    func fetchTransactions(updatedSince: String?) async throws -> [[String: Any]] {
+        let pageSize = 1000
+        var all: [[String: Any]] = []
+        var from = 0
+        while true {
+            var q = client
+                .from("transactions")
+                .select()
+            if let uid = currentUser?.id.uuidString {
+                q = q.eq("user_id", value: uid)
+            }
+            if let since = updatedSince {
+                q = q.gte("updated_at", value: since)
+            }
+            let response = try await q
+                .order("updated_at", ascending: true)
+                .order("id", ascending: true)
+                .range(from: from, to: from + pageSize - 1)
+                .execute()
+            let rows = decodeRows(response)
+            all.append(contentsOf: rows)
+            if rows.count < pageSize { break }
+            from += pageSize
         }
-        let query = q.order("transaction_date", ascending: false)
-            .limit(100)
-        
-        if let _ = lastSyncedAt {
-            // See note above regarding filter support.
-        }
-        let response = try await query.execute()
-        return decodeRows(response)
+        return all
     }
     
     func upsertTransaction(_ transaction: [String: Any]) async throws {

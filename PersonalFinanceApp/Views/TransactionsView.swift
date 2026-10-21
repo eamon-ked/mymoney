@@ -204,6 +204,7 @@ struct AddTransactionView: View {
     @State private var amount = ""
     @State private var selectedType = TransactionType.expense
     @State private var selectedAccount: Account?
+    @State private var selectedDestinationAccount: Account?
     @State private var selectedCategory: Category?
     @State private var notes = ""
     @State private var date = Date()
@@ -253,11 +254,25 @@ struct AddTransactionView: View {
                 }
                 
                 Section("Account") {
-                    Picker("Account", selection: $selectedAccount) {
+                    Picker(selectedType == .transfer ? "From" : "Account", selection: $selectedAccount) {
                         Text("Select Account").tag(nil as Account?)
                         ForEach(accountRepository.accounts, id: \.id) { account in
                             Text(account.name).tag(account as Account?)
                         }
+                    }
+                    
+                    if selectedType == .transfer {
+                        Picker("To", selection: $selectedDestinationAccount) {
+                            Text("Select Account").tag(nil as Account?)
+                            ForEach(accountRepository.accounts.filter { $0.id != selectedAccount?.id }, id: \.id) { account in
+                                Text(account.name).tag(account as Account?)
+                            }
+                        }
+                    }
+                }
+                .onChange(of: selectedAccount) { _, newValue in
+                    if selectedDestinationAccount?.id == newValue?.id {
+                        selectedDestinationAccount = nil
                     }
                 }
                 
@@ -336,7 +351,11 @@ struct AddTransactionView: View {
     }
     
     private var canSave: Bool {
-        !description.isEmpty && !amount.isEmpty && selectedAccount != nil
+        guard !description.isEmpty, !amount.isEmpty, let account = selectedAccount else { return false }
+        if selectedType == .transfer {
+            guard let destination = selectedDestinationAccount, destination.id != account.id else { return false }
+        }
+        return true
     }
     
     private func addTag() {
@@ -359,7 +378,8 @@ struct AddTransactionView: View {
         
         let transaction = Transaction(
             accountId: account.id,
-            categoryId: selectedCategory?.id,
+            transferAccountId: selectedType == .transfer ? selectedDestinationAccount?.id : nil,
+            categoryId: selectedType == .transfer ? nil : selectedCategory?.id,
             amount: amountDecimal,
             type: selectedType,
             transactionDescription: description,

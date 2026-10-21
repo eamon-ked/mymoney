@@ -50,10 +50,8 @@ class TransactionRepository: ObservableObject {
     func addTransaction(_ transaction: Transaction) {
         do {
             try localDB.insert(transaction)
+            try refreshBalances(transaction.accountId, transaction.transferAccountId)
             loadTransactions()
-            
-            // Update account balance
-            updateAccountBalance(for: transaction)
             
             // Trigger debounced sync instead of immediate sync
             syncManager.triggerSync()
@@ -62,15 +60,16 @@ class TransactionRepository: ObservableObject {
         }
     }
     
-    func updateTransaction(_ transaction: Transaction) {
+    /// Pass the account IDs as they were BEFORE the edit, so a transaction
+    /// moved between accounts fixes both the old and the new account.
+    func updateTransaction(_ transaction: Transaction, previousAccountId: UUID, previousTransferAccountId: UUID?) {
         do {
             transaction.updatedAt = Date()
             transaction.syncStatus = "pending"
             try localDB.save()
+            try refreshBalances(previousAccountId, previousTransferAccountId,
+                                transaction.accountId, transaction.transferAccountId)
             loadTransactions()
-            
-            // Update account balance
-            updateAccountBalance(for: transaction)
             
             // Trigger debounced sync instead of immediate sync
             syncManager.triggerSync()
@@ -81,11 +80,13 @@ class TransactionRepository: ObservableObject {
     
     func deleteTransaction(_ transaction: Transaction) {
         do {
-            try localDB.delete(transaction)
+            // Soft delete so the delete reaches other devices; never localDB.delete
+            transaction.deletedAt = Date()
+            transaction.updatedAt = Date()
+            transaction.syncStatus = "pending"
+            try localDB.save()
+            try refreshBalances(transaction.accountId, transaction.transferAccountId)
             loadTransactions()
-            
-            // Update account balance
-            updateAccountBalance(for: transaction)
             
             // Trigger debounced sync instead of immediate sync
             syncManager.triggerSync()
@@ -94,45 +95,9 @@ class TransactionRepository: ObservableObject {
         }
     }
     
-    private func updateAccountBalance(for transaction: Transaction) {
-        do {
-            if let account = try localDB.fetchAccount(by: transaction.accountId) {
-                switch transaction.type {
-                case .income:
-                    account.balance += transaction.amount
-                case .expense:
-                    account.balance -= transaction.amount
-                case .transfer:
-                    // Handle transfer logic if needed
-                    break
-                }
-                account.updatedAt = Date()
-                account.syncStatus = "pending"
-                try localDB.save()
-            }
-        } catch {
-            print("Error updating account balance: \(error)")
-        }
-    }
-    
-    private func reverseAccountBalance(for transaction: Transaction) {
-        do {
-            if let account = try localDB.fetchAccount(by: transaction.accountId) {
-                switch transaction.type {
-                case .income:
-                    account.balance -= transaction.amount
-                case .expense:
-                    account.balance += transaction.amount
-                case .transfer:
-                    // Handle transfer logic if needed
-                    break
-                }
-                account.updatedAt = Date()
-                account.syncStatus = "pending"
-                try localDB.save()
-            }
-        } catch {
-            print("Error reversing account balance: \(error)")
+    private func refreshBalances(_ ids: UUID?...) throws {
+        for id in Set(ids.compactMap { $0 }) {
+            try localDB.recalculateBalance(for: id)
         }
     }
     

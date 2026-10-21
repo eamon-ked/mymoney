@@ -32,7 +32,10 @@ final class Account {
     var userId: UUID?
     var name: String
     var type: AccountType
+    /// Cached value written only by LocalDatabaseManager.recalculateBalance.
     var balance: Decimal
+    var openingBalance: Decimal = 0
+    var balanceConfirmedAt: Date? = nil
     var currency: String
     var accountNumber: String?
     var institutionName: String?
@@ -51,7 +54,7 @@ final class Account {
         userId: UUID? = nil,
         name: String,
         type: AccountType,
-        balance: Decimal = 0,
+        openingBalance: Decimal = 0,
         currency: String = "USD",
         accountNumber: String? = nil,
         institutionName: String? = nil,
@@ -66,7 +69,8 @@ final class Account {
         self.userId = userId
         self.name = name
         self.type = type
-        self.balance = balance
+        self.balance = openingBalance
+        self.openingBalance = openingBalance
         self.currency = currency
         self.accountNumber = accountNumber
         self.institutionName = institutionName

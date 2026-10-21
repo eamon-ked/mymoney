@@ -37,6 +37,24 @@ class LocalDatabaseManager: ObservableObject {
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
+        captureLegacyOpeningBalances()
+    }
+    
+    /// Runs once after upgrading from v1.0, before anything recomputes a balance:
+    /// sets each account's opening balance so its computed balance equals the
+    /// stored one, preserving today's number until the user confirms it.
+    private func captureLegacyOpeningBalances() {
+        let key = "legacyBalancesCaptured_v11"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        do {
+            for account in try fetchAccounts() where account.balanceConfirmedAt == nil {
+                account.openingBalance = account.balance - (try transactionTotal(for: account.id))
+            }
+            try save()
+            UserDefaults.standard.set(true, forKey: key)
+        } catch {
+            print("Error capturing legacy balances: \(error)")
+        }
     }
     
     var context: ModelContext {
@@ -129,6 +147,7 @@ class LocalDatabaseManager: ObservableObject {
     
     func fetchTransactions(limit: Int = 100) throws -> [Transaction] {
         var descriptor = FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.deletedAt == nil },
             sortBy: [SortDescriptor(\.transactionDate, order: .reverse)]
         )
         descriptor.fetchLimit = limit
@@ -138,11 +157,54 @@ class LocalDatabaseManager: ObservableObject {
     
     func fetchTransactions(for accountId: UUID) throws -> [Transaction] {
         var descriptor = FetchDescriptor<Transaction>(
-            predicate: #Predicate { $0.accountId == accountId },
+            predicate: #Predicate { $0.accountId == accountId && $0.deletedAt == nil },
             sortBy: [SortDescriptor(\.transactionDate, order: .reverse)]
         )
         descriptor.fetchLimit = 50 // Limit for performance
         return try modelContext.fetch(descriptor)
+    }
+    
+    // MARK: - Balances
+    
+    /// The only place Account.balance is written: opening balance plus every
+    /// non-deleted transaction, recomputed from scratch with no fetch limit.
+    func recalculateBalance(for accountId: UUID) throws {
+        guard let account = try fetchAccount(by: accountId) else { return }
+        account.balance = try computedBalance(for: account)
+        try save()
+    }
+    
+    func recalculateAllBalances() throws {
+        for account in try fetchAccounts() {
+            account.balance = try computedBalance(for: account)
+        }
+        try save()
+    }
+    
+    /// Sum of an account's non-deleted transactions, excluding its opening balance.
+    func transactionTotal(for accountId: UUID) throws -> Decimal {
+        let optionalId: UUID? = accountId   // #Predicate needs matching optionality
+        let outgoing = try modelContext.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.accountId == accountId && $0.deletedAt == nil }))
+        let incoming = try modelContext.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.transferAccountId == optionalId && $0.deletedAt == nil }))
+        
+        var total: Decimal = 0
+        for t in outgoing {
+            switch t.type {
+            case .income:   total += t.amount
+            case .expense:  total -= t.amount
+            case .transfer:
+                // Transfers saved before v1.1 have no destination and stay neutral
+                if t.transferAccountId != nil { total -= t.amount }
+            }
+        }
+        for t in incoming where t.type == .transfer { total += t.amount }
+        return total
+    }
+    
+    private func computedBalance(for account: Account) throws -> Decimal {
+        account.openingBalance + (try transactionTotal(for: account.id))
     }
     
     func fetchPendingSyncTransactions() throws -> [Transaction] {

@@ -27,6 +27,8 @@ final class Transaction {
     var id: UUID
     var userId: UUID?
     var accountId: UUID
+    /// Destination account when type is .transfer
+    var transferAccountId: UUID? = nil
     var categoryId: UUID?
     var amount: Decimal
     var type: TransactionType
@@ -40,6 +42,8 @@ final class Transaction {
     var lastSyncedAt: Date?
     var createdAt: Date
     var updatedAt: Date
+    /// Soft delete marker; deleted rows are kept so the delete can sync
+    var deletedAt: Date? = nil
     
     @Relationship
     var account: Account?
@@ -51,6 +55,7 @@ final class Transaction {
         id: UUID = UUID(),
         userId: UUID? = nil,
         accountId: UUID,
+        transferAccountId: UUID? = nil,
         categoryId: UUID? = nil,
         amount: Decimal,
         type: TransactionType,
@@ -68,6 +73,7 @@ final class Transaction {
         self.id = id
         self.userId = userId
         self.accountId = accountId
+        self.transferAccountId = transferAccountId
         self.categoryId = categoryId
         self.amount = amount
         self.type = type

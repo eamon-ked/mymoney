@@ -171,10 +171,12 @@ struct AddAccountView: View {
         let account = Account(
             name: name,
             type: selectedType,
-            balance: balanceDecimal,
+            openingBalance: balanceDecimal,
             institutionName: institutionName.isEmpty ? nil : institutionName,
             color: selectedColor.toHex()
         )
+        // The user just entered this balance, so it needs no repair
+        account.balanceConfirmedAt = Date()
         
         repository.addAccount(account)
         dismiss()

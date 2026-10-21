@@ -32,6 +32,9 @@ class SyncManager: ObservableObject {
     private let minimumSyncInterval: TimeInterval = 30 // 30 seconds between syncs
     private let syncDebounceInterval: TimeInterval = 2 // 2 seconds debounce
     
+    // Server-clock updated_at of the newest transaction pulled so far
+    private let transactionsCursorKey = "transactionsPullCursor"
+    
     private init() {
         setupPeriodicSync()
         loadLastSyncDate()
@@ -61,6 +64,7 @@ class SyncManager: ObservableObject {
     func resetSyncState() {
         lastSyncDate = nil
         UserDefaults.standard.removeObject(forKey: "lastSyncDate")
+        UserDefaults.standard.removeObject(forKey: transactionsCursorKey)
     }
     
     private func startNetworkMonitoring() {
@@ -200,7 +204,8 @@ class SyncManager: ObservableObject {
                 "user_id": account.userId?.uuidString ?? supabaseManager.currentUser?.id.uuidString ?? "",
                 "name": account.name,
                 "type": account.type.rawValue,
-                "balance": NSDecimalNumber(decimal: account.balance).doubleValue,
+                // Cached value kept up to date for v1.0 clients; v1.1 never reads it
+                "balance": moneyString(account.balance),
                 "currency": account.currency,
                 "account_number": account.accountNumber ?? NSNull(),
                 "institution_name": account.institutionName ?? NSNull(),
@@ -209,8 +214,15 @@ class SyncManager: ObservableObject {
                 "created_at": ISO8601DateFormatter().string(from: account.createdAt),
                 "updated_at": ISO8601DateFormatter().string(from: account.updatedAt)
             ]
+            var payload = accountData
+            // Only a confirmed opening balance is shared; an unconfirmed one is this
+            // device's guess and must not overwrite another device's confirmed value.
+            if let confirmedAt = account.balanceConfirmedAt {
+                payload["opening_balance"] = moneyString(account.openingBalance)
+                payload["balance_confirmed_at"] = ISO8601DateFormatter().string(from: confirmedAt)
+            }
             
-            try await supabaseManager.upsertAccount(accountData)
+            try await supabaseManager.upsertAccount(payload)
             try localDB.updateSyncStatus(for: account, status: "synced")
         }
     }
@@ -243,8 +255,9 @@ class SyncManager: ObservableObject {
                 "id": transaction.id.uuidString,
                 "user_id": transaction.userId?.uuidString ?? supabaseManager.currentUser?.id.uuidString ?? "",
                 "account_id": transaction.accountId.uuidString,
+                "transfer_account_id": transaction.transferAccountId?.uuidString ?? NSNull(),
                 "category_id": transaction.categoryId?.uuidString ?? NSNull(),
-                "amount": NSDecimalNumber(decimal: transaction.amount).doubleValue,
+                "amount": moneyString(transaction.amount),
                 "type": transaction.type.rawValue,
                 "description": transaction.transactionDescription,
                 "notes": transaction.notes ?? NSNull(),
@@ -253,7 +266,8 @@ class SyncManager: ObservableObject {
                 "recurring_frequency": transaction.recurringFrequency ?? NSNull(),
                 "tags": transaction.tags,
                 "created_at": ISO8601DateFormatter().string(from: transaction.createdAt),
-                "updated_at": ISO8601DateFormatter().string(from: transaction.updatedAt)
+                "updated_at": ISO8601DateFormatter().string(from: transaction.updatedAt),
+                "deleted_at": transaction.deletedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
             ]
             
             try await supabaseManager.upsertTransaction(transactionData)
@@ -270,8 +284,8 @@ class SyncManager: ObservableObject {
                 "user_id": goal.userId?.uuidString ?? supabaseManager.currentUser?.id.uuidString ?? "",
                 "title": goal.title,
                 "description": goal.goalDescription ?? NSNull(),
-                "target_amount": NSDecimalNumber(decimal: goal.targetAmount).doubleValue,
-                "current_amount": NSDecimalNumber(decimal: goal.currentAmount).doubleValue,
+                "target_amount": moneyString(goal.targetAmount),
+                "current_amount": moneyString(goal.currentAmount),
                 "target_date": goal.targetDate != nil ? ISO8601DateFormatter().string(from: goal.targetDate!) : NSNull(),
                 "category": goal.category ?? NSNull(),
                 "priority": goal.priority ?? NSNull(),
@@ -295,10 +309,10 @@ class SyncManager: ObservableObject {
                 "loan_name": loan.loanName,
                 "loan_type": loan.loanType ?? NSNull(),
                 "lender_name": loan.lenderName ?? NSNull(),
-                "original_amount": NSDecimalNumber(decimal: loan.originalAmount).doubleValue,
-                "remaining_balance": NSDecimalNumber(decimal: loan.remainingBalance).doubleValue,
-                "interest_rate": NSDecimalNumber(decimal: loan.interestRate).doubleValue,
-                "monthly_payment": NSDecimalNumber(decimal: loan.monthlyPayment).doubleValue,
+                "original_amount": moneyString(loan.originalAmount),
+                "remaining_balance": moneyString(loan.remainingBalance),
+                "interest_rate": moneyString(loan.interestRate),
+                "monthly_payment": moneyString(loan.monthlyPayment),
                 "start_date": ISO8601DateFormatter().string(from: loan.startDate),
                 "end_date": loan.endDate != nil ? ISO8601DateFormatter().string(from: loan.endDate!) : NSNull(),
                 "next_payment_date": loan.nextPaymentDate != nil ? ISO8601DateFormatter().string(from: loan.nextPaymentDate!) : NSNull(),
@@ -320,7 +334,19 @@ class SyncManager: ObservableObject {
         try await pullTransactions()
         try await pullGoals()
         try await pullPrivateLoans()
+        // Unconfirmed accounts new to this device keep their v1.0 balance until repaired
+        for (id, legacy) in legacyBalances {
+            if let account = try localDB.fetchAccount(by: id), account.balanceConfirmedAt == nil {
+                account.openingBalance = legacy - (try localDB.transactionTotal(for: id))
+            }
+        }
+        legacyBalances.removeAll()
+        // Balances are derived from transactions, never pulled
+        try localDB.recalculateAllBalances()
     }
+    
+    /// v1.0 stored balances of accounts first seen on this device, keyed by account id
+    private var legacyBalances: [UUID: Decimal] = [:]
     
     private func pullAccounts() async throws {
         let remoteAccounts = try await supabaseManager.fetchAccounts(lastSyncedAt: lastSyncDate)
@@ -330,18 +356,27 @@ class SyncManager: ObservableObject {
                   let id = UUID(uuidString: idString),
                   let name = accountData["name"] as? String,
                   let typeString = accountData["type"] as? String,
-                  let type = AccountType(rawValue: typeString),
-                  let balance = accountData["balance"] as? Double else {
+                  let type = AccountType(rawValue: typeString) else {
                 continue
             }
+            let remoteOpening = decimal(accountData["opening_balance"]) ?? 0
+            let remoteConfirmedAt = parseISODate(accountData["balance_confirmed_at"] as? String ?? "")
             
             let existingAccount = try localDB.fetchAccount(by: id)
             
             if let account = existingAccount {
+                let remoteUpdated = parseISODate(accountData["updated_at"] as? String ?? "") ?? .distantPast
+                if account.syncStatus == "pending" && account.updatedAt > remoteUpdated {
+                    continue   // local edit is newer; it goes up on the next push
+                }
                 // Update existing
                 account.name = name
                 account.type = type
-                account.balance = Decimal(balance)
+                // A remote opening balance replaces ours only once someone confirmed it
+                if let remoteConfirmedAt {
+                    account.openingBalance = remoteOpening
+                    account.balanceConfirmedAt = remoteConfirmedAt
+                }
                 account.currency = accountData["currency"] as? String ?? "USD"
                 account.accountNumber = accountData["account_number"] as? String
                 account.institutionName = accountData["institution_name"] as? String
@@ -351,7 +386,7 @@ class SyncManager: ObservableObject {
                 account.lastSyncedAt = Date()
                 
                 if let updatedAtString = accountData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     account.updatedAt = updatedAt
                 }
             } else {
@@ -361,7 +396,7 @@ class SyncManager: ObservableObject {
                     userId: UUID(uuidString: accountData["user_id"] as? String ?? ""),
                     name: name,
                     type: type,
-                    balance: Decimal(balance),
+                    openingBalance: remoteOpening,
                     currency: accountData["currency"] as? String ?? "USD",
                     accountNumber: accountData["account_number"] as? String,
                     institutionName: accountData["institution_name"] as? String,
@@ -370,14 +405,19 @@ class SyncManager: ObservableObject {
                     syncStatus: "synced",
                     lastSyncedAt: Date()
                 )
+                newAccount.balanceConfirmedAt = remoteConfirmedAt
+                if remoteConfirmedAt == nil {
+                    // Seeded once transactions are pulled, from the v1.0 stored balance
+                    legacyBalances[id] = decimal(accountData["balance"]) ?? 0
+                }
                 
                 if let createdAtString = accountData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     newAccount.createdAt = createdAt
                 }
                 
                 if let updatedAtString = accountData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     newAccount.updatedAt = updatedAt
                 }
                 
@@ -410,7 +450,7 @@ class SyncManager: ObservableObject {
                 existing.syncStatus = "synced"
                 existing.lastSyncedAt = Date()
                 if let createdAtString = categoryData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     existing.createdAt = createdAt
                 }
             } else {
@@ -426,7 +466,7 @@ class SyncManager: ObservableObject {
                     lastSyncedAt: Date()
                 )
                 if let createdAtString = categoryData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     newCategory.createdAt = createdAt
                 }
                 try localDB.insert(newCategory)
@@ -438,25 +478,39 @@ class SyncManager: ObservableObject {
     }
     
     private func pullTransactions() async throws {
-        let remoteTransactions = try await supabaseManager.fetchTransactions(lastSyncedAt: lastSyncDate)
+        let cursor = UserDefaults.standard.string(forKey: transactionsCursorKey)
+        let remoteTransactions = try await supabaseManager.fetchTransactions(updatedSince: cursor)
+        var newestUpdated: Date?
         
         for transactionData in remoteTransactions {
+            let remoteUpdated = parseISODate(transactionData["updated_at"] as? String ?? "")
+            if let remoteUpdated, remoteUpdated > (newestUpdated ?? .distantPast) {
+                newestUpdated = remoteUpdated
+            }
             guard let idString = transactionData["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let accountIdString = transactionData["account_id"] as? String,
                   let accountId = UUID(uuidString: accountIdString),
-                  let amount = transactionData["amount"] as? Double,
+                  let amount = decimal(transactionData["amount"]),
                   let typeString = transactionData["type"] as? String,
                   let type = TransactionType(rawValue: typeString),
                   let description = transactionData["description"] as? String else {
                 continue
             }
             
+            let transferAccountId = UUID(uuidString: transactionData["transfer_account_id"] as? String ?? "")
+            let deletedAt = parseISODate(transactionData["deleted_at"] as? String ?? "")
+            
             if let existing = try localDB.fetchTransaction(by: id) {
+                if existing.syncStatus == "pending" && existing.updatedAt > (remoteUpdated ?? .distantPast) {
+                    continue   // local edit is newer; it goes up on the next push
+                }
                 existing.userId = UUID(uuidString: transactionData["user_id"] as? String ?? existing.userId?.uuidString ?? "")
                 existing.accountId = accountId
                 existing.categoryId = UUID(uuidString: transactionData["category_id"] as? String ?? existing.categoryId?.uuidString ?? "")
-                existing.amount = Decimal(amount)
+                existing.transferAccountId = transferAccountId
+                existing.deletedAt = deletedAt
+                existing.amount = amount
                 existing.type = type
                 existing.transactionDescription = description
                 existing.notes = transactionData["notes"] as? String
@@ -466,15 +520,15 @@ class SyncManager: ObservableObject {
                 existing.syncStatus = "synced"
                 existing.lastSyncedAt = Date()
                 if let transactionDateString = transactionData["transaction_date"] as? String,
-                   let transactionDate = ISO8601DateFormatter().date(from: transactionDateString) {
+                   let transactionDate = parseISODate(transactionDateString) {
                     existing.transactionDate = transactionDate
                 }
                 if let createdAtString = transactionData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     existing.createdAt = createdAt
                 }
                 if let updatedAtString = transactionData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     existing.updatedAt = updatedAt
                 }
             } else {
@@ -482,8 +536,9 @@ class SyncManager: ObservableObject {
                     id: id,
                     userId: UUID(uuidString: transactionData["user_id"] as? String ?? ""),
                     accountId: accountId,
+                    transferAccountId: transferAccountId,
                     categoryId: UUID(uuidString: transactionData["category_id"] as? String ?? ""),
-                    amount: Decimal(amount),
+                    amount: amount,
                     type: type,
                     transactionDescription: description,
                     notes: transactionData["notes"] as? String,
@@ -493,16 +548,17 @@ class SyncManager: ObservableObject {
                     syncStatus: "synced",
                     lastSyncedAt: Date()
                 )
+                newTransaction.deletedAt = deletedAt
                 if let transactionDateString = transactionData["transaction_date"] as? String,
-                   let transactionDate = ISO8601DateFormatter().date(from: transactionDateString) {
+                   let transactionDate = parseISODate(transactionDateString) {
                     newTransaction.transactionDate = transactionDate
                 }
                 if let createdAtString = transactionData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     newTransaction.createdAt = createdAt
                 }
                 if let updatedAtString = transactionData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     newTransaction.updatedAt = updatedAt
                 }
                 try localDB.insert(newTransaction)
@@ -510,6 +566,12 @@ class SyncManager: ObservableObject {
         }
         
         try localDB.save()
+        if let newestUpdated {
+            // Step back a second so rows sharing the newest timestamp are never skipped;
+            // re-applying a row is harmless.
+            UserDefaults.standard.set(isoWithFractionalSeconds(newestUpdated.addingTimeInterval(-1)),
+                                      forKey: transactionsCursorKey)
+        }
     }
     
     private func pullGoals() async throws {
@@ -519,7 +581,7 @@ class SyncManager: ObservableObject {
             guard let idString = goalData["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let title = goalData["title"] as? String,
-                  let targetAmount = goalData["target_amount"] as? Double else {
+                  let targetAmount = decimal(goalData["target_amount"]) else {
                 continue
             }
             
@@ -527,23 +589,23 @@ class SyncManager: ObservableObject {
                 existing.userId = UUID(uuidString: goalData["user_id"] as? String ?? existing.userId?.uuidString ?? "")
                 existing.title = title
                 existing.goalDescription = goalData["description"] as? String
-                existing.targetAmount = Decimal(targetAmount)
-                existing.currentAmount = Decimal(goalData["current_amount"] as? Double ?? 0)
+                existing.targetAmount = targetAmount
+                existing.currentAmount = decimal(goalData["current_amount"]) ?? 0
                 existing.category = goalData["category"] as? String
                 existing.priority = goalData["priority"] as? String
                 existing.status = goalData["status"] as? String ?? existing.status
                 existing.syncStatus = "synced"
                 existing.lastSyncedAt = Date()
                 if let targetDateString = goalData["target_date"] as? String,
-                   let targetDate = ISO8601DateFormatter().date(from: targetDateString) {
+                   let targetDate = parseISODate(targetDateString) {
                     existing.targetDate = targetDate
                 }
                 if let createdAtString = goalData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     existing.createdAt = createdAt
                 }
                 if let updatedAtString = goalData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     existing.updatedAt = updatedAt
                 }
             } else {
@@ -552,8 +614,8 @@ class SyncManager: ObservableObject {
                     userId: UUID(uuidString: goalData["user_id"] as? String ?? ""),
                     title: title,
                     goalDescription: goalData["description"] as? String,
-                    targetAmount: Decimal(targetAmount),
-                    currentAmount: Decimal(goalData["current_amount"] as? Double ?? 0),
+                    targetAmount: targetAmount,
+                    currentAmount: decimal(goalData["current_amount"]) ?? 0,
                     category: goalData["category"] as? String,
                     priority: goalData["priority"] as? String,
                     status: goalData["status"] as? String ?? "active",
@@ -561,15 +623,15 @@ class SyncManager: ObservableObject {
                     lastSyncedAt: Date()
                 )
                 if let targetDateString = goalData["target_date"] as? String,
-                   let targetDate = ISO8601DateFormatter().date(from: targetDateString) {
+                   let targetDate = parseISODate(targetDateString) {
                     newGoal.targetDate = targetDate
                 }
                 if let createdAtString = goalData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     newGoal.createdAt = createdAt
                 }
                 if let updatedAtString = goalData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     newGoal.updatedAt = updatedAt
                 }
                 try localDB.insert(newGoal)
@@ -586,10 +648,10 @@ class SyncManager: ObservableObject {
             guard let idString = loanData["id"] as? String,
                   let id = UUID(uuidString: idString),
                   let loanName = loanData["loan_name"] as? String,
-                  let originalAmount = loanData["original_amount"] as? Double,
-                  let remainingBalance = loanData["remaining_balance"] as? Double,
-                  let interestRate = loanData["interest_rate"] as? Double,
-                  let monthlyPayment = loanData["monthly_payment"] as? Double else {
+                  let originalAmount = decimal(loanData["original_amount"]),
+                  let remainingBalance = decimal(loanData["remaining_balance"]),
+                  let interestRate = decimal(loanData["interest_rate"]),
+                  let monthlyPayment = decimal(loanData["monthly_payment"]) else {
                 continue
             }
             
@@ -598,31 +660,31 @@ class SyncManager: ObservableObject {
                 existing.loanName = loanName
                 existing.loanType = loanData["loan_type"] as? String
                 existing.lenderName = loanData["lender_name"] as? String
-                existing.originalAmount = Decimal(originalAmount)
-                existing.remainingBalance = Decimal(remainingBalance)
-                existing.interestRate = Decimal(interestRate)
-                existing.monthlyPayment = Decimal(monthlyPayment)
+                existing.originalAmount = originalAmount
+                existing.remainingBalance = remainingBalance
+                existing.interestRate = interestRate
+                existing.monthlyPayment = monthlyPayment
                 existing.status = loanData["status"] as? String ?? existing.status
                 existing.syncStatus = "synced"
                 existing.lastSyncedAt = Date()
                 if let startDateString = loanData["start_date"] as? String,
-                   let startDate = ISO8601DateFormatter().date(from: startDateString) {
+                   let startDate = parseISODate(startDateString) {
                     existing.startDate = startDate
                 }
                 if let endDateString = loanData["end_date"] as? String,
-                   let endDate = ISO8601DateFormatter().date(from: endDateString) {
+                   let endDate = parseISODate(endDateString) {
                     existing.endDate = endDate
                 }
                 if let nextPaymentDateString = loanData["next_payment_date"] as? String,
-                   let nextPaymentDate = ISO8601DateFormatter().date(from: nextPaymentDateString) {
+                   let nextPaymentDate = parseISODate(nextPaymentDateString) {
                     existing.nextPaymentDate = nextPaymentDate
                 }
                 if let createdAtString = loanData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     existing.createdAt = createdAt
                 }
                 if let updatedAtString = loanData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     existing.updatedAt = updatedAt
                 }
             } else {
@@ -632,32 +694,32 @@ class SyncManager: ObservableObject {
                     loanName: loanName,
                     loanType: loanData["loan_type"] as? String,
                     lenderName: loanData["lender_name"] as? String,
-                    originalAmount: Decimal(originalAmount),
-                    remainingBalance: Decimal(remainingBalance),
-                    interestRate: Decimal(interestRate),
-                    monthlyPayment: Decimal(monthlyPayment),
+                    originalAmount: originalAmount,
+                    remainingBalance: remainingBalance,
+                    interestRate: interestRate,
+                    monthlyPayment: monthlyPayment,
                     status: loanData["status"] as? String ?? "active",
                     syncStatus: "synced",
                     lastSyncedAt: Date()
                 )
                 if let startDateString = loanData["start_date"] as? String,
-                   let startDate = ISO8601DateFormatter().date(from: startDateString) {
+                   let startDate = parseISODate(startDateString) {
                     newLoan.startDate = startDate
                 }
                 if let endDateString = loanData["end_date"] as? String,
-                   let endDate = ISO8601DateFormatter().date(from: endDateString) {
+                   let endDate = parseISODate(endDateString) {
                     newLoan.endDate = endDate
                 }
                 if let nextPaymentDateString = loanData["next_payment_date"] as? String,
-                   let nextPaymentDate = ISO8601DateFormatter().date(from: nextPaymentDateString) {
+                   let nextPaymentDate = parseISODate(nextPaymentDateString) {
                     newLoan.nextPaymentDate = nextPaymentDate
                 }
                 if let createdAtString = loanData["created_at"] as? String,
-                   let createdAt = ISO8601DateFormatter().date(from: createdAtString) {
+                   let createdAt = parseISODate(createdAtString) {
                     newLoan.createdAt = createdAt
                 }
                 if let updatedAtString = loanData["updated_at"] as? String,
-                   let updatedAt = ISO8601DateFormatter().date(from: updatedAtString) {
+                   let updatedAt = parseISODate(updatedAtString) {
                     newLoan.updatedAt = updatedAt
                 }
                 try localDB.insert(newLoan)
@@ -666,4 +728,42 @@ class SyncManager: ObservableObject {
         
         try localDB.save()
     }
+}
+
+// MARK: - Wire format helpers
+
+/// Money goes up as a string; PostgREST casts it to numeric exactly.
+fileprivate func moneyString(_ value: Decimal) -> String {
+    NSDecimalNumber(decimal: value).stringValue
+}
+
+/// Parses a numeric column without passing through Double.
+fileprivate func decimal(_ value: Any?) -> Decimal? {
+    if let s = value as? String { return Decimal(string: s, locale: Locale(identifier: "en_US_POSIX")) }
+    if let n = value as? NSNumber { return Decimal(string: n.stringValue, locale: Locale(identifier: "en_US_POSIX")) }
+    return nil
+}
+
+/// Accepts Supabase timestamps with or without fractional seconds (any number
+/// of digits) and plain DATE values such as 2025-08-09.
+fileprivate func parseISODate(_ string: String) -> Date? {
+    guard !string.isEmpty else { return nil }
+    // Trim fractional seconds to milliseconds, which ISO8601DateFormatter handles reliably
+    let trimmed = string.replacingOccurrences(
+        of: #"(\.\d{3})\d+"#, with: "$1", options: .regularExpression)
+    let withFraction = ISO8601DateFormatter()
+    withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let d = withFraction.date(from: trimmed) { return d }
+    if let d = ISO8601DateFormatter().date(from: trimmed) { return d }
+    let dateOnly = DateFormatter()
+    dateOnly.locale = Locale(identifier: "en_US_POSIX")
+    dateOnly.timeZone = TimeZone(identifier: "UTC")
+    dateOnly.dateFormat = "yyyy-MM-dd"
+    return dateOnly.date(from: string)
+}
+
+fileprivate func isoWithFractionalSeconds(_ date: Date) -> String {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f.string(from: date)
 }

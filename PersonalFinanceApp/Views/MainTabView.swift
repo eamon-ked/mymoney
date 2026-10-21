@@ -9,6 +9,7 @@ import SwiftUI
 
 struct MainTabView: View {
     @StateObject private var authViewModel = AuthViewModel()
+    @State private var showingBalanceRepair = false
     
     var body: some View {
         if authViewModel.isAuthenticated {
@@ -48,6 +49,12 @@ struct MainTabView: View {
                         Image(systemName: "gear")
                         Text("Settings")
                     }
+            }
+            .onAppear {
+                if !BalanceRepair.isDone { showingBalanceRepair = true }
+            }
+            .sheet(isPresented: $showingBalanceRepair) {
+                RepairBalancesView()
             }
         } else {
             AuthView()

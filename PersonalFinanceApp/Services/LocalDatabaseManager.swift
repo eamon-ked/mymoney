@@ -22,7 +22,8 @@ class LocalDatabaseManager: ObservableObject {
             Category.self,
             Transaction.self,
             Goal.self,
-            PrivateLoan.self
+            PrivateLoan.self,
+            CategoryBudget.self
         ])
         
         let modelConfiguration = ModelConfiguration(
@@ -213,6 +214,24 @@ class LocalDatabaseManager: ObservableObject {
         )
         descriptor.fetchLimit = 100 // Limit for performance
         return try modelContext.fetch(descriptor)
+    }
+    
+    /// Every non-deleted transaction, unlimited; for budget math only
+    func fetchAllActiveTransactions() throws -> [Transaction] {
+        try modelContext.fetch(FetchDescriptor<Transaction>(
+            predicate: #Predicate { $0.deletedAt == nil }))
+    }
+    
+    // MARK: - Budget Operations
+    
+    func fetchCategoryBudgets() throws -> [CategoryBudget] {
+        try modelContext.fetch(FetchDescriptor<CategoryBudget>(
+            predicate: #Predicate { $0.deletedAt == nil }))
+    }
+    
+    func fetchCategoryBudget(categoryId: UUID, month: String) throws -> CategoryBudget? {
+        try modelContext.fetch(FetchDescriptor<CategoryBudget>(
+            predicate: #Predicate { $0.categoryId == categoryId && $0.month == month && $0.deletedAt == nil })).first
     }
     
     // MARK: - Category Operations

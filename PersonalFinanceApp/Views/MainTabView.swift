@@ -14,6 +14,12 @@ struct MainTabView: View {
     var body: some View {
         if authViewModel.isAuthenticated {
             TabView {
+                BudgetView()
+                    .tabItem {
+                        Image(systemName: "chart.pie.fill")
+                        Text("Budget")
+                    }
+                
                 DashboardView()
                     .tabItem {
                         Image(systemName: "house.fill")
@@ -109,6 +115,8 @@ struct SettingsView: View {
                             UserDefaults.standard.set(value, forKey: "includeGoalSavingsInMonthly")
                         }
                 }
+                PayFirstSettingsSection()
+                
                 // Sync controls hidden per requirements
                 
                 Section("Account") {

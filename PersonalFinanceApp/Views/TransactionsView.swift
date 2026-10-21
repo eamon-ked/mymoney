@@ -14,6 +14,8 @@ struct TransactionsView: View {
     @State private var showingAddTransaction = false
     @State private var searchText = ""
     @State private var selectedType: TransactionType? = nil
+    @State private var savedIncome: Transaction?
+    @State private var paydayIncome: Transaction?
     
     var filteredTransactions: [Transaction] {
         var transactions = repository.transactions
@@ -81,16 +83,22 @@ struct TransactionsView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingAddTransaction) {
+            .sheet(isPresented: $showingAddTransaction, onDismiss: offerPayFirst) {
                 AddTransactionView(
                     transactionRepository: repository,
                     accountRepository: accountRepository,
-                    categoryRepository: categoryRepository
+                    categoryRepository: categoryRepository,
+                    onSaved: { transaction in
+                        if transaction.type == .income { savedIncome = transaction }
+                    }
                 )
                 .onAppear {
                     // Ensure the latest accounts are available in the picker
                     accountRepository.loadAccounts()
                 }
+            }
+            .sheet(item: $paydayIncome) { income in
+                PaydaySheet(income: income.amount, incomeDate: income.transactionDate)
             }
             .refreshable {
                 let generator = UIImpactFeedbackGenerator(style: .light)
@@ -98,6 +106,15 @@ struct TransactionsView: View {
                 repository.loadTransactions()
             }
         }
+    }
+    
+    /// Payday: offer to fund the pay-first category before anything else
+    private func offerPayFirst() {
+        guard let income = savedIncome else { return }
+        savedIncome = nil
+        let onBudget = accountRepository.getAccount(by: income.accountId)?.onBudget ?? true
+        let hasPayFirst = categoryRepository.categories.contains { $0.isPayFirst && $0.type == .expense }
+        if onBudget && hasPayFirst { paydayIncome = income }
     }
 }
 
@@ -198,6 +215,7 @@ struct AddTransactionView: View {
     @ObservedObject var transactionRepository: TransactionRepository
     @ObservedObject var accountRepository: AccountRepository
     @ObservedObject var categoryRepository: CategoryRepository
+    var onSaved: (Transaction) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
     
     @State private var description = ""
@@ -391,6 +409,7 @@ struct AddTransactionView: View {
         )
         
         transactionRepository.addTransaction(transaction)
+        onSaved(transaction)
         dismiss()
     }
 }

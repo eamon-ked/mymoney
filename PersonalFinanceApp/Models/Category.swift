@@ -29,6 +29,10 @@ final class Category {
     var color: String
     var icon: String
     var isDefault: Bool
+    /// Monthly amount this category should get; drives "needed this month"
+    var monthlyTarget: Decimal? = nil
+    /// The savings category funded first on payday
+    var isPayFirst: Bool = false
     var syncStatus: String
     var lastSyncedAt: Date?
     var createdAt: Date

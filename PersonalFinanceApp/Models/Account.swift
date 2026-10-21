@@ -36,6 +36,8 @@ final class Account {
     var balance: Decimal
     var openingBalance: Decimal = 0
     var balanceConfirmedAt: Date? = nil
+    /// Off-budget accounts (investments by default) never feed Ready to Assign
+    var onBudget: Bool = true
     var currency: String
     var accountNumber: String?
     var institutionName: String?
@@ -55,7 +57,7 @@ final class Account {
         name: String,
         type: AccountType,
         openingBalance: Decimal = 0,
-        currency: String = "USD",
+        currency: String = "AED",
         accountNumber: String? = nil,
         institutionName: String? = nil,
         color: String = "#007AFF",
@@ -72,6 +74,7 @@ final class Account {
         self.balance = openingBalance
         self.openingBalance = openingBalance
         self.currency = currency
+        self.onBudget = type != .investment
         self.accountNumber = accountNumber
         self.institutionName = institutionName
         self.color = color

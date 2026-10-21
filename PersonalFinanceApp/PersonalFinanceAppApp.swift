@@ -18,7 +18,8 @@ struct PersonalFinanceAppApp: App {
             Category.self,
             Transaction.self,
             Goal.self,
-            PrivateLoan.self
+            PrivateLoan.self,
+            CategoryBudget.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

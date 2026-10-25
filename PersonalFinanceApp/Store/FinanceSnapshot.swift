@@ -190,6 +190,15 @@ struct FinanceSnapshot {
                                      firstPayment: nextPaymentDate(for: debt), calendar: calendar)
     }
 
+    /// Spendable balances ahead, as bills are paid and income arrives
+    func cashForecast(days: Int) -> CashForecast {
+        let spendable = accounts.filter(\.spendable)
+        let end = endOfDay(calendar.date(byAdding: .day, value: days, to: today) ?? today)
+        return CashForecaster.forecast(start: spendable.map { balance($0.id) }.sum(currency), items: items,
+                                       occurrences: occurrences, spendableAccountIds: Set(spendable.map(\.id)),
+                                       today: today, through: end, calendar: calendar)
+    }
+
     // MARK: - Savings
 
     var goals: [Reserve] { reserves.filter(\.isGoal) }

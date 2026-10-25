@@ -56,7 +56,7 @@ struct HomeView: View {
             .sheet(isPresented: $showingSafeToSpend) { SafeToSpendView() }
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
-            .sheet(item: $paying) { PayOccurrenceSheet(occurrence: $0) }
+            .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
         }
     }
 
@@ -141,6 +141,11 @@ struct HomeView: View {
                 ForEach(Array(bills)) { occ in
                     Button { paying = occ } label: { OccurrenceRow(occurrence: occ, snapshot: snapshot) }
                         .buttonStyle(.plain)
+                }
+            }
+            if !snapshot.items.isEmpty {
+                NavigationLink { ForecastView() } label: {
+                    Label("See your balance ahead", systemImage: "chart.line.uptrend.xyaxis")
                 }
             }
         } header: {

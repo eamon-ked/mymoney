@@ -26,6 +26,19 @@ struct PlanView: View {
                 Section { banner.bannerRow() }
 
                 Section {
+                    NavigationLink { ForecastView() } label: {
+                        let fc = snapshot.cashForecast(days: 60)
+                        ListRow(title: "Money ahead",
+                                caption: fc.firstShortfall.map { "Short on " + $0.formatted(.dateTime.day().month(.abbreviated)) }
+                                    ?? "Lowest in 60 days: \(fc.lowest.compact)",
+                                symbol: "chart.line.uptrend.xyaxis", color: fc.firstShortfall == nil ? Palette.plan : .red) {
+                            EmptyView()
+                        }
+                    }
+                    .accessibilityIdentifier("moneyAhead")
+                }
+
+                Section {
                     let bills = snapshot.items.filter { $0.direction == .outflow }
                     if bills.isEmpty {
                         EmptyStateView(symbol: "calendar.badge.plus", title: "No bills yet",
@@ -96,13 +109,7 @@ struct PlanView: View {
                 GlobalAddButton()
             }
             .sheet(item: $editingItem) { PlannedItemEditor(sheet: $0) }
-            .sheet(item: $paying) { occ in
-                if let debt = snapshot.item(for: occ)?.debtId.flatMap(snapshot.account) {
-                    PayDebtSheet(debt: debt, occurrence: occ)
-                } else {
-                    PayOccurrenceSheet(occurrence: occ)
-                }
-            }
+            .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
             .sheet(isPresented: $addingReserve) { ReserveEditor() }
             .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
             .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }

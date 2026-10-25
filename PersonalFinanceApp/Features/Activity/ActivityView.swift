@@ -61,7 +61,7 @@ struct ActivityView: View {
             .navigationTitle("Activity")
             .toolbar { GlobalAddButton() }
             .sheet(item: $selected) { EntryDetailView(record: $0) }
-            .sheet(item: $paying) { PayOccurrenceSheet(occurrence: $0) }
+            .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
         }
     }
 

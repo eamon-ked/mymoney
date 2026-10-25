@@ -47,7 +47,16 @@ struct RootView: View {
             } else if store.settings.biometricLock && !unlocked {
                 LockView(unlock: authenticate)
             } else {
+                #if DEBUG
+                // Screenshot helper: -screen forecast
+                if UserDefaults.standard.string(forKey: "screen") == "forecast" {
+                    NavigationStack { ForecastView() }
+                } else {
+                    tabs
+                }
+                #else
                 tabs
+                #endif
             }
         }
         .onAppear {

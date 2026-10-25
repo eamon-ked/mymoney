@@ -68,6 +68,41 @@ struct BalanceTests {
         #expect(b.balance == 450)
     }
 
+    @Test func editChangingAmountAccountAndTypeKeepsBalancesRight() throws {
+        let a = try makeAccount(1000)
+        let b = try makeAccount(200)
+        defer { try? cleanUp([a, b]) }
+        
+        let t = Transaction(accountId: a.id, amount: 100, type: .expense, transactionDescription: "Dinner")
+        repository.addTransaction(t)
+        #expect(a.balance == 900)
+        
+        // Turn the expense into a 300 transfer from B to A, as the edit form would
+        let previousAccountId = t.accountId
+        let previousTransferAccountId = t.transferAccountId
+        t.accountId = b.id
+        t.transferAccountId = a.id
+        t.type = .transfer
+        t.amount = 300
+        repository.updateTransaction(t, previousAccountId: previousAccountId,
+                                     previousTransferAccountId: previousTransferAccountId)
+        #expect(a.balance == 1300)
+        #expect(b.balance == -100)
+    }
+    
+    @Test func writesKeepAccountScopedListScoped() throws {
+        let a = try makeAccount(0)
+        let b = try makeAccount(0)
+        defer { try? cleanUp([a, b]) }
+        
+        repository.addTransaction(Transaction(accountId: b.id, amount: 5, type: .expense, transactionDescription: "Other account"))
+        repository.loadTransactions(for: a.id)
+        let t = Transaction(accountId: a.id, amount: 10, type: .income, transactionDescription: "Mine")
+        repository.addTransaction(t)
+        #expect(repository.transactions.allSatisfy { $0.accountId == a.id || $0.transferAccountId == a.id })
+        #expect(repository.transactions.contains { $0.id == t.id })
+    }
+    
     @Test func transferMovesMoneyBothWays() throws {
         let a = try makeAccount(1000)
         let b = try makeAccount(0)

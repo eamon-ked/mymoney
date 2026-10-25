@@ -16,6 +16,7 @@ struct TransactionsView: View {
     @State private var selectedType: TransactionType? = nil
     @State private var savedIncome: Transaction?
     @State private var paydayIncome: Transaction?
+    @State private var editingTransaction: Transaction?
     @State private var monthIn: Decimal = 0
     @State private var monthOut: Decimal = 0
     
@@ -86,8 +87,11 @@ struct TransactionsView: View {
                 ForEach(days, id: \.day) { group in
                     Section {
                         ForEach(group.items, id: \.id) { transaction in
-                            TransactionRowView(transaction: transaction, accountNames: accountNames, categoriesById: categoriesById)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button { editingTransaction = transaction } label: {
+                                TransactionRowView(transaction: transaction, accountNames: accountNames, categoriesById: categoriesById)
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button("Delete", role: .destructive) {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             repository.deleteTransaction(transaction)
@@ -130,6 +134,14 @@ struct TransactionsView: View {
                     // Ensure the latest accounts are available in the picker
                     accountRepository.loadAccounts()
                 }
+            }
+            .sheet(item: $editingTransaction, onDismiss: refreshTotals) { transaction in
+                AddTransactionView(
+                    transactionRepository: repository,
+                    accountRepository: accountRepository,
+                    categoryRepository: categoryRepository,
+                    editing: transaction
+                )
             }
             .sheet(item: $paydayIncome) { income in
                 PaydaySheet(income: income.amount, incomeDate: income.transactionDate)
@@ -265,7 +277,11 @@ struct AddTransactionView: View {
     @ObservedObject var accountRepository: AccountRepository
     @ObservedObject var categoryRepository: CategoryRepository
     var onSaved: (Transaction) -> Void = { _ in }
+    /// When set, the form edits this transaction instead of adding a new one
+    var editing: Transaction? = nil
     @Environment(\.dismiss) private var dismiss
+    @State private var didPrefill = false
+    @State private var confirmingDelete = false
     
     @State private var description = ""
     @State private var amount = ""
@@ -299,8 +315,13 @@ struct AddTransactionView: View {
                             Text(type.displayName).tag(type)
                         }
                     }
-                    .onChange(of: selectedType) { _, _ in
-                        selectedCategory = nil
+                    .onChange(of: selectedType) { _, newType in
+                        // Keep the category only if it still fits the type
+                        if let category = selectedCategory,
+                           !availableCategories.contains(where: { $0.id == category.id }) {
+                            selectedCategory = nil
+                        }
+                        if newType != .transfer { selectedDestinationAccount = nil }
                     }
                     
                     DatePicker("Date", selection: $date, displayedComponents: .date)
@@ -397,9 +418,25 @@ struct AddTransactionView: View {
                         }
                     }
                 }
+                
+                if editing != nil {
+                    Section {
+                        Button("Delete transaction", role: .destructive) { confirmingDelete = true }
+                            .frame(maxWidth: .infinity)
+                    }
+                }
             }
-            .navigationTitle("New transaction")
+            .navigationTitle(editing == nil ? "New transaction" : "Edit transaction")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear(perform: prefill)
+            .confirmationDialog("Delete this transaction?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let editing { transactionRepository.deleteTransaction(editing) }
+                    dismiss()
+                }
+            } message: {
+                Text("Account balances and your budget update straight away.")
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
@@ -418,7 +455,9 @@ struct AddTransactionView: View {
     }
     
     private var canSave: Bool {
-        guard !description.isEmpty, !amount.isEmpty, let account = selectedAccount else { return false }
+        guard !description.trimmingCharacters(in: .whitespaces).isEmpty,
+              let value = Money.parse(amount), value > 0,
+              let account = selectedAccount else { return false }
         if selectedType == .transfer {
             guard let destination = selectedDestinationAccount, destination.id != account.id else { return false }
         }
@@ -437,23 +476,61 @@ struct AddTransactionView: View {
         tags.removeAll { $0 == tag }
     }
     
+    /// Fills the form from the transaction being edited, once
+    private func prefill() {
+        guard let t = editing, !didPrefill else { return }
+        didPrefill = true
+        description = t.transactionDescription
+        amount = Money.plain(t.amount)
+        selectedType = t.type
+        selectedAccount = accountRepository.accounts.first { $0.id == t.accountId }
+        selectedDestinationAccount = t.transferAccountId.flatMap { id in accountRepository.accounts.first { $0.id == id } }
+        selectedCategory = t.categoryId.flatMap { id in categoryRepository.categories.first { $0.id == id } }
+        notes = t.notes ?? ""
+        date = t.transactionDate
+        tags = t.tags
+        isRecurring = t.isRecurring
+        recurringFrequency = t.recurringFrequency ?? "Monthly"
+    }
+    
     private func saveTransaction() {
-        guard let account = selectedAccount,
-              let amountDecimal = Decimal(string: amount) else {
+        guard let account = selectedAccount, let amountDecimal = Money.parse(amount) else { return }
+        let transferAccountId = selectedType == .transfer ? selectedDestinationAccount?.id : nil
+        let categoryId = selectedType == .transfer ? nil : selectedCategory?.id
+        let recurring = isRecurring && selectedType == .income
+        
+        if let t = editing {
+            // Remember where it was, so both old and new accounts get recomputed
+            let previousAccountId = t.accountId
+            let previousTransferAccountId = t.transferAccountId
+            t.accountId = account.id
+            t.transferAccountId = transferAccountId
+            t.categoryId = categoryId
+            t.amount = amountDecimal
+            t.type = selectedType
+            t.transactionDescription = description.trimmingCharacters(in: .whitespaces)
+            t.notes = notes.isEmpty ? nil : notes
+            t.transactionDate = date
+            t.isRecurring = recurring
+            t.recurringFrequency = recurring ? recurringFrequency : nil
+            t.tags = tags
+            transactionRepository.updateTransaction(t, previousAccountId: previousAccountId,
+                                                    previousTransferAccountId: previousTransferAccountId)
+            dismiss()
             return
         }
         
         let transaction = Transaction(
             accountId: account.id,
-            transferAccountId: selectedType == .transfer ? selectedDestinationAccount?.id : nil,
-            categoryId: selectedType == .transfer ? nil : selectedCategory?.id,
+            transferAccountId: transferAccountId,
+            categoryId: categoryId,
             amount: amountDecimal,
             type: selectedType,
-            transactionDescription: description,
+            transactionDescription: description.trimmingCharacters(in: .whitespaces),
             notes: notes.isEmpty ? nil : notes,
             transactionDate: date,
-            isRecurring: isRecurring && selectedType == .income,
-            recurringFrequency: (isRecurring && selectedType == .income) ? recurringFrequency : nil,
+            isRecurring: recurring,
+            recurringFrequency: recurring ? recurringFrequency : nil,
             tags: tags
         )
         

@@ -17,11 +17,16 @@ class TransactionRepository: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     
+    /// Repeats whichever load the screen asked for last, so a write never
+    /// swaps one account's history for the full list or shrinks the list
+    private var reloadCurrent: (() -> Void)?
+    
     init() {
         loadTransactions()
     }
     
     func loadTransactions(limit: Int = 100) {
+        reloadCurrent = { [weak self] in self?.loadTransactions(limit: limit) }
         isLoading = true
         error = nil
         
@@ -35,6 +40,7 @@ class TransactionRepository: ObservableObject {
     }
     
     func loadTransactions(for accountId: UUID) {
+        reloadCurrent = { [weak self] in self?.loadTransactions(for: accountId) }
         isLoading = true
         error = nil
         
@@ -54,7 +60,7 @@ class TransactionRepository: ObservableObject {
             }
             try localDB.insert(transaction)
             try refreshBalances(transaction.accountId, transaction.transferAccountId)
-            loadTransactions()
+            reload()
             
             // Trigger debounced sync instead of immediate sync
             syncManager.triggerSync()
@@ -69,10 +75,11 @@ class TransactionRepository: ObservableObject {
         do {
             transaction.updatedAt = Date()
             transaction.syncStatus = "pending"
+            transaction.category = try transaction.categoryId.flatMap { try localDB.fetchCategory(by: $0) }
             try localDB.save()
             try refreshBalances(previousAccountId, previousTransferAccountId,
                                 transaction.accountId, transaction.transferAccountId)
-            loadTransactions()
+            reload()
             
             // Trigger debounced sync instead of immediate sync
             syncManager.triggerSync()
@@ -89,13 +96,17 @@ class TransactionRepository: ObservableObject {
             transaction.syncStatus = "pending"
             try localDB.save()
             try refreshBalances(transaction.accountId, transaction.transferAccountId)
-            loadTransactions()
+            reload()
             
             // Trigger debounced sync instead of immediate sync
             syncManager.triggerSync()
         } catch {
             self.error = error.localizedDescription
         }
+    }
+    
+    private func reload() {
+        if let reloadCurrent { reloadCurrent() } else { loadTransactions() }
     }
     
     private func refreshBalances(_ ids: UUID?...) throws {

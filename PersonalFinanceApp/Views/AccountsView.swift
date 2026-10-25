@@ -241,7 +241,17 @@ struct AccountDetailView: View {
     let account: Account
     @ObservedObject var accountRepository: AccountRepository
     @StateObject private var transactionRepository = TransactionRepository()
+    @StateObject private var categoryRepository = CategoryRepository()
     @State private var onBudget = true
+    @State private var editingTransaction: Transaction?
+    
+    private var accountNames: [UUID: String] {
+        Dictionary(accountRepository.accounts.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+    }
+    
+    private var categoriesById: [UUID: Category] {
+        Dictionary(categoryRepository.categories.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
     
     var body: some View {
         List {
@@ -274,7 +284,13 @@ struct AccountDetailView: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(transactionRepository.transactions, id: \.id) { transaction in
-                        TransactionRowView(transaction: transaction, viewingAccountId: account.id)
+                        Button { editingTransaction = transaction } label: {
+                            TransactionRowView(transaction: transaction,
+                                               accountNames: accountNames,
+                                               categoriesById: categoriesById,
+                                               viewingAccountId: account.id)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -282,6 +298,14 @@ struct AccountDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(account.name)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editingTransaction) { transaction in
+            AddTransactionView(
+                transactionRepository: transactionRepository,
+                accountRepository: accountRepository,
+                categoryRepository: categoryRepository,
+                editing: transaction
+            )
+        }
         .onAppear {
             onBudget = account.onBudget
             transactionRepository.loadTransactions(for: account.id)

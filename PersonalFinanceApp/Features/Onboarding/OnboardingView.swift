@@ -51,6 +51,7 @@ struct OnboardingView: View {
 
 private struct WelcomeStep: View {
     let next: () -> Void
+    @State private var restoring = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -73,10 +74,13 @@ private struct WelcomeStep: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .accessibilityIdentifier("getStarted")
+            Button("Restore from a backup") { restoring = true }
+                .frame(maxWidth: .infinity)
             Text("Everything stays on this iPhone for now.")
                 .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity)
         }
         .padding(24)
+        .restoreFromBackup(isPresented: $restoring)
     }
 }
 

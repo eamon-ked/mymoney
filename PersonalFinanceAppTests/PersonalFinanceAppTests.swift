@@ -314,6 +314,92 @@ struct LedgerStoreTests {
         #expect(s.freeToSetAside(in: savings.id).isZero)
     }
 
+    // MARK: Backup and restore
+
+    /// A household touching every kind of record
+    private func household() throws -> (bank: LedgerAccountRecord, loan: LedgerAccountRecord) {
+        let bank = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(12000), openingDate: today)
+        let loan = try store.createAccount(name: "Car loan", kind: .loan, opening: Self.aed(-30000), openingDate: today)
+        try store.post(try EntryFactory.expense(Self.aed(85), from: bank.info, category: category("Groceries").info,
+                                                date: today, memo: "Carrefour"))
+        try store.setAllocation(Self.aed(1500), categoryId: category("Groceries").id, month: store.snapshot.monthKey)
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 600, monthlyPayment: Self.aed(1000), dueDay: 5),
+                                for: loan.id, paidFrom: bank.id)
+        let occ = try #require(store.snapshot.occurrences.first)
+        try store.pay(occurrenceId: occ.id, amount: Self.aed(1000), accountId: bank.id, categoryId: nil, date: today, key: UUID())
+        try store.saveReserve(Reserve(name: "Japan", amount: Self.aed(2000), accountId: bank.id, target: Self.aed(6000),
+                                      targetDate: Self.date(2027, 3, 31)))
+        try store.updateSettings { $0.bufferMinor = 50000; $0.onboardingDone = true }
+        return (bank, loan)
+    }
+
+    private func freshStore() throws -> (ModelContainer, LedgerStore) {
+        let container = try ModelContainer(for: Schema(Schema1.models),
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let now = today
+        return (container, LedgerStore(context: container.mainContext, calendar: Self.dubai, now: { now }))
+    }
+
+    @Test("A backup restored on a new device gives the same balances, budget, bills, debts and goals")
+    func backupRoundTrip() throws {
+        let (bank, loan) = try household()
+        let data = try store.backupData()
+        let (container, other) = try freshStore()
+        _ = container
+        try other.restore(try LedgerStore.readBackup(data))
+
+        let a = store.snapshot, b = other.snapshot
+        #expect(b.balance(bank.id) == a.balance(bank.id))
+        #expect(b.owed(loan.id) == a.owed(loan.id))
+        #expect(b.netWorth.total == a.netWorth.total)
+        #expect(b.safeToSpend().amount == a.safeToSpend().amount)
+        #expect(b.budget.availableToAllocate(month: b.monthKey) == a.budget.availableToAllocate(month: a.monthKey))
+        #expect(b.entries(includeVoided: true).count == a.entries(includeVoided: true).count)
+        #expect(b.account(loan.id)?.debtTerms == a.account(loan.id)?.debtTerms)
+        #expect(b.paymentItem(for: loan.id)?.id == a.paymentItem(for: loan.id)?.id)
+        #expect(b.occurrences.map(\.id) == a.occurrences.map(\.id))
+        #expect(b.occurrences.map(\.paid) == a.occurrences.map(\.paid))
+        #expect(b.goals == a.goals)
+        #expect(b.settings.bufferMinor == 50000 && b.settings.onboardingDone)
+        #expect(other.auditTrail.contains { $0.action == "data.restored" })
+    }
+
+    @Test("Restoring over existing data replaces it rather than doubling it")
+    func restoreOverExisting() throws {
+        let (bank, _) = try household()
+        let backup = try LedgerStore.readBackup(try store.backupData())
+        try store.post(try EntryFactory.expense(Self.aed(500), from: bank.info, category: category("Shopping").info, date: today))
+        try store.restore(backup)
+        let s = store.snapshot
+        #expect(s.balance(bank.id) == Self.aed(12000 - 85 - 1000))
+        #expect(s.accounts.count == 2)
+        #expect(s.entryRecords.count == backup.entries.count) // opening balances included
+        // Saving with an old idempotency key after the restore still counts once
+        #expect(throws: Never.self) { try store.post(try EntryFactory.expense(Self.aed(1), from: bank.info, category: category("Groceries").info, date: today)) }
+    }
+
+    @Test("Damaged, foreign or too-new files are refused and nothing changes")
+    func badBackupsAreRefused() throws {
+        let (bank, _) = try household()
+        let good = try store.backupData()
+        var json = try #require(try JSONSerialization.jsonObject(with: good) as? [String: Any])
+
+        var unbalanced = json
+        var entries = try #require(unbalanced["entries"] as? [[String: Any]])
+        var lines = try #require(entries[0]["lines"] as? [[String: Any]])
+        lines[0]["minorUnits"] = (lines[0]["minorUnits"] as! Int) + 1
+        entries[0]["lines"] = lines
+        unbalanced["entries"] = entries
+        #expect(throws: BackupError.self) { try LedgerStore.readBackup(try JSONSerialization.data(withJSONObject: unbalanced)) }
+
+        json["version"] = Backup.currentVersion + 1
+        #expect(throws: BackupError.newerVersion) { try LedgerStore.readBackup(try JSONSerialization.data(withJSONObject: json)) }
+        #expect(throws: BackupError.notABackup) { try LedgerStore.readBackup(Data("{\"hello\": 1}".utf8)) }
+        #expect(throws: BackupError.notABackup) { try LedgerStore.readBackup(Data("not json".utf8)) }
+
+        #expect(store.snapshot.balance(bank.id) == Self.aed(12000 - 85 - 1000))
+    }
+
     @Test("Data deletion removes everything on the device")
     func erase() throws {
         _ = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(3000), openingDate: today)

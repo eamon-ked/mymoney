@@ -2,10 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>SUPABASE_ANON_KEY</key>
 	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwZWNhYXBodnZnc2ZqcnRpYXdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ2Mzg0NTYsImV4cCI6MjA3MDIxNDQ1Nn0.Q64cwpza1A8CRKJOlN4CHYHVEPWPYZkcCdZQ8CwqLL8</string>
 	<key>SUPABASE_URL</key>
 	<string>https://xpecaaphvvgsfjrtiawq.supabase.co</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

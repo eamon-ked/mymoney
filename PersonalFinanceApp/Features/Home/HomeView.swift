@@ -101,7 +101,8 @@ struct HomeView: View {
             return (snapshot.calendar.dateComponents([.day], from: d, to: snapshot.today).day ?? 0) > snapshot.settings.staleAfterDays
         }
         let overspent = snapshot.expenseCategories.filter { snapshot.budget.line($0.id, month: snapshot.monthKey).isOverspent }
-        if !overdue.isEmpty || !stale.isEmpty || !overspent.isEmpty {
+        let backupDue = needsBackup
+        if !overdue.isEmpty || !stale.isEmpty || !overspent.isEmpty || backupDue {
             Section("Needs attention") {
                 ForEach(overdue) { occ in
                     Button { paying = occ } label: {
@@ -123,8 +124,23 @@ struct HomeView: View {
                                  text: "\(a.name) hasn't been updated for a while", action: "Check it")
                     }.buttonStyle(.plain)
                 }
+                if backupDue {
+                    Button { showingSettings = true } label: {
+                        AlertRow(symbol: "externaldrive.badge.exclamationmark", color: .orange,
+                                 text: snapshot.settings.lastBackupAt == nil ? "Your money data isn't backed up yet"
+                                     : "Your last backup was over a month ago",
+                                 action: "Back up")
+                    }.buttonStyle(.plain)
+                }
             }
         }
+    }
+
+    /// Once there's real data, remind until a backup is saved, then monthly
+    private var needsBackup: Bool {
+        guard snapshot.entries().count >= 5 else { return false }
+        guard let last = snapshot.settings.lastBackupAt else { return true }
+        return (snapshot.calendar.dateComponents([.day], from: last, to: snapshot.today).day ?? 0) > 30
     }
 
     // MARK: - Coming up

@@ -359,6 +359,8 @@ final class SettingsRecord {
     var payFrequencyData: Data?
     var lastUsedAccountId: UUID?
     var biometricLock: Bool
+    /// When a backup file was last saved, for the reminder on Home
+    var lastBackupAt: Date?
     var updatedAt: Date
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {

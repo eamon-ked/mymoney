@@ -37,6 +37,8 @@ struct SettingsView: View {
                     Text("Asks for Face ID or your passcode when the app opens.")
                 }
 
+                BackupSection()
+
                 Section {
                     Button { export() } label: { Label("Export all entries (CSV)", systemImage: "square.and.arrow.up") }
                     if let exportURL {
@@ -46,13 +48,13 @@ struct SettingsView: View {
                 } header: {
                     Text("Your data")
                 } footer: {
-                    Text("Everything is stored only on this iPhone. Sync and backup arrive with accounts.")
+                    Text("A spreadsheet of every entry, for your own records. To move or recover your data, use a backup.")
                 }
 
                 Section {
                     Button("Delete all data on this iPhone", role: .destructive) { confirmErase = true }
                 } footer: {
-                    Text("Removes every account, entry, budget and bill from this device. There's no cloud copy yet, so this can't be undone.")
+                    Text("Removes every account, entry, budget and bill from this device. Without a backup, this can't be undone.")
                 }
 
                 if let error { Section { FieldError(message: error) } }

@@ -94,7 +94,13 @@ struct PlanView: View {
                 GlobalAddButton()
             }
             .sheet(item: $editingItem) { PlannedItemEditor(sheet: $0) }
-            .sheet(item: $paying) { PayOccurrenceSheet(occurrence: $0) }
+            .sheet(item: $paying) { occ in
+                if let debt = snapshot.item(for: occ)?.debtId.flatMap(snapshot.account) {
+                    PayDebtSheet(debt: debt, occurrence: occ)
+                } else {
+                    PayOccurrenceSheet(occurrence: occ)
+                }
+            }
             .sheet(isPresented: $addingReserve) { ReserveEditor() }
             .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }
         }
@@ -117,25 +123,30 @@ struct PlanView: View {
     }
 
     @ViewBuilder private var debtsSection: some View {
-        let debts = snapshot.accounts.filter { $0.kind.isLiability }
+        let debts = snapshot.debts
         Section {
             if debts.isEmpty {
                 Text("No cards or loans added").foregroundStyle(.secondary)
             }
             ForEach(debts, id: \.id) { debt in
-                let owed = snapshot.balance(debt.id).negated
-                let payment = snapshot.items.first { $0.direction == .outflow && $0.categoryId == nil && $0.accountId != nil
-                    && $0.name.localizedCaseInsensitiveContains(debt.name) }
-                ListRow(title: debt.name,
-                        caption: payment.map { "\($0.amount.compact) \($0.schedule.frequency.label.lowercased())" } ?? AccountStyle.name(for: debt.kind),
-                        symbol: debt.icon, color: Color(hex: debt.colorHex)) {
-                    AmountPill(text: owed.isPositive ? "\(owed.compact) owed" : "Paid off", style: owed.isPositive ? .neutral : .positive)
+                let owed = snapshot.owed(debt.id)
+                let caption: String = {
+                    guard let terms = debt.debtTerms else { return "Add the rate and payment to see a payoff date" }
+                    let payoff = snapshot.payoff(for: debt)?.shortText
+                    return ["\(terms.monthlyPayment.compact) a month", payoff].compactMap { $0 }.joined(separator: " · ")
+                }()
+                NavigationLink {
+                    AccountDetailView(accountId: debt.id)
+                } label: {
+                    ListRow(title: debt.name, caption: caption, symbol: debt.icon, color: Color(hex: debt.colorHex)) {
+                        AmountPill(text: owed.isPositive ? "\(owed.compact) owed" : "Paid off", style: owed.isPositive ? .neutral : .positive)
+                    }
                 }
             }
         } header: {
             Text("Debts")
         } footer: {
-            Text("Payoff dates and splitting payments into principal and interest are coming next. For now, record payments as transfers to the card or loan.")
+            Text("Open a card or loan to set its rate and payment, see when it's paid off, and record payments split into interest and principal.")
         }
     }
 
@@ -301,7 +312,7 @@ struct PlannedItemEditor: View {
                                direction: direction, amount: amount, isEstimate: isEstimate,
                                schedule: Schedule(start: cal.startOfDay(for: start).addingTimeInterval(12 * 3600),
                                                   frequency: frequency, end: hasEnd ? store.snapshot.endOfDay(end) : nil),
-                               accountId: accountId, categoryId: categoryId)
+                               accountId: accountId, categoryId: categoryId, debtId: existing?.debtId)
         do {
             try store.savePlannedItem(item)
             dismiss()

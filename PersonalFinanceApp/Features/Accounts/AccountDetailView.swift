@@ -14,6 +14,7 @@ struct AccountDetailView: View {
     let accountId: UUID
     @State private var reconciling = false
     @State private var selected: EntryRecord?
+    @State private var debtSheet: DebtSheet?
     @State private var error: String?
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -38,6 +39,8 @@ struct AccountDetailView: View {
                               tint: balance.isNegative && !account.kind.isLiability ? .red : Color(hex: account.colorHex))
                 .bannerRow()
             }
+
+            if account.kind.isLiability { DebtSection(debt: account, sheet: $debtSheet) }
 
             Section {
                 Button { reconciling = true } label: {
@@ -75,6 +78,12 @@ struct AccountDetailView: View {
         .toolbar { GlobalAddButton() }
         .sheet(isPresented: $reconciling) { ReconcileSheet(account: account) }
         .sheet(item: $selected) { EntryDetailView(record: $0) }
+        .sheet(item: $debtSheet) { sheet in
+            switch sheet {
+            case .terms: DebtTermsEditor(debt: account)
+            case .pay: PayDebtSheet(debt: account)
+            }
+        }
     }
 
     private func confirmedCaption(_ account: LedgerAccountRecord) -> String {

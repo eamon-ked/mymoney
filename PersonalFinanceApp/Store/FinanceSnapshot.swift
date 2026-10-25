@@ -162,6 +162,34 @@ struct FinanceSnapshot {
 
     func state(of occurrence: Occurrence) -> OccurrenceState { occurrence.state(today: today, calendar: calendar) }
 
+    // MARK: - Debts
+
+    var debts: [LedgerAccountRecord] { accounts.filter { $0.kind.isLiability } }
+
+    /// What's owed on a card or loan, as a positive amount
+    func owed(_ debtId: UUID) -> Money { balance(debtId).negated }
+
+    /// The monthly bill that pays this debt, if one was set up
+    func paymentItem(for debtId: UUID) -> PlannedItem? { items.first { $0.debtId == debtId } }
+
+    /// When the next payment is due: the next unpaid bill, else the due day, else in a month
+    func nextPaymentDate(for debt: LedgerAccountRecord) -> Date {
+        if let item = paymentItem(for: debt.id),
+           let next = occurrences.first(where: { $0.itemId == item.id && !$0.remaining.isZero && !$0.skipped }) {
+            return next.dueDate
+        }
+        if let day = debt.debtTerms?.dueDay {
+            return DebtCalculator.nextDueDate(dueDay: day, onOrAfter: today, calendar: calendar)
+        }
+        return calendar.date(byAdding: .month, value: 1, to: today) ?? today
+    }
+
+    func payoff(for debt: LedgerAccountRecord, extra: Money? = nil) -> Payoff? {
+        guard let terms = debt.debtTerms else { return nil }
+        return DebtCalculator.payoff(owed: owed(debt.id), terms: terms, extra: extra,
+                                     firstPayment: nextPaymentDate(for: debt), calendar: calendar)
+    }
+
     var activeReservesTotal: Money { reserves.map(\.amount).sum(currency) }
 
     /// Setup is complete enough for a reliable safe-to-spend

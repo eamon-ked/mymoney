@@ -345,6 +345,12 @@ final class LedgerStore {
 
     func archivePlannedItem(_ id: UUID) throws {
         guard let record = fetch(PlannedItemRecord.self, #Predicate { $0.id == id }).first else { throw StoreError.notFound }
+        archive(record)
+        try commit()
+    }
+
+    private func archive(_ record: PlannedItemRecord) {
+        let id = record.id
         record.archived = true
         record.updatedAt = now()
         // Future unpaid occurrences were only projections; paid ones stay as history
@@ -352,7 +358,6 @@ final class LedgerStore {
         where occ.paidMinor == 0 && !occ.skipped && occ.dueDate >= calendar.startOfDay(for: now()) {
             context.delete(occ)
         }
-        try commit()
     }
 
     /// Records a real payment for an occurrence and links them
@@ -361,6 +366,13 @@ final class LedgerStore {
         guard let occ = fetch(OccurrenceRecord.self, #Predicate { $0.id == occurrenceId }).first,
               let item = plannedItem(occ.itemId),
               let account = account(accountId) else { throw StoreError.notFound }
+        if let debtId = item.debtId, item.direction == .outflow {
+            guard let debt = self.account(debtId) else { throw StoreError.notFound }
+            let split = DebtCalculator.split(payment: amount, owed: snapshot.balance(debtId).negated,
+                                             annualRateBps: debt.debtRateBps ?? 0)
+            return try payDebt(debtId, from: accountId, amount: amount, interest: split.interest, fees: .zero(amount.currency),
+                               date: date, key: key, occurrenceId: occurrenceId)
+        }
         let entry: Entry
         do {
             if item.direction == .inflow {
@@ -453,6 +465,77 @@ final class LedgerStore {
         var o = occ.occurrence
         o.removePayment(entryId: entry.id, amount: paymentAmount(of: entry, direction: item.direction))
         occ.update(from: o)
+    }
+
+    // MARK: - Debts
+
+    /// Where interest and fees are recorded as spending; recreated if it was removed
+    var interestCategory: LedgerAccountRecord {
+        let raw = AccountKind.expense.rawValue
+        let name = "Interest & fees"
+        if let existing = fetch(LedgerAccountRecord.self, #Predicate { $0.kindRaw == raw && $0.name == name }).first {
+            if existing.archived { existing.archived = false }
+            return existing
+        }
+        let record = LedgerAccountRecord(name: name, kind: .expense, currency: currency, colorHex: "#8E8E93",
+                                         icon: "percent", group: "Other", sortOrder: 99)
+        context.insert(record)
+        return record
+    }
+
+    /// Saves a card's or loan's rate and monthly payment, or clears them with nil.
+    /// With an account to pay from and a due day, the payment is kept as a monthly
+    /// bill, so it's reserved in safe-to-spend and shows in Plan.
+    func saveDebtTerms(_ terms: DebtTerms?, for debtId: UUID, paidFrom fundingId: UUID?) throws {
+        guard let debt = account(debtId), debt.kind.isLiability else { throw StoreError.notFound }
+        if let terms {
+            guard terms.monthlyPayment.isPositive else { throw StoreError.invalid("Enter the monthly payment.") }
+            guard (0...10_000).contains(terms.annualRateBps) else { throw StoreError.invalid("Enter the yearly rate as a percentage, e.g. 4.5.") }
+            if let day = terms.dueDay, !(1...31).contains(day) { throw StoreError.invalid("Choose a due day from 1 to 31.") }
+        }
+        debt.debtTerms = terms
+        debt.updatedAt = now()
+
+        let linked = fetch(PlannedItemRecord.self).filter { $0.debtId == debtId && !$0.archived }
+        if let terms, let fundingId, let dueDay = terms.dueDay {
+            let start = DebtCalculator.nextDueDate(dueDay: dueDay, onOrAfter: now(), calendar: calendar)
+            let item = PlannedItem(id: linked.first?.id ?? UUID(), name: "\(debt.name) payment", direction: .outflow,
+                                   amount: terms.monthlyPayment,
+                                   schedule: Schedule(start: start, frequency: .monthly(every: 1)),
+                                   accountId: fundingId, debtId: debtId)
+            if let record = linked.first { record.update(from: item) } else { context.insert(PlannedItemRecord(item)) }
+            for extra in linked.dropFirst() { archive(extra) }
+            regenerateOccurrences(for: item)
+        } else {
+            for record in linked { archive(record) }
+        }
+        context.insert(AuditRecord(action: "debt.terms", subjectId: debtId,
+                                   summary: terms.map { "\(debt.name): \($0.annualRatePercent)% a year, \(MoneyFormat.string($0.monthlyPayment)) a month" }
+                                       ?? "\(debt.name): terms removed"))
+        try commit()
+    }
+
+    /// Records a card or loan payment: the paying account drops by the whole amount,
+    /// the debt by the principal, and interest and fees count as spending.
+    @discardableResult
+    func payDebt(_ debtId: UUID, from fundingId: UUID, amount: Money, interest: Money, fees: Money,
+                 date: Date, key: UUID, occurrenceId: UUID? = nil) throws -> UUID {
+        guard let debt = account(debtId), let funding = account(fundingId) else { throw StoreError.notFound }
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        guard !interest.isNegative, !fees.isNegative else { throw StoreError.invalid("Interest and fees can't be negative.") }
+        guard !(amount < interest + fees) else { throw StoreError.invalid("Interest and fees can't be more than the payment.") }
+        let principal = amount - interest - fees
+        let owed = snapshot.balance(debtId).negated
+        if owed < principal {
+            throw StoreError.invalid("That's more than the \(MoneyFormat.string(Money.max(owed, .zero(owed.currency)))) you owe. Lower the payment or the principal.")
+        }
+        let entry: Entry
+        do {
+            entry = try EntryFactory.debtPayment(principal: principal, interest: interest, fees: fees,
+                                                 from: funding.info, debt: debt.info, interestCategory: interestCategory.info,
+                                                 date: date, memo: "\(debt.name) payment", key: key, occurrenceId: occurrenceId)
+        } catch { throw StoreError.from(error) }
+        return try post(entry)
     }
 
     // MARK: - Reserves

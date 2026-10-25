@@ -29,6 +29,10 @@ final class LedgerAccountRecord {
     var icon: String
     var institution: String?
     var lastReconciledAt: Date?
+    // Debt terms (cards and loans only)
+    var debtRateBps: Int?
+    var debtPaymentMinor: Int64?
+    var debtDueDay: Int?
     // Category settings (expense categories only)
     var group: String
     var policyRaw: String
@@ -64,6 +68,19 @@ final class LedgerAccountRecord {
     var policy: RolloverPolicy {
         get { RolloverPolicy(rawValue: policyRaw) ?? .rollover }
         set { policyRaw = newValue.rawValue }
+    }
+
+    var debtTerms: DebtTerms? {
+        get {
+            guard kind.isLiability, let debtRateBps, let debtPaymentMinor else { return nil }
+            return DebtTerms(annualRateBps: debtRateBps, monthlyPayment: Money(minorUnits: debtPaymentMinor, currency: currency),
+                             dueDay: debtDueDay)
+        }
+        set {
+            debtRateBps = newValue?.annualRateBps
+            debtPaymentMinor = newValue?.monthlyPayment.minorUnits
+            debtDueDay = newValue?.dueDay
+        }
     }
 
     var info: AccountInfo {
@@ -180,6 +197,7 @@ final class PlannedItemRecord {
     var scheduleEnd: Date?
     var accountId: UUID?
     var categoryId: UUID?
+    var debtId: UUID?
     var autopay: Bool
     var reminderDaysBefore: Int
     var archived: Bool
@@ -198,6 +216,7 @@ final class PlannedItemRecord {
         self.scheduleEnd = item.schedule.end
         self.accountId = item.accountId
         self.categoryId = item.categoryId
+        self.debtId = item.debtId
         self.autopay = false
         self.reminderDaysBefore = 2
         self.archived = false
@@ -216,6 +235,7 @@ final class PlannedItemRecord {
         scheduleEnd = item.schedule.end
         accountId = item.accountId
         categoryId = item.categoryId
+        debtId = item.debtId
         updatedAt = Date()
     }
 
@@ -224,7 +244,7 @@ final class PlannedItemRecord {
         return PlannedItem(id: id, name: name, direction: Direction(rawValue: directionRaw) ?? .outflow,
                            amount: Money(minorUnits: minorUnits, currency: currency), isEstimate: isEstimate,
                            schedule: Schedule(start: scheduleStart, frequency: frequency, end: scheduleEnd),
-                           accountId: accountId, categoryId: categoryId)
+                           accountId: accountId, categoryId: categoryId, debtId: debtId)
     }
 }
 

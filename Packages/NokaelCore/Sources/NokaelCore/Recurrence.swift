@@ -93,9 +93,11 @@ public struct PlannedItem: Hashable, Codable, Sendable, Identifiable {
     /// Account it is paid from (outflow) or received into (inflow)
     public var accountId: UUID?
     public var categoryId: UUID?
+    /// The card or loan this pays, if it's a debt payment
+    public var debtId: UUID?
 
     public init(id: UUID = UUID(), name: String, direction: Direction, amount: Money, isEstimate: Bool = false,
-                schedule: Schedule, accountId: UUID? = nil, categoryId: UUID? = nil) {
+                schedule: Schedule, accountId: UUID? = nil, categoryId: UUID? = nil, debtId: UUID? = nil) {
         self.id = id
         self.name = name
         self.direction = direction
@@ -104,6 +106,7 @@ public struct PlannedItem: Hashable, Codable, Sendable, Identifiable {
         self.schedule = schedule
         self.accountId = accountId
         self.categoryId = categoryId
+        self.debtId = debtId
     }
 }
 

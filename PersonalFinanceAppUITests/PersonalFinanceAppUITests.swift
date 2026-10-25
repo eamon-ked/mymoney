@@ -129,4 +129,25 @@ final class JourneyUITests: XCTestCase {
         open(tab: "Accounts", title: "Accounts")
         XCTAssertTrue(element(containing: "AED 11,960").waitForExistence(timeout: 5))
     }
+
+    @MainActor
+    func testJourneyC_PayTheCarLoan() throws {
+        // Demo household: car loan of 36,500 at 4.99%, 1,850 a month
+        app.terminate()
+        app.launchArguments = ["-demoData", "-tab", "plan"]
+        app.launch()
+
+        let loanRow = element(containing: "Car loan, AED 1,850 a month")
+        for _ in 0..<6 where !loanRow.isHittable { app.swipeUp() }
+        loanRow.tap()
+        XCTAssertTrue(element(containing: "Debt-free").waitForExistence(timeout: 5))
+
+        app.buttons["payDebt"].tap()
+        XCTAssertTrue(app.textFields["debtPaymentAmount"].waitForExistence(timeout: 5))
+        // One month's interest at 4.99% on 36,500 is 151.78, so 1,698.22 comes off
+        XCTAssertTrue(element(containing: "AED 151.78").exists)
+        app.buttons["recordDebtPayment"].tap()
+
+        XCTAssertTrue(element(containing: "AED 34,801.78").waitForExistence(timeout: 5))
+    }
 }

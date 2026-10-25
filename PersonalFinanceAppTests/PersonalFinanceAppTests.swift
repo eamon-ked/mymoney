@@ -192,6 +192,84 @@ struct LedgerStoreTests {
         #expect(store.snapshot.netWorth.total == before)
     }
 
+    // MARK: Debts
+
+    private func carLoan(owing: Decimal = 30000) throws -> (bank: LedgerAccountRecord, loan: LedgerAccountRecord) {
+        let bank = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(12000), openingDate: today)
+        let loan = try store.createAccount(name: "Car loan", kind: .loan, opening: Self.aed(-owing), openingDate: today)
+        return (bank, loan)
+    }
+
+    @Test("QA-07: a loan payment lowers the debt by the principal and counts interest as spending")
+    func payingALoan() throws {
+        let (bank, loan) = try carLoan()
+        let key = UUID()
+        try store.payDebt(loan.id, from: bank.id, amount: Self.aed(1000), interest: Self.aed(150), fees: Self.aed(0),
+                          date: today, key: key)
+        // A double tap records it once
+        try store.payDebt(loan.id, from: bank.id, amount: Self.aed(1000), interest: Self.aed(150), fees: Self.aed(0),
+                          date: today, key: key)
+        let s = store.snapshot
+        #expect(s.balance(bank.id) == Self.aed(11000))
+        #expect(s.owed(loan.id) == Self.aed(29150))
+        #expect(s.budget.spent(category("Interest & fees").id, month: s.monthKey) == Self.aed(150))
+        #expect(s.netWorth.total == Self.aed(12000 - 30000 - 150))
+    }
+
+    @Test func overpayingADebtIsRefused() throws {
+        let (bank, loan) = try carLoan(owing: 500)
+        #expect(throws: StoreError.self) {
+            try store.payDebt(loan.id, from: bank.id, amount: Self.aed(800), interest: Self.aed(0), fees: Self.aed(0),
+                              date: today, key: UUID())
+        }
+        #expect(throws: StoreError.self) {
+            try store.payDebt(loan.id, from: bank.id, amount: Self.aed(100), interest: Self.aed(80), fees: Self.aed(30),
+                              date: today, key: UUID())
+        }
+        #expect(store.snapshot.owed(loan.id) == Self.aed(500))
+    }
+
+    @Test("A debt's monthly payment becomes a bill that's reserved in safe-to-spend")
+    func termsCreateABill() throws {
+        let (bank, loan) = try carLoan()
+        let before = store.snapshot.safeToSpend(through: Self.date(2026, 11, 30)).amount
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 600, monthlyPayment: Self.aed(1000), dueDay: 5),
+                                for: loan.id, paidFrom: bank.id)
+        let s = store.snapshot
+        let item = try #require(s.paymentItem(for: loan.id))
+        #expect(item.amount == Self.aed(1000))
+        #expect(item.accountId == bank.id)
+        let first = try #require(s.occurrences.first { $0.itemId == item.id })
+        #expect(Self.dubai.dateComponents([.month, .day], from: first.dueDate) == DateComponents(month: 11, day: 5))
+        #expect(s.safeToSpend(through: Self.date(2026, 11, 30)).amount == before.map { $0 - Self.aed(1000) })
+        // 30,000 at 6% with 1,000 a month: 33 payments
+        guard case let .paidOff(months, _, _, _) = try #require(s.payoff(for: s.account(loan.id)!)) else {
+            Issue.record("expected a payoff date"); return
+        }
+        #expect(months == 33)
+
+        // Changing the payment updates the same bill; removing the terms stops it
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 600, monthlyPayment: Self.aed(1200), dueDay: 5),
+                                for: loan.id, paidFrom: bank.id)
+        #expect(store.snapshot.items.filter { $0.debtId == loan.id }.map(\.amount) == [Self.aed(1200)])
+        try store.saveDebtTerms(nil, for: loan.id, paidFrom: nil)
+        #expect(store.snapshot.paymentItem(for: loan.id) == nil)
+        #expect(store.snapshot.account(loan.id)?.debtTerms == nil)
+    }
+
+    @Test("Paying a debt bill splits interest from principal and marks it paid")
+    func payingADebtBill() throws {
+        let (bank, loan) = try carLoan()
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 600, monthlyPayment: Self.aed(1000), dueDay: 5),
+                                for: loan.id, paidFrom: bank.id)
+        let occ = try #require(store.snapshot.occurrences.first)
+        try store.pay(occurrenceId: occ.id, amount: Self.aed(1000), accountId: bank.id, categoryId: nil, date: today, key: UUID())
+        let s = store.snapshot
+        #expect(s.owed(loan.id) == Self.aed(29150))
+        #expect(s.balance(bank.id) == Self.aed(11000))
+        #expect(s.state(of: s.occurrences.first { $0.id == occ.id }!) == .paid)
+    }
+
     @Test("Data deletion removes everything on the device")
     func erase() throws {
         _ = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(3000), openingDate: today)

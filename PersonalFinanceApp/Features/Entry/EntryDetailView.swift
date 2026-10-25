@@ -73,7 +73,7 @@ struct EntryDetailView: View {
 
                 if let error { Section { FieldError(message: error) } }
 
-                if record.status == .posted && editable {
+                if record.status == .posted && (editable || record.kind == .debtPayment) {
                     Section {
                         Button("Delete", role: .destructive) { confirmDelete = true }
                     }

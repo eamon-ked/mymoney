@@ -48,9 +48,11 @@ enum DemoData {
         try? store.savePlannedItem(PlannedItem(name: "Rent", direction: .outflow, amount: aed(6500),
                                                schedule: Schedule(start: day(3), frequency: .monthly(every: 1)),
                                                accountId: current.id, categoryId: cat("Rent or mortgage").id))
-        try? store.savePlannedItem(PlannedItem(name: "Car loan payment", direction: .outflow, amount: aed(1850),
-                                               schedule: Schedule(start: day(5), frequency: .monthly(every: 1)),
-                                               accountId: current.id, categoryId: cat("Interest & fees").id))
+        let loanDay = store.calendar.component(.day, from: day(5))
+        try? store.saveDebtTerms(DebtTerms(annualRateBps: 499, monthlyPayment: aed(1850), dueDay: loanDay),
+                                 for: loan.id, paidFrom: current.id)
+        try? store.saveDebtTerms(DebtTerms(annualRateBps: 3900, monthlyPayment: aed(500), dueDay: 20),
+                                 for: card.id, paidFrom: nil)
         try? store.savePlannedItem(PlannedItem(name: "Du mobile", direction: .outflow, amount: aed(280), isEstimate: true,
                                                schedule: Schedule(start: day(9), frequency: .monthly(every: 1)),
                                                accountId: current.id, categoryId: cat("Phone & internet").id))
@@ -59,7 +61,6 @@ enum DemoData {
                                                accountId: current.id, categoryId: cat("Salary").id))
         try? store.saveReserve(Reserve(name: "Emergency fund", amount: aed(2000), accountId: current.id))
         try? store.updateSettings { $0.bufferMinor = 50000; $0.onboardingDone = true; $0.onboardingStep = 4 }
-        _ = loan
     }
 }
 #endif

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E3NKCFILE000000000000001 /* NokaelCore in Frameworks */ = {isa = PBXBuildFile; productRef = E3NKCPD0000000000000001 /* NokaelCore */; };
 		E3SPKGFILE0000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = E3SPKGPD0000000000000001 /* Supabase */; };
 /* End PBXBuildFile section */
 
@@ -70,6 +71,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E3SPKGFILE0000000000000001 /* Supabase in Frameworks */,
+				E3NKCFILE000000000000001 /* NokaelCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -139,6 +141,7 @@
 			name = PersonalFinanceApp;
 			packageProductDependencies = (
 				E3SPKGPD0000000000000001 /* Supabase */,
+				E3NKCPD0000000000000001 /* NokaelCore */,
 			);
 			productName = PersonalFinanceApp;
 			productReference = E3BDB4FA2E47687B008B0F63 /* PersonalFinanceApp.app */;
@@ -224,6 +227,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				E3SPKG000000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+				E3NKCPKG000000000000001 /* XCLocalSwiftPackageReference "Packages/NokaelCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E3BDB4FB2E47687B008B0F63 /* Products */;
@@ -615,6 +619,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		E3NKCPKG000000000000001 /* XCLocalSwiftPackageReference "Packages/NokaelCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/NokaelCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		E3SPKG000000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -627,6 +638,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		E3NKCPD0000000000000001 /* NokaelCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E3NKCPKG000000000000001 /* XCLocalSwiftPackageReference "Packages/NokaelCore" */;
+			productName = NokaelCore;
+		};
 		E3SPKGPD0000000000000001 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E3SPKG000000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */;

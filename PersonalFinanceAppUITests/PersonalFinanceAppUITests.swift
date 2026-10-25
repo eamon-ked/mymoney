@@ -1,41 +1,132 @@
 //
-//  PersonalFinanceAppUITests.swift
-//  PersonalFinanceAppUITests
+//  JourneyUITests.swift
+//  Nokael Money
 //
-//  Created by Eamon on 8/9/25.
+//  The spec's end-to-end journeys, driven through the real interface on a
+//  fresh in-memory store.
 //
 
 import XCTest
 
-final class PersonalFinanceAppUITests: XCTestCase {
+final class JourneyUITests: XCTestCase {
+    private var app: XCUIApplication!
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
-    @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        app = XCUIApplication()
+        app.launchArguments = ["-uiTesting"]
         app.launch()
+    }
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+    /// Any element whose accessibility label contains the text. Rows combine
+    /// their texts into one label, the way VoiceOver reads them. Currency
+    /// formatting puts a non-breaking space after the code, so "AED " matches it.
+    private func element(containing text: String) -> XCUIElement {
+        let formatted = text.replacingOccurrences(of: "AED ", with: "AED\u{00A0}")
+        let predicate = NSPredicate(format: "label CONTAINS %@ OR label CONTAINS %@", text, formatted)
+        return app.descendants(matching: .any).matching(predicate).firstMatch
+    }
+
+    /// Switches tab, tapping again if the first tap lands mid-transition
+    private func open(tab: String, title: String) {
+        for _ in 0..<3 {
+            app.tabBars.buttons[tab].tap()
+            if app.navigationBars[title].waitForExistence(timeout: 3) { return }
+        }
+        XCTFail("Couldn't open the \(tab) tab")
+    }
+
+    /// Waits for the entry editor to close after saving
+    private func waitForEditorToClose() {
+        let gone = NSPredicate(format: "exists == false")
+        expectation(for: gone, evaluatedWith: app.textFields["amountField"])
+        waitForExpectations(timeout: 10)
+    }
+
+    /// Onboarding with one account and no optional steps
+    private func completeSetup(balance: String = "12000") {
+        app.buttons["getStarted"].tap()
+        app.buttons["continue"].tap()
+
+        let name = app.textFields["accountName"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Current account")
+        let opening = app.textFields["openingBalance"]
+        opening.tap()
+        opening.typeText(balance)
+        app.buttons["addAccount"].tap()
+
+        let skip = app.buttons["skip"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 5))
+        skip.tap()
+        let finish = app.buttons["finish"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        finish.tap()
     }
 
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+    func testJourneyA_FirstAccountAndFirstBudget() throws {
+        completeSetup()
+
+        // Home shows a real safe-to-spend from the opening balance
+        XCTAssertTrue(app.navigationBars["Your money"].waitForExistence(timeout: 5))
+        XCTAssertTrue(element(containing: "AED 12,000").waitForExistence(timeout: 5))
+
+        // Plan groceries for the month
+        open(tab: "Budget", title: "Budget")
+        let groceries = element(containing: "Groceries")
+        XCTAssertTrue(groceries.waitForExistence(timeout: 5))
+        groceries.tap()
+        let allocation = app.textFields["allocationField"]
+        XCTAssertTrue(allocation.waitForExistence(timeout: 5))
+        allocation.tap()
+        allocation.typeText("1500")
+        app.buttons["Done"].tap()
+
+        XCTAssertTrue(element(containing: "AED 1,500 left").waitForExistence(timeout: 5))
+        // Allocating doesn't move money: the account still holds 12,000
+        open(tab: "Accounts", title: "Accounts")
+        XCTAssertTrue(element(containing: "AED 12,000").waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testJourneyB_BuyGroceries() throws {
+        completeSetup()
+
+        // Global Add → expense, amount first
+        app.buttons["globalAdd"].tap()
+        let amount = app.textFields["amountField"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.typeText("85")
+        app.buttons["category-Groceries"].tap()
+        app.buttons["saveEntry"].tap()
+        waitForEditorToClose()
+
+        // Account down by 85, once
+        open(tab: "Accounts", title: "Accounts")
+        XCTAssertTrue(element(containing: "AED 11,915").waitForExistence(timeout: 5))
+
+        // It appears in Activity
+        open(tab: "Activity", title: "Activity")
+        XCTAssertTrue(element(containing: "Groceries").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(containing: "−AED 85").waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testDoubleTapSaveCreatesOneEntry() throws {
+        completeSetup()
+        app.buttons["globalAdd"].tap()
+        let amount = app.textFields["amountField"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.typeText("40")
+        app.buttons["category-Groceries"].tap()
+        let save = app.buttons["saveEntry"]
+        save.tap()
+        if save.isHittable { save.tap() }
+        waitForEditorToClose()
+
+        open(tab: "Accounts", title: "Accounts")
+        XCTAssertTrue(element(containing: "AED 11,960").waitForExistence(timeout: 5))
     }
 }

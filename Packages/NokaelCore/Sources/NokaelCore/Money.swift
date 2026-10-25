@@ -105,8 +105,10 @@ public enum MoneyFormat {
         return Money(d, currency: currency)
     }
 
-    /// Plain editable text for a field, e.g. "1250.50"
-    public static func editable(_ money: Money) -> String {
-        NSDecimalNumber(decimal: money.decimal).stringValue
+    /// Plain editable text for a field, e.g. "1250.50". Zero can be left empty
+    /// so typing doesn't land beside a "0" the field already holds.
+    public static func editable(_ money: Money, emptyWhenZero: Bool = false) -> String {
+        if emptyWhenZero && money.isZero { return "" }
+        return NSDecimalNumber(decimal: money.decimal).stringValue
     }
 }

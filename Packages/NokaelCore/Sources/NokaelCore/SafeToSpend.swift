@@ -7,13 +7,21 @@ public struct Reserve: Hashable, Codable, Sendable, Identifiable {
     public var name: String
     public var amount: Money
     public var accountId: UUID
+    /// A savings goal's target, if this money is being saved towards something
+    public var target: Money?
+    public var targetDate: Date?
 
-    public init(id: UUID = UUID(), name: String, amount: Money, accountId: UUID) {
+    public init(id: UUID = UUID(), name: String, amount: Money, accountId: UUID,
+                target: Money? = nil, targetDate: Date? = nil) {
         self.id = id
         self.name = name
         self.amount = amount
         self.accountId = accountId
+        self.target = target
+        self.targetDate = targetDate
     }
+
+    public var isGoal: Bool { target != nil }
 }
 
 /// A budget category whose remaining money should be kept out of safe-to-spend

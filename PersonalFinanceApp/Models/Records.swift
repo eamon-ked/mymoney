@@ -298,6 +298,11 @@ final class ReserveRecord {
     var minorUnits: Int64
     var currency: String
     var accountId: UUID
+    // Savings goal (optional)
+    var targetMinor: Int64?
+    var targetDate: Date?
+    /// The last add/take-out request, so a double tap only counts once
+    var lastChangeKey: UUID?
     var archived: Bool
     var createdAt: Date
     var updatedAt: Date
@@ -308,13 +313,16 @@ final class ReserveRecord {
         self.minorUnits = r.amount.minorUnits
         self.currency = r.amount.currency
         self.accountId = r.accountId
+        self.targetMinor = r.target?.minorUnits
+        self.targetDate = r.targetDate
         self.archived = false
         self.createdAt = Date()
         self.updatedAt = Date()
     }
 
     var reserve: Reserve {
-        Reserve(id: id, name: name, amount: Money(minorUnits: minorUnits, currency: currency), accountId: accountId)
+        Reserve(id: id, name: name, amount: Money(minorUnits: minorUnits, currency: currency), accountId: accountId,
+                target: targetMinor.map { Money(minorUnits: $0, currency: currency) }, targetDate: targetDate)
     }
 }
 

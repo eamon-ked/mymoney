@@ -270,6 +270,50 @@ struct LedgerStoreTests {
         #expect(s.state(of: s.occurrences.first { $0.id == occ.id }!) == .paid)
     }
 
+    // MARK: Savings goals
+
+    @Test("A goal sets money aside, so safe-to-spend drops by what's saved")
+    func goalsReserveMoney() throws {
+        let bank = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(10000), openingDate: today)
+        let before = try #require(store.snapshot.safeToSpend().amount)
+        let goal = Reserve(name: "Japan", amount: Self.aed(0), accountId: bank.id, target: Self.aed(6000),
+                           targetDate: Self.date(2027, 3, 31))
+        try store.saveReserve(goal)
+        let key = UUID()
+        try store.addToGoal(goal.id, amount: Self.aed(1000), from: nil, date: today, key: key)
+        try store.addToGoal(goal.id, amount: Self.aed(1000), from: nil, date: today, key: key) // double tap
+        let s = store.snapshot
+        let saved = try #require(s.goals.first)
+        #expect(saved.amount == Self.aed(1000))
+        #expect(s.safeToSpend().amount == before - Self.aed(1000))
+        #expect(s.progress(of: saved)?.status == .needsPerMonth(Self.aed(833.34), months: 6)) // 5,000 over Oct–Mar
+        #expect(s.balance(bank.id) == Self.aed(10000)) // nothing moved
+
+        try store.takeFromGoal(goal.id, amount: Self.aed(400), key: UUID())
+        #expect(store.snapshot.goals.first?.amount == Self.aed(600))
+        #expect(throws: StoreError.self) { try store.takeFromGoal(goal.id, amount: Self.aed(700), key: UUID()) }
+    }
+
+    @Test("Adding from another account moves the money and can't over-claim it")
+    func goalsMoveMoney() throws {
+        let bank = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(5000), openingDate: today)
+        let savings = try store.createAccount(name: "Savings", kind: .savings, opening: Self.aed(0), openingDate: today)
+        let goal = Reserve(name: "Car", amount: Self.aed(0), accountId: savings.id, target: Self.aed(20000))
+        try store.saveReserve(goal)
+        try store.addToGoal(goal.id, amount: Self.aed(1500), from: bank.id, date: today, key: UUID())
+        var s = store.snapshot
+        #expect(s.balance(bank.id) == Self.aed(3500))
+        #expect(s.balance(savings.id) == Self.aed(1500))
+        #expect(s.goals.first?.amount == Self.aed(1500))
+        // Savings holds 1,500, all claimed: adding without moving money is refused
+        #expect(throws: StoreError.self) {
+            try store.addToGoal(goal.id, amount: Self.aed(100), from: nil, date: today, key: UUID())
+        }
+        s = store.snapshot
+        #expect(s.goals.first?.amount == Self.aed(1500))
+        #expect(s.freeToSetAside(in: savings.id).isZero)
+    }
+
     @Test("Data deletion removes everything on the device")
     func erase() throws {
         _ = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(3000), openingDate: today)

@@ -540,21 +540,81 @@ final class LedgerStore {
 
     // MARK: - Reserves
 
+    /// Saves money set aside, or a savings goal (a set-aside amount with a target)
     func saveReserve(_ reserve: Reserve) throws {
         guard !reserve.name.trimmingCharacters(in: .whitespaces).isEmpty else { throw StoreError.invalid("Give it a name.") }
-        guard reserve.amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        guard !reserve.amount.isNegative else { throw StoreError.invalid("The amount saved can't be negative.") }
+        if let target = reserve.target {
+            guard target.isPositive else { throw StoreError.invalid("Enter a target greater than zero.") }
+        } else {
+            guard reserve.amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        }
+        try checkFree(reserve.amount, in: reserve.accountId, excluding: reserve.id)
         let id = reserve.id
         if let record = fetch(ReserveRecord.self, #Predicate { $0.id == id }).first {
             record.name = reserve.name
             record.minorUnits = reserve.amount.minorUnits
             record.accountId = reserve.accountId
+            record.targetMinor = reserve.target?.minorUnits
+            record.targetDate = reserve.targetDate
             record.updatedAt = now()
         } else {
             context.insert(ReserveRecord(reserve))
         }
         context.insert(AuditRecord(action: "reserve.saved", subjectId: reserve.id,
-                                   summary: "\(reserve.name): \(MoneyFormat.string(reserve.amount)) set aside"))
+                                   summary: "\(reserve.name): \(MoneyFormat.string(reserve.amount)) set aside"
+                                       + (reserve.target.map { " towards \(MoneyFormat.string($0))" } ?? "")))
         try commit()
+    }
+
+    /// Adds to a goal. With another account to take it from, the money is also
+    /// moved (a transfer); otherwise it's money already in the goal's account.
+    func addToGoal(_ id: UUID, amount: Money, from fundingId: UUID?, date: Date, key: UUID) throws {
+        guard let record = fetch(ReserveRecord.self, #Predicate { $0.id == id }).first, !record.archived else { throw StoreError.notFound }
+        guard record.lastChangeKey != key else { return }
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        let moving = fundingId != nil && fundingId != record.accountId
+        let current = Money(minorUnits: record.minorUnits, currency: record.currency)
+        try checkFree(current + amount, in: record.accountId, excluding: id, arriving: moving ? amount : nil)
+        if moving, let fundingId, let from = account(fundingId), let to = account(record.accountId) {
+            do {
+                let entry = try EntryFactory.transfer(amount, from: from.info, to: to.info, date: date,
+                                                      memo: "Saving for \(record.name)", key: key)
+                insert(entry, notes: "")
+            } catch { throw StoreError.from(error) }
+        }
+        record.minorUnits += amount.minorUnits
+        record.lastChangeKey = key
+        record.updatedAt = now()
+        context.insert(AuditRecord(action: "goal.added", subjectId: id,
+                                   summary: "Added \(MoneyFormat.string(amount)) to \(record.name)"))
+        try commit()
+    }
+
+    /// Takes money out of a goal; it stays in the account and becomes spendable again
+    func takeFromGoal(_ id: UUID, amount: Money, key: UUID) throws {
+        guard let record = fetch(ReserveRecord.self, #Predicate { $0.id == id }).first, !record.archived else { throw StoreError.notFound }
+        guard record.lastChangeKey != key else { return }
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        guard amount.minorUnits <= record.minorUnits else {
+            throw StoreError.invalid("Only \(MoneyFormat.string(Money(minorUnits: record.minorUnits, currency: record.currency))) is saved.")
+        }
+        record.minorUnits -= amount.minorUnits
+        record.lastChangeKey = key
+        record.updatedAt = now()
+        context.insert(AuditRecord(action: "goal.taken", subjectId: id,
+                                   summary: "Took \(MoneyFormat.string(amount)) from \(record.name)"))
+        try commit()
+    }
+
+    /// Money set aside can't be more than the account holds, net of other set-aside money
+    private func checkFree(_ amount: Money, in accountId: UUID, excluding reserveId: UUID, arriving: Money? = nil) throws {
+        let snapshot = self.snapshot
+        let free = snapshot.freeToSetAside(in: accountId, excluding: reserveId) + (arriving ?? .zero(amount.currency))
+        if free < amount {
+            let name = snapshot.account(accountId)?.name ?? "The account"
+            throw StoreError.invalid("\(name) only has \(MoneyFormat.string(Money.max(free, .zero(amount.currency)))) that isn't already set aside.")
+        }
     }
 
     func releaseReserve(_ id: UUID) throws {

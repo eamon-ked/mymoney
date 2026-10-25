@@ -150,4 +150,26 @@ final class JourneyUITests: XCTestCase {
 
         XCTAssertTrue(element(containing: "AED 34,801.78").waitForExistence(timeout: 5))
     }
+
+    @MainActor
+    func testSavingTowardsAGoal() throws {
+        // Demo household: "Japan trip", 6,000 of 15,000 saved in Wio Savings
+        app.terminate()
+        app.launchArguments = ["-demoData", "-tab", "plan"]
+        app.launch()
+
+        let goal = element(containing: "Japan trip, AED 6,000 of AED 15,000")
+        for _ in 0..<8 where !goal.isHittable { app.swipeUp() }
+        goal.tap()
+        XCTAssertTrue(element(containing: "Each month").waitForExistence(timeout: 5))
+
+        app.buttons["addToGoal"].tap()
+        let amount = app.textFields["goalAmount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText("1000")
+        app.buttons["saveGoalMoney"].tap()
+
+        XCTAssertTrue(element(containing: "AED 7,000.00").waitForExistence(timeout: 5))
+    }
 }

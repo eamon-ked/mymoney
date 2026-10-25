@@ -201,66 +201,107 @@ struct ReserveEditor: View {
     @Environment(LedgerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     var editing: Reserve? = nil
+    /// Opens with a target, for a new savings goal
+    var asGoal = false
 
     @State private var name = ""
     @State private var amountText = ""
     @State private var accountId: UUID?
+    @State private var hasTarget = false
+    @State private var targetText = ""
+    @State private var hasDate = false
+    @State private var targetDate = Calendar.current.date(byAdding: .month, value: 6, to: Date()) ?? Date()
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("What it's for (e.g. Emergency fund)", text: $name)
+                    TextField(hasTarget ? "Goal (e.g. Holiday in Japan)" : "What it's for (e.g. Emergency fund)", text: $name)
+                        .accessibilityIdentifier("goalName")
                     HStack {
+                        Text(hasTarget ? "Saved so far" : "Amount")
+                        Spacer()
                         Text(store.currency).foregroundStyle(.secondary)
-                        TextField("Amount", text: $amountText).keyboardType(.decimalPad)
+                        TextField("0", text: $amountText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 110)
+                            .accessibilityIdentifier("goalSaved")
                     }
                     AccountPicker(title: "Kept in", accounts: store.snapshot.accounts.filter { $0.kind.isAsset }, selection: $accountId)
                 } footer: {
                     Text("Nothing moves: the money stays in the account and is just kept out of safe-to-spend.")
                 }
+                Section {
+                    Toggle("Saving towards a target", isOn: $hasTarget)
+                    if hasTarget {
+                        HStack {
+                            Text("Target")
+                            Spacer()
+                            Text(store.currency).foregroundStyle(.secondary)
+                            TextField("0", text: $targetText)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 110)
+                                .accessibilityIdentifier("goalTarget")
+                        }
+                        Toggle("By a date", isOn: $hasDate)
+                        if hasDate {
+                            DatePicker("Reach it by", selection: $targetDate, in: Date()..., displayedComponents: .date)
+                        }
+                    }
+                } footer: {
+                    if hasTarget && hasDate { Text("Nokael works out how much to save each month to get there.") }
+                }
                 if let error { Section { FieldError(message: error) } }
                 if let editing {
                     Section {
-                        Button("Release this money", role: .destructive) {
+                        Button(editing.isGoal ? "Delete goal (keeps the money)" : "Release this money", role: .destructive) {
                             try? store.releaseReserve(editing.id)
                             dismiss()
                         }
                     }
                 }
             }
-            .navigationTitle(editing == nil ? "Set money aside" : "Edit")
+            .navigationTitle(editing == nil ? (asGoal ? "New goal" : "Set money aside") : "Edit")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save) }
+                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).accessibilityIdentifier("saveGoal") }
             }
             .onAppear {
                 if let editing {
                     name = editing.name
-                    amountText = MoneyFormat.editable(editing.amount)
+                    amountText = MoneyFormat.editable(editing.amount, emptyWhenZero: true)
                     accountId = editing.accountId
+                    hasTarget = editing.target != nil
+                    targetText = editing.target.map { MoneyFormat.editable($0) } ?? ""
+                    hasDate = editing.targetDate != nil
+                    if let date = editing.targetDate { targetDate = date }
                 } else {
-                    accountId = store.snapshot.accounts.first { $0.spendable }?.id
+                    hasTarget = asGoal
+                    accountId = store.snapshot.accounts.first { $0.kind == .savings }?.id
+                        ?? store.snapshot.accounts.first { $0.spendable }?.id
                 }
             }
         }
     }
 
     private func save() {
-        guard let amount = MoneyFormat.parse(amountText, currency: store.currency) else { error = "Enter an amount."; return }
+        guard let amount = MoneyFormat.parse(amountText.isEmpty && hasTarget ? "0" : amountText, currency: store.currency) else {
+            error = "Enter an amount."; return
+        }
         guard let accountId else { error = "Choose the account it's kept in."; return }
-        let snapshot = store.snapshot
-        // Two reserves can't claim the same money without saying so
-        let others = snapshot.reserves.filter { $0.accountId == accountId && $0.id != editing?.id }.map(\.amount).sum(store.currency)
-        let balance = snapshot.balance(accountId)
-        if (others + amount) > balance {
-            error = "That's more than \(snapshot.account(accountId)?.name ?? "the account") holds after other money set aside (\((balance - others).compact) free)."
-            return
+        var target: Money?
+        if hasTarget {
+            guard let t = MoneyFormat.parse(targetText, currency: store.currency), t.isPositive else { error = "Enter the target."; return }
+            target = t
         }
         do {
-            try store.saveReserve(Reserve(id: editing?.id ?? UUID(), name: name, amount: amount, accountId: accountId))
+            // The store refuses more than the account holds after other money set aside
+            try store.saveReserve(Reserve(id: editing?.id ?? UUID(), name: name, amount: amount, accountId: accountId,
+                                          target: target, targetDate: hasTarget && hasDate ? store.snapshot.endOfDay(targetDate) : nil))
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
     }

@@ -190,6 +190,21 @@ struct FinanceSnapshot {
                                      firstPayment: nextPaymentDate(for: debt), calendar: calendar)
     }
 
+    // MARK: - Savings
+
+    var goals: [Reserve] { reserves.filter(\.isGoal) }
+
+    /// An account's balance less what other set-aside money already claims
+    func freeToSetAside(in accountId: UUID, excluding reserveId: UUID? = nil) -> Money {
+        let claimed = reserves.filter { $0.accountId == accountId && $0.id != reserveId }.map(\.amount).sum(currency)
+        return balance(accountId) - claimed
+    }
+
+    func progress(of goal: Reserve) -> GoalProgress? {
+        guard let target = goal.target else { return nil }
+        return GoalCalculator.progress(saved: goal.amount, target: target, targetDate: goal.targetDate, today: today, calendar: calendar)
+    }
+
     var activeReservesTotal: Money { reserves.map(\.amount).sum(currency) }
 
     /// Setup is complete enough for a reliable safe-to-spend

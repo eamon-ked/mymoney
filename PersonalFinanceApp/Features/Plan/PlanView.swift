@@ -15,6 +15,7 @@ struct PlanView: View {
     @State private var editingItem: PlannedItemSheet?
     @State private var paying: Occurrence?
     @State private var addingReserve = false
+    @State private var addingGoal = false
     @State private var editingReserve: Reserve?
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -87,6 +88,7 @@ struct PlanView: View {
                     Menu {
                         Button { editingItem = .new(.outflow) } label: { Label("Bill", systemImage: "calendar.badge.plus") }
                         Button { editingItem = .new(.inflow) } label: { Label("Expected income", systemImage: "arrow.down.circle") }
+                        Button { addingGoal = true } label: { Label("Savings goal", systemImage: "target") }
                         Button { addingReserve = true } label: { Label("Money set aside", systemImage: "lock") }
                     } label: { Image(systemName: "calendar.badge.plus") }
                     .accessibilityLabel("Add to plan")
@@ -102,6 +104,7 @@ struct PlanView: View {
                 }
             }
             .sheet(isPresented: $addingReserve) { ReserveEditor() }
+            .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
             .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }
         }
     }
@@ -152,21 +155,31 @@ struct PlanView: View {
 
     @ViewBuilder private var savingsSection: some View {
         Section {
-            if snapshot.reserves.isEmpty {
-                Button { addingReserve = true } label: { Label("Set money aside for a goal", systemImage: "lock") }
+            if snapshot.goals.isEmpty {
+                Button { addingGoal = true } label: { Label("Start a savings goal", systemImage: "target") }
+                    .accessibilityIdentifier("startGoal")
             }
-            ForEach(snapshot.reserves) { r in
+            ForEach(snapshot.goals) { goal in
+                if let progress = snapshot.progress(of: goal) {
+                    NavigationLink { GoalDetailView(goalId: goal.id) } label: { GoalRow(goal: goal, progress: progress) }
+                }
+            }
+            ForEach(snapshot.reserves.filter { !$0.isGoal }) { r in
                 Button { editingReserve = r } label: {
-                    ListRow(title: r.name, caption: "In \(snapshot.account(r.accountId)?.name ?? "an account")",
+                    ListRow(title: r.name, caption: "Set aside in \(snapshot.account(r.accountId)?.name ?? "an account")",
                             symbol: "lock.fill", color: Palette.plan) {
                         AmountPill(r.amount)
                     }
                 }.buttonStyle(.plain)
             }
         } header: {
-            Text("Savings")
+            HStack {
+                Text("Savings")
+                Spacer()
+                if !snapshot.goals.isEmpty { Button("Add") { addingGoal = true }.font(.caption) }
+            }
         } footer: {
-            Text("Set-aside money stays in its account and is kept out of safe-to-spend. Goals with targets and dates are coming next.")
+            Text("Saved money stays in its account and is kept out of safe-to-spend, so you can't spend it by accident.")
         }
     }
 }

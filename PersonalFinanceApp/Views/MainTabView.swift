@@ -15,46 +15,19 @@ struct MainTabView: View {
         if authViewModel.isAuthenticated {
             TabView {
                 BudgetView()
-                    .tabItem {
-                        Image(systemName: "chart.pie.fill")
-                        Text("Budget")
-                    }
-                
-                DashboardView()
-                    .tabItem {
-                        Image(systemName: "house.fill")
-                        Text("Dashboard")
-                    }
-                
-                AccountsView()
-                    .tabItem {
-                        Image(systemName: "creditcard.fill")
-                        Text("Accounts")
-                    }
+                    .tabItem { Label("Budget", systemImage: "chart.pie.fill") }
                 
                 TransactionsView()
-                    .tabItem {
-                        Image(systemName: "list.bullet")
-                        Text("Transactions")
-                    }
+                    .tabItem { Label("Transactions", systemImage: "list.bullet") }
                 
-                GoalsView()
-                    .tabItem {
-                        Image(systemName: "target")
-                        Text("Goals")
-                    }
+                AccountsView()
+                    .tabItem { Label("Accounts", systemImage: "building.columns.fill") }
                 
-                LoansView()
-                    .tabItem {
-                        Image(systemName: "banknote")
-                        Text("Loans")
-                    }
+                PlanView()
+                    .tabItem { Label("Plan", systemImage: "target") }
 
                 SettingsView()
-                    .tabItem {
-                        Image(systemName: "gear")
-                        Text("Settings")
-                    }
+                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
             }
             .onAppear {
                 if !BalanceRepair.isDone { showingBalanceRepair = true }
@@ -70,15 +43,9 @@ struct MainTabView: View {
 
 struct SettingsView: View {
     @StateObject private var authViewModel = AuthViewModel()
-    @State private var currencyCode: String = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
-    @State private var includeLoanPaymentsInMonthly: Bool = {
-        let defaults = UserDefaults.standard
-        return defaults.object(forKey: "includeLoanPaymentsInMonthly") == nil ? false : defaults.bool(forKey: "includeLoanPaymentsInMonthly")
-    }()
-    @State private var includeGoalSavingsInMonthly: Bool = {
-        let defaults = UserDefaults.standard
-        return defaults.object(forKey: "includeGoalSavingsInMonthly") == nil ? false : defaults.bool(forKey: "includeGoalSavingsInMonthly")
-    }()
+    @State private var currencyCode: String = UserDefaults.standard.string(forKey: "currencyCode") ?? "AED"
+    
+    private let currencies = ["AED", "SAR", "QAR", "KWD", "BHD", "OMR", "USD", "EUR", "GBP", "INR", "PKR", "PHP"]
     
     // Account deletion state
     @State private var showingDeleteConfirmation = false
@@ -89,32 +56,21 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
-                Section("Preferences") {
-                    HStack {
-                        Text("Currency")
-                        Spacer()
-                        TextField("e.g. USD, EUR", text: $currencyCode)
-                            .multilineTextAlignment(.trailing)
-                            .autocapitalization(.allCharacters)
-                            .disableAutocorrection(true)
-                            .onSubmit { saveCurrency() }
-                            .onChange(of: currencyCode) { _, new in
-                                // Persist as user types (trim to 3-5 chars for safety)
-                                let code = new.trimmingCharacters(in: .whitespacesAndNewlines)
-                                UserDefaults.standard.set(code, forKey: "currencyCode")
-                            }
+                Section {
+                    Picker("Currency", selection: $currencyCode) {
+                        ForEach(currencies.contains(currencyCode) ? currencies : [currencyCode] + currencies, id: \.self) { code in
+                            Text(code).tag(code)
+                        }
                     }
-                    Text("Used across amounts in the app").font(.caption).foregroundColor(.secondary)
-
-                    Toggle("Include Loan Payments in Monthly Expenses", isOn: $includeLoanPaymentsInMonthly)
-                        .onChange(of: includeLoanPaymentsInMonthly) { _, value in
-                            UserDefaults.standard.set(value, forKey: "includeLoanPaymentsInMonthly")
-                        }
-                    Toggle("Include Goal Savings in Monthly Expenses", isOn: $includeGoalSavingsInMonthly)
-                        .onChange(of: includeGoalSavingsInMonthly) { _, value in
-                            UserDefaults.standard.set(value, forKey: "includeGoalSavingsInMonthly")
-                        }
+                    .onChange(of: currencyCode) { _, new in
+                        UserDefaults.standard.set(new, forKey: "currencyCode")
+                    }
+                } header: {
+                    Text("Preferences")
+                } footer: {
+                    Text("Used for every amount in the app.")
                 }
+                
                 PayFirstSettingsSection()
                 
                 // Sync controls hidden per requirements
@@ -150,7 +106,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0")
+                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
                             .foregroundColor(.secondary)
                     }
                 }
@@ -170,11 +126,6 @@ struct SettingsView: View {
                 Text(deletionError ?? "An unknown error occurred. Please try again.")
             }
         }
-    }
-
-    private func saveCurrency() {
-        let code = currencyCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        UserDefaults.standard.set(code, forKey: "currencyCode")
     }
 
     @MainActor

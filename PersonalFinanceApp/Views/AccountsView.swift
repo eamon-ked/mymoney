@@ -9,41 +9,116 @@ import SwiftUI
 
 struct AccountsView: View {
     @StateObject private var repository = AccountRepository()
+    @StateObject private var loanRepository = LoanRepository()
     @State private var showingAddAccount = false
+    @State private var monthIncome: Decimal = 0
+    @State private var monthSpending: Decimal = 0
+    
+    private var accountTotal: Decimal {
+        repository.accounts.reduce(Decimal(0)) { $0 + $1.balance }
+    }
+    
+    private var loanDebt: Decimal {
+        loanRepository.loans.reduce(Decimal(0)) { $0 + $1.remainingBalance }
+    }
+    
+    private var netWorth: Decimal { accountTotal - loanDebt }
     
     var body: some View {
         NavigationView {
             List {
-                ForEach(repository.accounts, id: \.id) { account in
-                    NavigationLink(destination: AccountDetailView(account: account)) {
-                        AccountRowView(account: account)
+                Section {
+                    SummaryBanner(
+                        amount: netWorth,
+                        title: "Net worth",
+                        tint: netWorth < 0 ? .red : .indigo,
+                        details: [
+                            ("In this month", formatMoneyCompact(monthIncome)),
+                            ("Out this month", formatMoneyCompact(monthSpending)),
+                            ("Loans", formatMoneyCompact(loanDebt))
+                        ])
+                    .bannerRow()
+                }
+                
+                if repository.accounts.isEmpty {
+                    Section {
+                        EmptyStateRow(
+                            symbol: "building.columns",
+                            title: "No accounts yet",
+                            message: "Add your bank accounts, cash and cards to see your balances in one place.",
+                            actionTitle: "Add account") { showingAddAccount = true }
                     }
                 }
-                .onDelete(perform: deleteAccounts)
+                
+                ForEach(AccountGroup.allCases, id: \.self) { group in
+                    let accounts = repository.accounts.filter { group.contains($0.type) }
+                    if !accounts.isEmpty {
+                        Section {
+                            ForEach(accounts, id: \.id) { account in
+                                NavigationLink(destination: AccountDetailView(account: account, accountRepository: repository)) {
+                                    AccountRowView(account: account)
+                                }
+                            }
+                            .onDelete { offsets in
+                                offsets.map { accounts[$0] }.forEach(repository.deleteAccount)
+                            }
+                        } header: {
+                            HStack {
+                                Text(group.title)
+                                Spacer()
+                                Text(formatMoneyCompact(accounts.reduce(Decimal(0)) { $0 + $1.balance }))
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                }
             }
-            .animation(.default, value: repository.accounts.map { $0.id })
+            .listStyle(.insetGrouped)
             .navigationTitle("Accounts")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingAddAccount = true }) {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("Add account")
                 }
             }
-            .sheet(isPresented: $showingAddAccount) {
+            .sheet(isPresented: $showingAddAccount, onDismiss: refresh) {
                 AddAccountView(repository: repository)
             }
-            .refreshable {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
-                repository.loadAccounts()
-            }
+            .onAppear(perform: refresh)
+            .refreshable { refresh() }
         }
     }
     
-    private func deleteAccounts(offsets: IndexSet) {
-        for index in offsets {
-            repository.deleteAccount(repository.accounts[index])
+    private func refresh() {
+        repository.loadAccounts()
+        loanRepository.loadLoans()
+        let interval = Calendar.current.dateInterval(of: .month, for: Date())
+        let budgetIds = Set(repository.accounts.map(\.id))
+        let thisMonth = ((try? LocalDatabaseManager.shared.fetchAllActiveTransactions()) ?? [])
+            .filter { t in interval.map { $0.contains(t.transactionDate) } ?? false && budgetIds.contains(t.accountId) }
+        monthIncome = thisMonth.filter { $0.type == .income }.reduce(0) { $0 + $1.amount }
+        monthSpending = thisMonth.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
+    }
+}
+
+enum AccountGroup: CaseIterable {
+    case cash, credit, investments
+    
+    var title: String {
+        switch self {
+        case .cash: return "Cash & bank"
+        case .credit: return "Credit cards"
+        case .investments: return "Investments"
+        }
+    }
+    
+    func contains(_ type: AccountType) -> Bool {
+        switch self {
+        case .cash: return [.checking, .savings, .cash].contains(type)
+        case .credit: return type == .creditCard
+        case .investments: return type == .investment
         }
     }
 }
@@ -51,48 +126,19 @@ struct AccountsView: View {
 struct AccountRowView: View {
     let account: Account
     
+    private var caption: String {
+        var parts = [account.institutionName, account.type.displayName].compactMap { $0 }.filter { !$0.isEmpty }
+        if !account.onBudget { parts.append("Off budget") }
+        return parts.joined(separator: " · ")
+    }
+    
     var body: some View {
-        HStack {
-            // Account type icon
-            Circle()
-                .fill(Color(hex: account.color) ?? .blue)
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Image(systemName: account.type.iconName)
-                        .foregroundColor(.white)
-                        .font(.system(size: 16, weight: .medium))
-                )
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(account.name)
-                    .font(.headline)
-                
-                if let institution = account.institutionName {
-                    Text(institution)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Text(account.type.displayName)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(currencyFormatter.string(from: account.balance as NSDecimalNumber) ?? "$0.00")
-                    .font(.headline)
-                    .foregroundColor(account.balance >= 0 ? .primary : .red)
-                
-                if account.syncStatus == "pending" {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-            }
+        ListRow(title: account.name,
+                caption: caption,
+                symbol: account.type.iconName,
+                color: Color(hex: account.color) ?? .blue) {
+            AmountPill(account.balance)
         }
-        .padding(.vertical, 4)
     }
 }
 
@@ -110,68 +156,76 @@ struct AddAccountView: View {
         .blue, .green, .red, .orange, .purple, .pink, .yellow, .indigo
     ]
     
+    private var isCard: Bool { selectedType == .creditCard }
+    
     var body: some View {
         NavigationView {
             Form {
-                Section("Account Details") {
-                    TextField("Account Name", text: $name)
-                    
-                    Picker("Account Type", selection: $selectedType) {
+                Section {
+                    TextField("Account name", text: $name)
+                    Picker("Type", selection: $selectedType) {
                         ForEach(AccountType.allCases, id: \.self) { type in
-                            Text(type.displayName).tag(type)
+                            Label(type.displayName, systemImage: type.iconName).tag(type)
                         }
                     }
-                    
-                    TextField("Initial Balance", text: $balance)
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Institution (Optional)", text: $institutionName)
+                    TextField("Bank (optional)", text: $institutionName)
                 }
                 
-                Section("Color") {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
+                Section {
+                    TextField("0.00", text: $balance)
+                        .keyboardType(.decimalPad)
+                } header: {
+                    Text(isCard ? "Amount owed today" : "Balance today")
+                } footer: {
+                    Text(isCard
+                         ? "Enter what you owe on the card. Spending on it raises this; paying it off is a transfer from your bank account."
+                         : selectedType == .investment
+                            ? "Investment accounts stay out of your budget."
+                            : "Every transaction you add from now on keeps this balance up to date.")
+                }
+                
+                Section("Colour") {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
                         ForEach(colors, id: \.self) { color in
                             Circle()
                                 .fill(color)
-                                .frame(width: 40, height: 40)
+                                .frame(width: 30, height: 30)
                                 .overlay(
-                                    Circle()
-                                        .stroke(Color.primary, lineWidth: selectedColor == color ? 3 : 0)
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundColor(.white)
+                                        .opacity(selectedColor == color ? 1 : 0)
                                 )
-                                .onTapGesture {
-                                    selectedColor = color
-                                }
+                                .onTapGesture { selectedColor = color }
+                                .accessibilityAddTraits(selectedColor == color ? .isSelected : [])
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
                 }
             }
-            .navigationTitle("Add Account")
+            .navigationTitle("New account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                    Button("Cancel") { dismiss() }
                 }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        saveAccount()
-                    }
-                    .disabled(name.isEmpty)
+                    Button("Save") { saveAccount() }
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
     }
     
     private func saveAccount() {
-        let balanceDecimal = Decimal(string: balance) ?? 0
+        let entered = Money.parse(balance) ?? 0
+        // A card's balance is what it holds, so money owed is negative
+        let opening = isCard ? -abs(entered) : entered
         
         let account = Account(
-            name: name,
+            name: name.trimmingCharacters(in: .whitespaces),
             type: selectedType,
-            openingBalance: balanceDecimal,
+            openingBalance: opening,
             institutionName: institutionName.isEmpty ? nil : institutionName,
             color: selectedColor.toHex()
         )
@@ -185,64 +239,51 @@ struct AddAccountView: View {
 
 struct AccountDetailView: View {
     let account: Account
+    @ObservedObject var accountRepository: AccountRepository
     @StateObject private var transactionRepository = TransactionRepository()
+    @State private var onBudget = true
     
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Circle()
-                            .fill(Color(hex: account.color) ?? .blue)
-                            .frame(width: 60, height: 60)
-                            .overlay(
-                                Image(systemName: account.type.iconName)
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 24, weight: .medium))
-                            )
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(account.name)
-                                .font(.title2)
-                                .fontWeight(.bold)
-                            
-                            if let institution = account.institutionName {
-                                Text(institution)
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Text(account.type.displayName)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                    }
-                    
-                    Text(currencyFormatter.string(from: account.balance as NSDecimalNumber) ?? "$0.00")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(account.balance >= 0 ? .primary : .red)
-                }
-                .padding(.vertical, 8)
+                SummaryBanner(
+                    amount: account.balance,
+                    title: account.type == .creditCard && account.balance < 0 ? "Owed on this card" : "Balance",
+                    tint: account.balance < 0 ? .red : (Color(hex: account.color) ?? .blue))
+                .bannerRow()
             }
             
-            Section("Recent Transactions") {
+            Section {
+                LabeledContent("Type", value: account.type.displayName)
+                if let institution = account.institutionName, !institution.isEmpty {
+                    LabeledContent("Bank", value: institution)
+                }
+                Toggle("Include in budget", isOn: $onBudget)
+                    .onChange(of: onBudget) { _, value in
+                        guard value != account.onBudget else { return }
+                        account.onBudget = value
+                        accountRepository.updateAccount(account)
+                    }
+            } footer: {
+                Text("Money in budget accounts counts towards Ready to Assign.")
+            }
+            
+            Section("Transactions") {
                 if transactionRepository.transactions.isEmpty {
                     Text("No transactions yet")
                         .foregroundColor(.secondary)
-                        .italic()
                 } else {
                     ForEach(transactionRepository.transactions, id: \.id) { transaction in
-                        TransactionRowView(transaction: transaction)
+                        TransactionRowView(transaction: transaction, viewingAccountId: account.id)
                     }
                 }
             }
         }
-        .navigationTitle("Account Details")
+        .listStyle(.insetGrouped)
+        .navigationTitle(account.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            onBudget = account.onBudget
             transactionRepository.loadTransactions(for: account.id)
         }
     }
@@ -252,7 +293,7 @@ extension AccountType {
     var iconName: String {
         switch self {
         case .checking: return "banknote"
-        case .savings: return "piggy.bank"
+        case .savings: return "building.columns.fill"
         case .creditCard: return "creditcard"
         case .cash: return "dollarsign.circle"
         case .investment: return "chart.line.uptrend.xyaxis"
@@ -298,13 +339,6 @@ extension Color {
     }
 }
 
-private var currencyFormatter: NumberFormatter {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .currency
-    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
-    formatter.currencyCode = code.isEmpty ? "USD" : code
-    return formatter
-}
 
 #Preview {
     AccountsView()

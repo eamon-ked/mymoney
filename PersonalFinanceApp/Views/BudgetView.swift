@@ -378,8 +378,8 @@ struct PayFirstSettingsSection: View {
 func formatMoney(_ value: Decimal) -> String {
     let formatter = NumberFormatter()
     formatter.numberStyle = .currency
-    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
-    formatter.currencyCode = code.isEmpty ? "USD" : code
+    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "AED"
+    formatter.currencyCode = code.isEmpty ? "AED" : code
     return formatter.string(from: value as NSDecimalNumber) ?? "\(value)"
 }
 

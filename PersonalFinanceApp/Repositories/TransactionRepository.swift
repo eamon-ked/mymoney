@@ -49,6 +49,9 @@ class TransactionRepository: ObservableObject {
     
     func addTransaction(_ transaction: Transaction) {
         do {
+            if let categoryId = transaction.categoryId {
+                transaction.category = try localDB.fetchCategory(by: categoryId)
+            }
             try localDB.insert(transaction)
             try refreshBalances(transaction.accountId, transaction.transferAccountId)
             loadTransactions()

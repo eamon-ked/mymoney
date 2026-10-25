@@ -16,71 +16,105 @@ struct TransactionsView: View {
     @State private var selectedType: TransactionType? = nil
     @State private var savedIncome: Transaction?
     @State private var paydayIncome: Transaction?
+    @State private var monthIn: Decimal = 0
+    @State private var monthOut: Decimal = 0
+    
+    private var categoriesById: [UUID: Category] {
+        Dictionary(categoryRepository.categories.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+    
+    private var accountNames: [UUID: String] {
+        Dictionary(accountRepository.accounts.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+    }
     
     var filteredTransactions: [Transaction] {
-        var transactions = repository.transactions
-        
-        if !searchText.isEmpty {
-            transactions = transactions.filter { transaction in
-                transaction.transactionDescription.localizedCaseInsensitiveContains(searchText) ||
-                transaction.notes?.localizedCaseInsensitiveContains(searchText) == true
-            }
+        repository.transactions.filter { t in
+            (selectedType == nil || t.type == selectedType) &&
+            (searchText.isEmpty
+             || t.transactionDescription.localizedCaseInsensitiveContains(searchText)
+             || t.notes?.localizedCaseInsensitiveContains(searchText) == true
+             || t.categoryId.flatMap { categoriesById[$0] }?.name.localizedCaseInsensitiveContains(searchText) == true)
         }
-        
-        if let type = selectedType {
-            transactions = transactions.filter { $0.type == type }
-        }
-        
-        return transactions
+    }
+    
+    /// Newest day first
+    private var days: [(day: Date, items: [Transaction])] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: filteredTransactions) { calendar.startOfDay(for: $0.transactionDate) }
+        return grouped.keys.sorted(by: >).map { ($0, grouped[$0] ?? []) }
     }
     
     var body: some View {
         NavigationView {
-            VStack {
-                // Filter buttons
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        FilterButton(
-                            title: "All",
-                            isSelected: selectedType == nil
-                        ) {
-                            selectedType = nil
-                        }
-                        
+            List {
+                Section {
+                    SummaryBanner(
+                        amount: monthOut,
+                        title: "Spent in \(Date().formatted(.dateTime.month(.wide)))",
+                        tint: .orange,
+                        details: [("Money in", formatMoneyCompact(monthIn)),
+                                  ("Left over", formatMoneyCompact(monthIn - monthOut))])
+                    .bannerRow()
+                }
+                
+                Section {
+                    Picker("Show", selection: $selectedType) {
+                        Text("All").tag(nil as TransactionType?)
                         ForEach(TransactionType.allCases, id: \.self) { type in
-                            FilterButton(
-                                title: type.displayName,
-                                isSelected: selectedType == type
-                            ) {
-                                selectedType = type
-                            }
+                            Text(type.displayName).tag(type as TransactionType?)
                         }
                     }
-                    .padding(.horizontal)
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 }
-                .padding(.vertical, 8)
                 
-                List {
-                    ForEach(filteredTransactions, id: \.id) { transaction in
-                        TransactionRowView(transaction: transaction)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button("Delete", role: .destructive) {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        repository.deleteTransaction(transaction)
+                if days.isEmpty {
+                    Section {
+                        if repository.transactions.isEmpty {
+                            EmptyStateRow(
+                                symbol: "list.bullet.rectangle",
+                                title: "No transactions yet",
+                                message: "Add what you earn and spend, and your balances and budget update on their own.",
+                                actionTitle: "Add transaction") { showingAddTransaction = true }
+                        } else {
+                            Text("Nothing matches").foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                ForEach(days, id: \.day) { group in
+                    Section {
+                        ForEach(group.items, id: \.id) { transaction in
+                            TransactionRowView(transaction: transaction, accountNames: accountNames, categoriesById: categoriesById)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button("Delete", role: .destructive) {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            repository.deleteTransaction(transaction)
+                                            refreshTotals()
+                                        }
                                     }
                                 }
-                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text(dayTitle(group.day))
+                            Spacer()
+                            Text(dayNet(group.items)).monospacedDigit()
+                        }
                     }
                 }
-                .animation(.default, value: filteredTransactions.map { $0.id })
-                .searchable(text: $searchText, prompt: "Search transactions...")
             }
+            .listStyle(.insetGrouped)
+            .animation(.default, value: filteredTransactions.map { $0.id })
+            .searchable(text: $searchText, prompt: "Search transactions")
             .navigationTitle("Transactions")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingAddTransaction = true }) {
                         Image(systemName: "plus")
                     }
+                    .accessibilityLabel("Add transaction")
                 }
             }
             .sheet(isPresented: $showingAddTransaction, onDismiss: offerPayFirst) {
@@ -100,16 +134,47 @@ struct TransactionsView: View {
             .sheet(item: $paydayIncome) { income in
                 PaydaySheet(income: income.amount, incomeDate: income.transactionDate)
             }
+            .onAppear {
+                repository.loadTransactions(limit: 500)
+                accountRepository.loadAccounts()
+                refreshTotals()
+            }
             .refreshable {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
-                repository.loadTransactions()
+                repository.loadTransactions(limit: 500)
+                refreshTotals()
             }
         }
     }
     
+    private func refreshTotals() {
+        guard let month = Calendar.current.dateInterval(of: .month, for: Date()) else { return }
+        let rows = ((try? LocalDatabaseManager.shared.fetchAllActiveTransactions()) ?? [])
+            .filter { month.contains($0.transactionDate) }
+        monthIn = rows.filter { $0.type == .income }.reduce(0) { $0 + $1.amount }
+        monthOut = rows.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
+    }
+    
+    private func dayTitle(_ day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(.dateTime.weekday(.wide).day().month(.abbreviated))
+    }
+    
+    private func dayNet(_ items: [Transaction]) -> String {
+        let net = items.reduce(Decimal(0)) { total, t in
+            switch t.type {
+            case .income: return total + t.amount
+            case .expense: return total - t.amount
+            case .transfer: return total
+            }
+        }
+        return net == 0 ? "" : (net > 0 ? "+" : "−") + formatMoneyCompact(abs(net))
+    }
+    
     /// Payday: offer to fund the pay-first category before anything else
     private func offerPayFirst() {
+        refreshTotals()
         guard let income = savedIncome else { return }
         savedIncome = nil
         let onBudget = accountRepository.getAccount(by: income.accountId)?.onBudget ?? true
@@ -120,93 +185,77 @@ struct TransactionsView: View {
 
 struct TransactionRowView: View {
     let transaction: Transaction
+    var accountNames: [UUID: String] = [:]
+    var categoriesById: [UUID: Category] = [:]
+    /// When shown inside one account, a transfer reads as money in or out of it
+    var viewingAccountId: UUID? = nil
     
     var body: some View {
-        HStack {
-            // Category icon
-            Circle()
-                .fill(categoryColor)
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Image(systemName: categoryIcon)
-                        .foregroundColor(.white)
-                        .font(.system(size: 16, weight: .medium))
-                )
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(transaction.transactionDescription)
-                    .font(.headline)
-                    .lineLimit(1)
-                
-                if let notes = transaction.notes, !notes.isEmpty {
-                    Text(notes)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Text(transaction.transactionDate, style: .date)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(amountString)
-                    .font(.headline)
+        ListRow(title: transaction.transactionDescription,
+                caption: caption,
+                symbol: symbol,
+                color: color) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(amountText)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
                     .foregroundColor(amountColor)
-                
-                if transaction.syncStatus == "pending" {
+                if transaction.syncStatus == "pending" && SupabaseManager.shared.isAuthenticated {
                     Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .accessibilityLabel("Not synced yet")
                 }
             }
         }
-        .padding(.vertical, 4)
     }
     
-    private var categoryColor: Color {
-        if let category = transaction.category {
-            return Color(hex: category.color) ?? .gray
+    private var caption: String {
+        if transaction.type == .transfer {
+            let from = accountNames[transaction.accountId]
+            let to = transaction.transferAccountId.flatMap { accountNames[$0] }
+            if let from, let to { return "\(from) → \(to)" }
+            return "Transfer"
         }
-        return .gray
+        let parts = [category?.name, accountNames[transaction.accountId], transaction.notes]
+        return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
     
-    private var categoryIcon: String {
-        if let category = transaction.category {
-            return category.icon
-        }
-        return "questionmark"
+    private var symbol: String {
+        if transaction.type == .transfer { return "arrow.left.arrow.right" }
+        return category?.icon ?? (transaction.type == .income ? "arrow.down" : "questionmark")
     }
     
-    private var amountString: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
-        formatter.currencyCode = code.isEmpty ? "USD" : code
-        
-        let amount = formatter.string(from: transaction.amount as NSDecimalNumber) ?? "$0.00"
-        
+    private var color: Color {
+        if transaction.type == .transfer { return .blue }
+        if let category { return Color(hex: category.color) ?? .gray }
+        return transaction.type == .income ? .green : .gray
+    }
+    
+    private var category: Category? {
+        transaction.categoryId.flatMap { categoriesById[$0] } ?? transaction.category
+    }
+    
+    private var isIncomingTransfer: Bool {
+        transaction.type == .transfer && viewingAccountId != nil && transaction.transferAccountId == viewingAccountId
+    }
+    
+    private var amountText: String {
+        let amount = formatMoneyCompact(transaction.amount)
         switch transaction.type {
-        case .income:
-            return "+\(amount)"
-        case .expense:
-            return "-\(amount)"
+        case .income: return "+\(amount)"
+        case .expense: return "−\(amount)"
         case .transfer:
-            return amount
+            guard viewingAccountId != nil else { return amount }
+            return isIncomingTransfer ? "+\(amount)" : "−\(amount)"
         }
     }
     
     private var amountColor: Color {
         switch transaction.type {
-        case .income:
-            return .green
-        case .expense:
-            return .red
-        case .transfer:
-            return .blue
+        case .income: return .green
+        case .expense: return .primary
+        case .transfer: return isIncomingTransfer ? .green : .secondary
         }
     }
 }
@@ -349,7 +398,7 @@ struct AddTransactionView: View {
                     }
                 }
             }
-            .navigationTitle("Add Transaction")
+            .navigationTitle("New transaction")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -411,25 +460,6 @@ struct AddTransactionView: View {
         transactionRepository.addTransaction(transaction)
         onSaved(transaction)
         dismiss()
-    }
-}
-
-struct FilterButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.caption)
-                .fontWeight(.medium)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isSelected ? Color.blue : Color.gray.opacity(0.2))
-                .foregroundColor(isSelected ? .white : .primary)
-                .cornerRadius(16)
-        }
     }
 }
 

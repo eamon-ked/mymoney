@@ -7,128 +7,6 @@
 
 import SwiftUI
 
-struct GoalsView: View {
-    @StateObject private var repository = GoalRepository()
-    @State private var showingAddGoal = false
-    @State private var goalToUpdate: Goal? = nil
-    
-    var body: some View {
-        NavigationView {
-            List {
-                ForEach(repository.goals, id: \.id) { goal in
-                    GoalRowView(goal: goal)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Delete", role: .destructive) {
-                                repository.deleteGoal(goal)
-                            }
-                            Button("Update") { goalToUpdate = goal }
-                        }
-                }
-            }
-            .navigationTitle("Goals")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAddGoal = true }) {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-            .sheet(isPresented: $showingAddGoal) {
-                AddGoalView(repository: repository)
-            }
-            .sheet(item: $goalToUpdate) { goal in
-                UpdateGoalProgressView(repository: repository, goal: goal)
-            }
-            .refreshable {
-                repository.loadGoals()
-            }
-        }
-    }
-}
-
-struct GoalRowView: View {
-    let goal: Goal
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(goal.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    
-                    if let description = goal.goalDescription {
-                        Text(description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                    }
-                    
-                    if let targetDate = goal.targetDate {
-                        Text("Target: \(targetDate, style: .date)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(currencyFormatter.string(from: goal.currentAmount as NSDecimalNumber) ?? "$0.00")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    Text("of \(currencyFormatter.string(from: goal.targetAmount as NSDecimalNumber) ?? "$0.00")")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    if goal.syncStatus == "pending" {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                }
-            }
-            
-            // Progress bar
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("\(Int(goal.progress * 100))% Complete")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Spacer()
-                    
-                    if let category = goal.category {
-                        Text(category)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(Color.blue.opacity(0.2))
-                            .cornerRadius(8)
-                    }
-                }
-                
-                ProgressView(value: goal.progress.isFinite ? goal.progress : 0.0)
-                    .progressViewStyle(LinearProgressViewStyle(tint: progressColor))
-            }
-        }
-        .padding(.vertical, 8)
-    }
-    
-    private var progressColor: Color {
-        if goal.progress >= 1.0 {
-            return .green
-        } else if goal.progress >= 0.7 {
-            return .blue
-        } else if goal.progress >= 0.3 {
-            return .orange
-        } else {
-            return .red
-        }
-    }
-}
-
 struct AddGoalView: View {
     @ObservedObject var repository: GoalRepository
     @Environment(\.dismiss) private var dismiss
@@ -184,7 +62,7 @@ struct AddGoalView: View {
                     }
                 }
             }
-            .navigationTitle("Add Goal")
+            .navigationTitle("New goal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -262,16 +140,4 @@ struct UpdateGoalProgressView: View {
         repository.updateGoalProgress(goal, amount: amount)
         dismiss()
     }
-}
-
-private var currencyFormatter: NumberFormatter {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .currency
-    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
-    formatter.currencyCode = code.isEmpty ? "USD" : code
-    return formatter
-}
-
-#Preview {
-    GoalsView()
 }

@@ -1,88 +1,5 @@
 import SwiftUI
 
-struct LoansView: View {
-    @StateObject private var repository = LoanRepository()
-    @State private var showingAddLoan = false
-    @State private var showingUpdateLoan = false
-    @State private var loanToUpdate: PrivateLoan? = nil
-    
-    var body: some View {
-        NavigationView {
-            List {
-                ForEach(repository.loans, id: \.id) { loan in
-                    LoanRowView(loan: loan)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Delete", role: .destructive) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    repository.deleteLoan(loan)
-                                }
-                            }
-                            Button("Update") {
-                                loanToUpdate = loan
-                                showingUpdateLoan = true
-                            }
-                        }
-                }
-            }
-            .navigationTitle("Loans")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showingAddLoan = true } }) {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-            .sheet(isPresented: $showingAddLoan) {
-                AddLoanView(repository: repository)
-            }
-            .sheet(item: $loanToUpdate) { loan in
-                UpdateLoanProgressView(repository: repository, loan: loan)
-            }
-            .refreshable { repository.loadLoans() }
-        }
-    }
-}
-
-struct LoanRowView: View {
-    let loan: PrivateLoan
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(loan.loanName)
-                    .font(.headline)
-                Spacer()
-                Text(currencyFormatter.string(from: loan.remainingBalance as NSDecimalNumber) ?? "$0.00")
-                    .font(.headline)
-            }
-            
-            if let lender = loan.lenderName, !lender.isEmpty {
-                Text(lender)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            ProgressView(value: loan.progress)
-                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                .animation(.easeInOut(duration: 0.25), value: loan.progress)
-            
-            HStack {
-                Text("Monthly: \(currencyFormatter.string(from: loan.monthlyPayment as NSDecimalNumber) ?? "$0.00")")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if let next = loan.nextPaymentDate {
-                    Text("Next: \(next, style: .date)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding(.vertical, 6)
-        .transition(.opacity)
-    }
-}
-
 struct AddLoanView: View {
     @ObservedObject var repository: LoanRepository
     @Environment(\.dismiss) private var dismiss
@@ -126,7 +43,7 @@ struct AddLoanView: View {
                     }
                 }
             }
-            .navigationTitle("Add Loan")
+            .navigationTitle("New loan")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { dismiss() } }
@@ -215,12 +132,5 @@ struct UpdateLoanProgressView: View {
     }
 }
 
-private var currencyFormatter: NumberFormatter {
-    let f = NumberFormatter()
-    f.numberStyle = .currency
-    let code = UserDefaults.standard.string(forKey: "currencyCode") ?? "USD"
-    f.currencyCode = code.isEmpty ? "USD" : code
-    return f
-}
 
 

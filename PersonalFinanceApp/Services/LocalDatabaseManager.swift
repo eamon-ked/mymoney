@@ -157,11 +157,14 @@ class LocalDatabaseManager: ObservableObject {
     }
     
     func fetchTransactions(for accountId: UUID) throws -> [Transaction] {
+        let optionalId: UUID? = accountId   // #Predicate needs matching optionality
         var descriptor = FetchDescriptor<Transaction>(
-            predicate: #Predicate { $0.accountId == accountId && $0.deletedAt == nil },
+            predicate: #Predicate {
+                ($0.accountId == accountId || $0.transferAccountId == optionalId) && $0.deletedAt == nil
+            },
             sortBy: [SortDescriptor(\.transactionDate, order: .reverse)]
         )
-        descriptor.fetchLimit = 50 // Limit for performance
+        descriptor.fetchLimit = 200 // Display only; never used for balances
         return try modelContext.fetch(descriptor)
     }
     

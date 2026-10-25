@@ -93,6 +93,10 @@ struct BudgetView: View {
                     Button { addingCategory = true } label: { Image(systemName: "folder.badge.plus") }
                         .accessibilityLabel("New category")
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink { ReportsView() } label: { Image(systemName: "chart.bar.xaxis") }
+                        .accessibilityLabel("Reports")
+                }
                 GlobalAddButton()
             }
             .sheet(item: Binding(get: { selected.map(IdentifiedUUID.init) }, set: { selected = $0?.id })) { item in

@@ -11,6 +11,7 @@ struct AccountsView: View {
     @StateObject private var repository = AccountRepository()
     @StateObject private var loanRepository = LoanRepository()
     @State private var showingAddAccount = false
+    @State private var accountToDelete: Account?
     @State private var monthIncome: Decimal = 0
     @State private var monthSpending: Decimal = 0
     
@@ -60,7 +61,7 @@ struct AccountsView: View {
                                 }
                             }
                             .onDelete { offsets in
-                                offsets.map { accounts[$0] }.forEach(repository.deleteAccount)
+                                accountToDelete = offsets.first.map { accounts[$0] }
                             }
                         } header: {
                             HStack {
@@ -83,6 +84,7 @@ struct AccountsView: View {
                     .accessibilityLabel("Add account")
                 }
             }
+            .deleteAccountConfirmation(for: $accountToDelete, repository: repository, onDeleted: refresh)
             .sheet(isPresented: $showingAddAccount, onDismiss: refresh) {
                 AddAccountView(repository: repository)
             }
@@ -100,6 +102,31 @@ struct AccountsView: View {
             .filter { t in interval.map { $0.contains(t.transactionDate) } ?? false && budgetIds.contains(t.accountId) }
         monthIncome = thisMonth.filter { $0.type == .income }.reduce(0) { $0 + $1.amount }
         monthSpending = thisMonth.filter { $0.type == .expense }.reduce(0) { $0 + $1.amount }
+    }
+}
+
+extension View {
+    /// Asks before deleting, and says what happens to the account's transactions
+    func deleteAccountConfirmation(for account: Binding<Account?>,
+                                   repository: AccountRepository,
+                                   onDeleted: @escaping () -> Void) -> some View {
+        let count = account.wrappedValue.map { repository.ownTransactionCount(for: $0) } ?? 0
+        return confirmationDialog(
+            "Delete \(account.wrappedValue?.name ?? "account")?",
+            isPresented: Binding(get: { account.wrappedValue != nil },
+                                 set: { if !$0 { account.wrappedValue = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete account", role: .destructive) {
+                if let target = account.wrappedValue { repository.deleteAccount(target) }
+                account.wrappedValue = nil
+                onDeleted()
+            }
+        } message: {
+            Text(count == 0
+                 ? "Transfers with your other accounts are kept, so their balances don't change."
+                 : "Its \(count) transaction\(count == 1 ? "" : "s") will be deleted too. Transfers with your other accounts are kept, so their balances don't change.")
+        }
     }
 }
 
@@ -244,6 +271,9 @@ struct AccountDetailView: View {
     @StateObject private var categoryRepository = CategoryRepository()
     @State private var onBudget = true
     @State private var editingTransaction: Transaction?
+    @State private var accountToDelete: Account?
+    @State private var confirmingFlip = false
+    @Environment(\.dismiss) private var dismiss
     
     private var accountNames: [UUID: String] {
         Dictionary(accountRepository.accounts.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
@@ -278,6 +308,16 @@ struct AccountDetailView: View {
                 Text("Money in budget accounts counts towards Ready to Assign.")
             }
             
+            if account.type == .creditCard && account.balance > 0 {
+                Section {
+                    Button("Show \(formatMoneyCompact(account.balance)) as owed") { confirmingFlip = true }
+                } header: {
+                    Text("Is this what you owe?")
+                } footer: {
+                    Text("Older versions saved card debt as a positive number. Card balances are now negative when you owe money, so spending raises the debt and payments lower it.")
+                }
+            }
+            
             Section("Transactions") {
                 if transactionRepository.transactions.isEmpty {
                     Text("No transactions yet")
@@ -294,8 +334,22 @@ struct AccountDetailView: View {
                     }
                 }
             }
+
+            Section {
+                Button("Delete account", role: .destructive) { accountToDelete = account }
+                    .frame(maxWidth: .infinity)
+            }
         }
         .listStyle(.insetGrouped)
+        .deleteAccountConfirmation(for: $accountToDelete, repository: accountRepository) { dismiss() }
+        .confirmationDialog("Show \(formatMoneyCompact(account.balance)) as owed?", isPresented: $confirmingFlip, titleVisibility: .visible) {
+            Button("Show as owed") {
+                accountRepository.flipCardBalance(account)
+                transactionRepository.loadTransactions(for: account.id)
+            }
+        } message: {
+            Text("The balance becomes −\(formatMoneyCompact(account.balance)). Your transactions don't change.")
+        }
         .navigationTitle(account.name)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $editingTransaction) { transaction in

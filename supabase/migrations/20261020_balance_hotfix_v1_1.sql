@@ -13,6 +13,9 @@ alter table public.accounts
 alter table public.transactions
   add column if not exists deleted_at timestamptz;
 
+alter table public.accounts
+  add column if not exists deleted_at timestamptz;
+
 -- Destination account for transfers
 alter table public.transactions
   add column if not exists transfer_account_id uuid

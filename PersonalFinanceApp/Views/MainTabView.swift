@@ -27,6 +27,7 @@ struct MainTabView: View {
                     .tabItem { Label("Plan", systemImage: "target") }
 
                 SettingsView()
+                    .environmentObject(authViewModel)
                     .tabItem { Label("Settings", systemImage: "gearshape.fill") }
             }
             .onAppear {
@@ -37,12 +38,14 @@ struct MainTabView: View {
             }
         } else {
             AuthView()
+                .environmentObject(authViewModel)
         }
     }
 }
 
 struct SettingsView: View {
-    @StateObject private var authViewModel = AuthViewModel()
+    // Shared with MainTabView, so signing out actually leaves the app
+    @EnvironmentObject private var authViewModel: AuthViewModel
     @State private var currencyCode: String = UserDefaults.standard.string(forKey: "currencyCode") ?? "AED"
     
     private let currencies = ["AED", "SAR", "QAR", "KWD", "BHD", "OMR", "USD", "EUR", "GBP", "INR", "PKR", "PHP"]
@@ -75,31 +78,39 @@ struct SettingsView: View {
                 
                 // Sync controls hidden per requirements
                 
-                Section("Account") {
-                    NavigationLink("Profile") { ProfileView() }
-                    Button("Delete Account", role: .destructive) {
-                        showingDeleteConfirmation = true
-                    }
-                    .disabled(isDeletingAccount)
-                    .overlay(
-                        Group {
-                            if isDeletingAccount {
-                                HStack {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                    Text("Deleting...")
-                                        .foregroundColor(.secondary)
-                                        .font(.caption)
-                                }
-                            }
+                if authViewModel.isGuest {
+                    Section {
+                        Label("Your data stays on this iPhone and isn't backed up.", systemImage: "iphone")
+                            .font(.subheadline)
+                        Button("Sign in or create an account") {
+                            Task { await authViewModel.signOut() }
                         }
-                    )
-                    Button("Sign Out", role: .destructive) {
-                        Task {
-                            await authViewModel.signOut()
-                        }
+                        .disabled(authViewModel.isLoading)
+                    } header: {
+                        Text("Guest mode")
+                    } footer: {
+                        Text("With an account your money syncs across your devices. Everything you've added as a guest stays on this iPhone.")
                     }
-                    .disabled(authViewModel.isLoading || isDeletingAccount)
+                } else {
+                    Section("Account") {
+                        NavigationLink("Profile") { ProfileView() }
+                        Button("Sign Out") {
+                            Task { await authViewModel.signOut() }
+                        }
+                        .disabled(authViewModel.isLoading || isDeletingAccount)
+                    }
+                    
+                    Section {
+                        Button("Delete Account", role: .destructive) {
+                            showingDeleteConfirmation = true
+                        }
+                        .disabled(isDeletingAccount)
+                        .overlay(alignment: .trailing) {
+                            if isDeletingAccount { ProgressView() }
+                        }
+                    } footer: {
+                        Text("Permanently deletes your account and everything in it, on every device.")
+                    }
                 }
                 
                 Section("About") {

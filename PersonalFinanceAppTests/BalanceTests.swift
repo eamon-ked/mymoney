@@ -103,6 +103,42 @@ struct BalanceTests {
         #expect(repository.transactions.contains { $0.id == t.id })
     }
     
+    @Test func deletingAnAccountKeepsOtherBalances() throws {
+        let a = try makeAccount(1000)
+        let b = try makeAccount(0)
+        defer { try? cleanUp([a, b]) }
+        let accounts = AccountRepository()
+        
+        let own = Transaction(accountId: b.id, amount: 30, type: .expense, transactionDescription: "Coffee")
+        let transfer = Transaction(accountId: a.id, transferAccountId: b.id, amount: 200, type: .transfer, transactionDescription: "Top up")
+        repository.addTransaction(own)
+        repository.addTransaction(transfer)
+        #expect(a.balance == 800)
+        #expect(accounts.ownTransactionCount(for: b) == 1)
+        
+        accounts.deleteAccount(b)
+        #expect(b.deletedAt != nil)
+        #expect(own.deletedAt != nil)
+        #expect(transfer.deletedAt == nil)
+        #expect(a.balance == 800)
+        #expect(try !localDB.fetchAccounts().contains { $0.id == b.id })
+    }
+    
+    @Test func flippingACardShowsTheSameAmountAsOwed() throws {
+        let card = Account(name: "Old card", type: .creditCard, openingBalance: 2000)
+        try localDB.insert(card)
+        defer { try? cleanUp([card]) }
+        repository.addTransaction(Transaction(accountId: card.id, amount: 100, type: .expense, transactionDescription: "Fuel"))
+        #expect(card.balance == 1900)
+        
+        AccountRepository().flipCardBalance(card)
+        #expect(card.balance == -1900)
+        
+        // From now on spending raises the debt
+        repository.addTransaction(Transaction(accountId: card.id, amount: 50, type: .expense, transactionDescription: "Lunch"))
+        #expect(card.balance == -1950)
+    }
+    
     @Test func transferMovesMoneyBothWays() throws {
         let a = try makeAccount(1000)
         let b = try makeAccount(0)

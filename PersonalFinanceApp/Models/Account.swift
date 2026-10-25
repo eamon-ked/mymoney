@@ -38,6 +38,8 @@ final class Account {
     var balanceConfirmedAt: Date? = nil
     /// Off-budget accounts (investments by default) never feed Ready to Assign
     var onBudget: Bool = true
+    /// Soft delete marker; kept so the delete can sync
+    var deletedAt: Date? = nil
     var currency: String
     var accountNumber: String?
     var institutionName: String?

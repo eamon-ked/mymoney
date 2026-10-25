@@ -8,7 +8,8 @@
 import SwiftUI
 
 struct AuthView: View {
-    @StateObject private var viewModel = AuthViewModel()
+    // Shared with MainTabView, so signing in or continuing as guest leaves this screen
+    @EnvironmentObject private var viewModel: AuthViewModel
     @State private var showOnboarding = true
     
     var body: some View {
@@ -137,5 +138,5 @@ struct OnboardingSlide: View {
 }
 
 #Preview {
-    AuthView()
+    AuthView().environmentObject(AuthViewModel())
 }

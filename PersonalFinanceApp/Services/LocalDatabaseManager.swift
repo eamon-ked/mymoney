@@ -82,6 +82,7 @@ class LocalDatabaseManager: ObservableObject {
     
     func fetchAccounts() throws -> [Account] {
         let descriptor = FetchDescriptor<Account>(
+            predicate: #Predicate { $0.deletedAt == nil },
             sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
         )
         return try modelContext.fetch(descriptor)

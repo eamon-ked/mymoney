@@ -206,6 +206,7 @@ class SyncManager: ObservableObject {
                 "type": account.type.rawValue,
                 // Cached value kept up to date for v1.0 clients; v1.1 never reads it
                 "balance": moneyString(account.balance),
+                "deleted_at": account.deletedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull(),
                 "currency": account.currency,
                 "account_number": account.accountNumber ?? NSNull(),
                 "institution_name": account.institutionName ?? NSNull(),
@@ -372,6 +373,7 @@ class SyncManager: ObservableObject {
                 // Update existing
                 account.name = name
                 account.type = type
+                account.deletedAt = parseISODate(accountData["deleted_at"] as? String ?? "")
                 // A remote opening balance replaces ours only once someone confirmed it
                 if let remoteConfirmedAt {
                     account.openingBalance = remoteOpening
@@ -406,6 +408,7 @@ class SyncManager: ObservableObject {
                     lastSyncedAt: Date()
                 )
                 newAccount.balanceConfirmedAt = remoteConfirmedAt
+                newAccount.deletedAt = parseISODate(accountData["deleted_at"] as? String ?? "")
                 if remoteConfirmedAt == nil {
                     // Seeded once transactions are pulled, from the v1.0 stored balance
                     legacyBalances[id] = decimal(accountData["balance"]) ?? 0

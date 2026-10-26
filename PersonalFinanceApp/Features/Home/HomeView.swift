@@ -89,7 +89,9 @@ struct HomeView: View {
                 }
                 if AppleIntelligence.isReady {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { if plus.isPlus { showingAsk = true } else { paywall = .appleIntelligence } } label: { Image(systemName: "sparkles") }
+                        Button { if plus.isPlus { showingAsk = true } else { paywall = .appleIntelligence } } label: {
+                            Text("\(Image(systemName: "sparkles")) Ask").font(.body.weight(.semibold))
+                        }
                             .accessibilityLabel("Ask about your money")
                     }
                 }

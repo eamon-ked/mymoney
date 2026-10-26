@@ -55,6 +55,19 @@ struct PlanView: View {
                 }
 
                 Section {
+                    let dueSoon = snapshot.upcomingBills(days: 30)
+                    if dueSoon.isEmpty { Text("Nothing due in the next 30 days").foregroundStyle(.secondary) }
+                    ForEach(dueSoon) { occ in
+                        Button { paying = occ } label: { OccurrenceRow(occurrence: occ, snapshot: snapshot) }
+                            .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("Due soon")
+                } footer: {
+                    Text("Paid one? Tap it to mark it paid.")
+                }
+
+                Section {
                     let bills = snapshot.items.filter { $0.direction == .outflow }
                     if bills.isEmpty {
                         EmptyStateView(symbol: "calendar.badge.plus", title: "No bills yet",
@@ -67,23 +80,14 @@ struct PlanView: View {
                     }
                 } header: {
                     HStack {
-                        Text("Bills")
+                        Text("Your bills")
                         Spacer()
-                        Button("Add") { editingItem = .new(.outflow) }.font(.caption)
+                        Button("Add a bill") { editingItem = .new(.outflow) }.font(.caption)
                     }
-                }
-
-                Section {
-                    let dueSoon = snapshot.upcomingBills(days: 30)
-                    if dueSoon.isEmpty { Text("Nothing due in the next 30 days").foregroundStyle(.secondary) }
-                    ForEach(dueSoon) { occ in
-                        Button { paying = occ } label: { OccurrenceRow(occurrence: occ, snapshot: snapshot) }
-                            .buttonStyle(.plain)
-                    }
-                } header: {
-                    Text("Due in the next 30 days")
                 } footer: {
-                    Text("Tap one to mark it paid or link the payment you already recorded.")
+                    if !snapshot.items.filter({ $0.direction == .outflow }).isEmpty {
+                        Text("Tap a bill to change its amount or date, or to stop it.")
+                    }
                 }
 
                 Section {
@@ -119,8 +123,8 @@ struct PlanView: View {
                         Button { editingItem = .new(.inflow) } label: { Label("Expected income", systemImage: "arrow.down.circle") }
                         Button { newGoal() } label: { Label("Savings goal", systemImage: "target") }
                         Button { addingReserve = true } label: { Label("Money set aside", systemImage: "lock") }
-                    } label: { Image(systemName: "calendar.badge.plus") }
-                    .accessibilityLabel("Add to plan")
+                    } label: { Text("New bill or goal").font(.body.weight(.semibold)) }
+                    .accessibilityLabel("New bill, expected income or savings goal")
                 }
                 GlobalAddButton()
             }

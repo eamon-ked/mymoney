@@ -40,6 +40,8 @@ struct RootView: View {
     @State private var tab: AppTab = .home
     @State private var adding: AddKind?
     @State private var choosing: ChooseRequest?
+    @AppStorage("seenTour") private var seenTour = false
+    @State private var showingTour = false
     @State private var unlocked = false
 
     var body: some View {
@@ -50,11 +52,13 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|choose|guide [-ask <text>]|capture|settings|add|import|paywall|ask
+                // Screenshot helper: -screen forecast|reports|tour|choose|guide [-ask <text>]|capture|settings|add|import|paywall|ask
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
                     NavigationStack { ReportsView() }
+                } else if UserDefaults.standard.string(forKey: "screen") == "tour" {
+                    WelcomeTour()
                 } else if UserDefaults.standard.string(forKey: "screen") == "choose" {
                     AddChooser()
                 } else if UserDefaults.standard.string(forKey: "screen") == "guide" {
@@ -126,6 +130,12 @@ struct RootView: View {
         }
         .sheet(item: $choosing) { request in
             AddChooser(focus: request.focus)
+        }
+        .sheet(isPresented: $showingTour, onDismiss: { seenTour = true }) { WelcomeTour() }
+        .onAppear {
+            let args = CommandLine.arguments
+            let automated = args.contains("-uiTesting") || args.contains("-demoData") || args.contains("-screenshots")
+            if !seenTour && !automated { showingTour = true }
         }
     }
 
@@ -209,7 +219,7 @@ struct GlobalAddButton: ToolbarContent {
     var body: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Button { chooseAdd() } label: {
-                Label("Add", systemImage: "plus").labelStyle(.titleAndIcon).font(.body.weight(.semibold))
+                Text("\(Image(systemName: "plus")) Add").font(.body.weight(.semibold))
             }
             .accessibilityLabel("Add")
             .accessibilityHint("Add money spent, received, a loan payment and more")

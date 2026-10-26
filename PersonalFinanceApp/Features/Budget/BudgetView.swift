@@ -14,6 +14,7 @@ struct BudgetView: View {
     @Environment(LedgerStore.self) private var store
     @Environment(PlusStore.self) private var plus
     @State private var paywall: PlusFeature?
+    @State private var showingReports = false
     @State private var month: String?
     @State private var selected: UUID?
     @State private var addingCategory = false
@@ -33,10 +34,12 @@ struct BudgetView: View {
             let progress = budget.allocationProgress(month: currentMonth)
             List {
                 Section {
-                    SummaryBanner(title: available.isNegative ? "Planned more than you have" : "Available to allocate",
+                    SummaryBanner(title: available.isNegative ? "Planned more than you have" : "Not planned yet",
                                   amount: available.compact,
                                   caption: progress.planningFunds.isPositive
-                                      ? "\(Int(progress.fraction * 100))% of this month's money has a plan"
+                                      ? (available.isNegative ? "Lower a category below to fix it"
+                                         : available.isZero ? "Every dirham this month has a job"
+                                         : "Money with no job yet. Tap a category below to give it some")
                                       : "Add an account with money in it to start planning",
                                   tint: available.isNegative ? .red : Palette.budget,
                                   action: { explanation = availableExplanation(available) }) {
@@ -72,6 +75,10 @@ struct BudgetView: View {
                     } header: {
                         let remaining = group.categories.map { budget.line($0.id, month: currentMonth).remaining }.sum(store.currency)
                         HStack { Text(group.name); Spacer(); Text("\(remaining.compact) left").monospacedDigit() }
+                    } footer: {
+                        if group.name == groups.first?.name {
+                            Text("Tap a category to set how much you plan to spend on it this month.")
+                        }
                     }
                 }
 
@@ -80,6 +87,7 @@ struct BudgetView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Budget")
             .paywall($paywall)
+            .navigationDestination(isPresented: $showingReports) { ReportsView() }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 14) {
@@ -93,17 +101,15 @@ struct BudgetView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { addingCategory = true } label: { Image(systemName: "folder.badge.plus") }
-                        .accessibilityLabel("New category")
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    if plus.isPlus {
-                        NavigationLink { ReportsView() } label: { Image(systemName: "chart.bar.xaxis") }
-                            .accessibilityLabel("Reports")
-                    } else {
-                        Button { paywall = .reports } label: { Image(systemName: "chart.bar.xaxis") }
-                            .accessibilityLabel("Reports, needs Nokael Plus")
+                    Menu {
+                        Button { addingCategory = true } label: { Label("New category", systemImage: "folder.badge.plus") }
+                        Button { if plus.isPlus { showingReports = true } else { paywall = .reports } } label: {
+                            Label(plus.isPlus ? "Reports" : "Reports (Plus)", systemImage: "chart.bar.xaxis")
+                        }
+                    } label: {
+                        Text("More").font(.body.weight(.semibold))
                     }
+                    .accessibilityLabel("More: new category, reports")
                 }
                 GlobalAddButton()
             }

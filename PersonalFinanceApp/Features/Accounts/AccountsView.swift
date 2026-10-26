@@ -68,6 +68,12 @@ struct AccountsView: View {
                                 Spacer()
                                 Text(accounts.map { snapshot.balance($0.id) }.sum(store.currency).compact).monospacedDigit()
                             }
+                        } footer: {
+                            if section == .cash {
+                                Text("Tap an account to see its history or import a statement.")
+                            } else if section == .cards || section == .loans {
+                                Text("Tap one to record a payment.")
+                            }
                         }
                     }
                 }
@@ -89,7 +95,7 @@ struct AccountsView: View {
             .navigationDestination(for: UUID.self) { AccountDetailView(accountId: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { addingAccount = true } label: { Label("New account", systemImage: "plus.rectangle.on.rectangle") }
+                    Button { addingAccount = true } label: { Text("New account").font(.body.weight(.semibold)) }
                 }
                 GlobalAddButton()
             }

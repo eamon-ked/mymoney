@@ -30,6 +30,10 @@ struct ActivityView: View {
                     filterChips
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
+                } footer: {
+                    if filter != .scheduled && !days.isEmpty {
+                        Text("Tap an entry to change or delete it.")
+                    }
                 }
 
                 if filter == .scheduled {

@@ -96,7 +96,7 @@ enum AppGuide {
                    keywords: ["balance", "wrong balance", "correct", "adjust", "reconcile", "doesn't match", "bank says"]),
         GuideTopic(id: "account", title: "Add a bank account, card or loan", symbol: "building.columns.fill",
                    steps: ["Open the Accounts tab.",
-                           "Tap + at the top right and choose New account.",
+                           "Tap New account at the top left.",
                            "Pick the type, name it, enter today's balance and tap Add."],
                    tip: nil, action: .tab(.accounts), actionTitle: "Open Accounts",
                    keywords: ["new account", "add bank", "add account", "add a loan", "add my loan", "add a card", "cash", "wallet account"]),
@@ -108,15 +108,15 @@ enum AppGuide {
                    keywords: ["budget", "plan spending", "limit", "category", "categories", "overspent"]),
         GuideTopic(id: "bills", title: "Add a bill or expected income", symbol: "calendar.badge.plus",
                    steps: ["Open the Plan tab.",
-                           "Tap + and choose Bill or Expected income.",
+                           "Tap New bill or goal at the top left, then Bill or Expected income.",
                            "Enter the name, amount, date and how often it repeats, then tap Save.",
-                           "When it's paid, tap it on Home under Coming up and choose to mark it paid."],
+                           "When it's paid, tap it under Due soon (Plan) or Coming up (Home) to mark it paid."],
                    tip: "Bills are set aside from safe-to-spend before they're due.",
                    action: .tab(.plan), actionTitle: "Open Plan",
                    keywords: ["bill", "bills", "rent", "dewa", "subscription", "due", "recurring", "every month", "expected"]),
         GuideTopic(id: "goal", title: "Save for something", symbol: "target",
                    steps: ["Open the Plan tab.",
-                           "Tap + and choose Savings goal.",
+                           "Tap New bill or goal at the top left, then Savings goal.",
                            "Name it, set the target and the account it's kept in, then tap Save."],
                    tip: nil, action: .tab(.plan), actionTitle: "Open Plan",
                    keywords: ["save", "saving", "goal", "target", "set aside"]),
@@ -368,8 +368,43 @@ struct HelpButton: View {
     @State private var showing = false
 
     var body: some View {
-        Button { showing = true } label: { Image(systemName: "questionmark.circle") }
+        Button { showing = true } label: { Text("Help").font(.body.weight(.semibold)) }
             .accessibilityLabel("Help")
             .sheet(isPresented: $showing) { GuideView() }
+    }
+}
+
+/// Shown once after setup: the three things that make the rest obvious
+struct WelcomeTour: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            Text("3 things to know").font(.largeTitle.bold()).padding(.top, 40)
+            point("cart.fill", .blue, "Spent, Received, Pay a loan",
+                  "The big buttons on Home. Tap one whenever money comes in or goes out.")
+            point("plus.circle.fill", .green, "Add, at the top right",
+                  "On every screen. It asks what happened and takes you to the right place.")
+            point("questionmark.circle.fill", .purple, "Help, at the top left of Home",
+                  "Stuck? Type your question or just what happened, like “I got my salary”.")
+            Spacer()
+            Button { dismiss() } label: {
+                Text("Got it").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+        .padding(24)
+        .interactiveDismissDisabled()
+    }
+
+    private func point(_ symbol: String, _ color: Color, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: symbol).font(.title).foregroundStyle(color).frame(width: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).foregroundStyle(.secondary)
+            }
+        }
     }
 }

@@ -263,6 +263,8 @@ struct PlannedItemEditor: View {
     @State private var amountText = ""
     @State private var isEstimate = false
     @State private var start = Date()
+    /// The next due date as loaded, so saving without touching it keeps the schedule as it was
+    @State private var loadedStart: Date?
     @State private var frequency: Frequency = .monthly(every: 1)
     @State private var hasEnd = false
     @State private var end = Date()
@@ -299,7 +301,12 @@ struct PlannedItemEditor: View {
                     Toggle("Amount varies (estimate)", isOn: $isEstimate)
                 }
                 Section {
-                    DatePicker(existing == nil ? "Next due" : "Starts", selection: $start, displayedComponents: .date)
+                    if existing == nil {
+                        DatePicker("Next due", selection: $start, displayedComponents: .date)
+                    } else {
+                        DatePicker("Next due", selection: $start, in: store.calendar.startOfDay(for: Date())..., displayedComponents: .date)
+                            .accessibilityIdentifier("billNextDue")
+                    }
                     FrequencyPicker(frequency: $frequency)
                     Toggle("Ends", isOn: $hasEnd)
                     if hasEnd { DatePicker("Last one", selection: $end, in: start..., displayedComponents: .date) }
@@ -312,8 +319,13 @@ struct PlannedItemEditor: View {
                 } header: {
                     Text("When")
                 } footer: {
-                    if direction == .outflow && !remindersOn {
-                        Text("Turn on reminders in Settings to be reminded before bills are due.")
+                    VStack(alignment: .leading, spacing: 6) {
+                        if existing != nil {
+                            Text("Repeats from this date. Unpaid ones from today move with it; paid ones stay as they were.")
+                        }
+                        if direction == .outflow && !remindersOn {
+                            Text("Turn on reminders in Settings to be reminded before bills are due.")
+                        }
                     }
                 }
                 Section {
@@ -362,7 +374,12 @@ struct PlannedItemEditor: View {
         name = item.name
         amountText = MoneyFormat.editable(item.amount)
         isEstimate = item.isEstimate
-        start = item.schedule.start
+        // Show when it's next due, not when the bill was first set up
+        let next = store.snapshot.occurrences
+            .filter { $0.itemId == item.id && !$0.skipped && !$0.remaining.isZero && $0.dueDate >= store.calendar.startOfDay(for: Date()) }
+            .map(\.dueDate).min()
+        start = next ?? item.schedule.start
+        loadedStart = start
         frequency = item.schedule.frequency
         hasEnd = item.schedule.end != nil
         end = item.schedule.end ?? Date()
@@ -376,7 +393,8 @@ struct PlannedItemEditor: View {
         let cal = store.calendar
         let item = PlannedItem(id: existing?.id ?? UUID(), name: name.trimmingCharacters(in: .whitespaces),
                                direction: direction, amount: amount, isEstimate: isEstimate,
-                               schedule: Schedule(start: cal.startOfDay(for: start).addingTimeInterval(12 * 3600),
+                               schedule: Schedule(start: start == loadedStart ? existing!.schedule.start
+                                                         : cal.startOfDay(for: start).addingTimeInterval(12 * 3600),
                                                   frequency: frequency, end: hasEnd ? store.snapshot.endOfDay(end) : nil),
                                accountId: accountId, categoryId: categoryId, debtId: existing?.debtId)
         do {
@@ -399,6 +417,7 @@ struct PayOccurrenceSheet: View {
     @State private var categoryId: UUID?
     @State private var date = Date()
     @State private var error: String?
+    @State private var editing: PlannedItemSheet?
 
     var body: some View {
         let snapshot = store.snapshot
@@ -443,6 +462,9 @@ struct PayOccurrenceSheet: View {
                 }
 
                 Section {
+                    if let item {
+                        Button(inflow ? "Change when it's expected" : "Change when it's due") { editing = .edit(item) }
+                    }
                     Button("Skip this one") {
                         try? store.skip(occurrenceId: occurrence.id)
                         dismiss()
@@ -453,6 +475,10 @@ struct PayOccurrenceSheet: View {
             .navigationTitle(item?.name ?? "Scheduled")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .sheet(item: $editing, onDismiss: {
+                // Moved to another day: this one no longer exists as shown
+                if !store.snapshot.occurrences.contains(where: { $0.id == occurrence.id && $0.dueDate == occurrence.dueDate }) { dismiss() }
+            }) { PlannedItemEditor(sheet: $0) }
             .onAppear {
                 amountText = MoneyFormat.editable(occurrence.remaining)
                 accountId = item?.accountId ?? snapshot.accounts.first { $0.spendable }?.id

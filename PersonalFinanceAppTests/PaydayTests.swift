@@ -89,6 +89,18 @@ struct PaydayTests {
         #expect(sts.amount == Self.aed(1100 - 800) - store.snapshot.settings.buffer)
     }
 
+    @Test func movingRentsDueDateMovesTheUnpaidOnes() throws {
+        var rent = PlannedItem(name: "Rent", direction: .outflow, amount: Self.aed(800),
+                               schedule: Schedule(start: today, frequency: .monthly(every: 1)), accountId: bank.id)
+        try store.savePlannedItem(rent)
+        rent.schedule.start = LedgerStoreTests.date(2026, 11, 1)
+        try store.savePlannedItem(rent)
+        let due = store.snapshot.occurrences.filter { $0.itemId == rent.id }.map(\.dueDate)
+        let days = Set(due.map { store.calendar.component(.day, from: $0) })
+        #expect(days == [1])
+        #expect(due.min().map { store.calendar.isDate($0, inSameDayAs: LedgerStoreTests.date(2026, 11, 1)) } == true)
+    }
+
     @Test func aDifferentAmountSaidThisMonthWins() throws {
         try addSalary()
         let plan = PaydayPlan.make(store.snapshot, said: Self.aed(21500))

@@ -84,8 +84,15 @@ final class PlusStore {
     }
 
     init() {
-        #if DEBUG
+        #if DEBUG && targetEnvironment(simulator)
         forced = CommandLine.arguments.contains("-plus")
+        #elseif DEBUG
+        // On a test iPhone, launching once with -plus keeps Plus on, so Siri and
+        // Shortcuts (which launch without arguments) see it too; -noPlus undoes it
+        let defaults = UserDefaults.standard
+        if CommandLine.arguments.contains("-plus") { defaults.set(true, forKey: "debugForcePlus") }
+        if CommandLine.arguments.contains("-noPlus") { defaults.removeObject(forKey: "debugForcePlus") }
+        forced = defaults.bool(forKey: "debugForcePlus")
         #else
         forced = false
         #endif

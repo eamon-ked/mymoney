@@ -7,20 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		E3WDGT000000000000000011 /* NokaelWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3WDGT00000000000000000B /* NokaelWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		E3WDGT000000000000000018 /* NokaelCore in Frameworks */ = {isa = PBXBuildFile; productRef = E3WDGT000000000000000019 /* NokaelCore */; };
 		E3NKCFILE000000000000001 /* NokaelCore in Frameworks */ = {isa = PBXBuildFile; productRef = E3NKCPD0000000000000001 /* NokaelCore */; };
 		E3SPKGFILE0000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = E3SPKGPD0000000000000001 /* Supabase */; };
+		E3WDGT000000000000000011 /* NokaelWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E3WDGT00000000000000000B /* NokaelWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E3WDGT000000000000000018 /* NokaelCore in Frameworks */ = {isa = PBXBuildFile; productRef = E3WDGT000000000000000019 /* NokaelCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		E3WDGT000000000000000013 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = E3BDB4F22E47687B008B0F63 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = E3WDGT00000000000000000A;
-			remoteInfo = NokaelWidget;
-		};
 		E3BDB50A2E47687D008B0F63 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E3BDB4F22E47687B008B0F63 /* Project object */;
@@ -34,6 +27,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = E3BDB4F92E47687B008B0F63;
 			remoteInfo = PersonalFinanceApp;
+		};
+		E3WDGT000000000000000013 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E3BDB4F22E47687B008B0F63 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E3WDGT00000000000000000A;
+			remoteInfo = NokaelWidget;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -52,40 +52,30 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		E3WDGT00000000000000000B /* NokaelWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NokaelWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E3BDB4FA2E47687B008B0F63 /* PersonalFinanceApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PersonalFinanceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E3BDB5092E47687D008B0F63 /* PersonalFinanceAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PersonalFinanceAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E3BDB5132E47687D008B0F63 /* PersonalFinanceAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PersonalFinanceAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E3WDGT00000000000000000B /* NokaelWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NokaelWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		E3WDGT00000000000000000D /* Exceptions for "NokaelWidget" folder in "NokaelWidget" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-				NokaelWidget.entitlements,
-			);
-			target = E3WDGT00000000000000000A /* NokaelWidget */;
-		};
 		E3F983362E48837A00BAD872 /* Exceptions for "PersonalFinanceApp" folder in "PersonalFinanceApp" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
-				PersonalFinanceApp.entitlements,
 			);
 			target = E3BDB4F92E47687B008B0F63 /* PersonalFinanceApp */;
+		};
+		E3WDGT00000000000000000D /* Exceptions for "NokaelWidget" folder in "NokaelWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = E3WDGT00000000000000000A /* NokaelWidget */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		E3WDGT00000000000000000C /* NokaelWidget */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				E3WDGT00000000000000000D /* Exceptions for "NokaelWidget" folder in "NokaelWidget" target */,
-			);
-			path = NokaelWidget;
-			sourceTree = "<group>";
-		};
 		E3BDB4FC2E47687B008B0F63 /* PersonalFinanceApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -104,17 +94,17 @@
 			path = PersonalFinanceAppUITests;
 			sourceTree = "<group>";
 		};
+		E3WDGT00000000000000000C /* NokaelWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E3WDGT00000000000000000D /* Exceptions for "NokaelWidget" folder in "NokaelWidget" target */,
+			);
+			path = NokaelWidget;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		E3WDGT00000000000000000F /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				E3WDGT000000000000000018 /* NokaelCore in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		E3BDB4F72E47687B008B0F63 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -135,6 +125,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E3WDGT00000000000000000F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E3WDGT000000000000000018 /* NokaelCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -174,29 +172,6 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E3WDGT00000000000000000A /* NokaelWidget */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E3WDGT000000000000000015 /* Build configuration list for PBXNativeTarget "NokaelWidget" */;
-			buildPhases = (
-				E3WDGT00000000000000000E /* Sources */,
-				E3WDGT00000000000000000F /* Frameworks */,
-				E3WDGT000000000000000010 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				E3WDGT00000000000000000C /* NokaelWidget */,
-			);
-			name = NokaelWidget;
-			packageProductDependencies = (
-				E3WDGT000000000000000019 /* NokaelCore */,
-			);
-			productName = NokaelWidget;
-			productReference = E3WDGT00000000000000000B /* NokaelWidget.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		E3BDB4F92E47687B008B0F63 /* PersonalFinanceApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E3BDB51D2E47687D008B0F63 /* Build configuration list for PBXNativeTarget "PersonalFinanceApp" */;
@@ -269,6 +244,29 @@
 			productReference = E3BDB5132E47687D008B0F63 /* PersonalFinanceAppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		E3WDGT00000000000000000A /* NokaelWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E3WDGT000000000000000015 /* Build configuration list for PBXNativeTarget "NokaelWidget" */;
+			buildPhases = (
+				E3WDGT00000000000000000E /* Sources */,
+				E3WDGT00000000000000000F /* Frameworks */,
+				E3WDGT000000000000000010 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E3WDGT00000000000000000C /* NokaelWidget */,
+			);
+			name = NokaelWidget;
+			packageProductDependencies = (
+				E3WDGT000000000000000019 /* NokaelCore */,
+			);
+			productName = NokaelWidget;
+			productReference = E3WDGT00000000000000000B /* NokaelWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -282,9 +280,6 @@
 					E3BDB4F92E47687B008B0F63 = {
 						CreatedOnToolsVersion = 16.4;
 					};
-					E3WDGT00000000000000000A = {
-						CreatedOnToolsVersion = 27.0;
-					};
 					E3BDB5082E47687D008B0F63 = {
 						CreatedOnToolsVersion = 16.4;
 						TestTargetID = E3BDB4F92E47687B008B0F63;
@@ -292,6 +287,9 @@
 					E3BDB5122E47687D008B0F63 = {
 						CreatedOnToolsVersion = 16.4;
 						TestTargetID = E3BDB4F92E47687B008B0F63;
+					};
+					E3WDGT00000000000000000A = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -322,13 +320,6 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		E3WDGT000000000000000010 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		E3BDB4F82E47687B008B0F63 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -350,16 +341,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* End PBXResourcesBuildPhase section */
-
-/* Begin PBXSourcesBuildPhase section */
-		E3WDGT00000000000000000E /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
+		E3WDGT000000000000000010 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
 		E3BDB4F62E47687B008B0F63 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -381,14 +372,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E3WDGT00000000000000000E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		E3WDGT000000000000000014 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E3WDGT00000000000000000A /* NokaelWidget */;
-			targetProxy = E3WDGT000000000000000013 /* PBXContainerItemProxy */;
-		};
 		E3BDB50B2E47687D008B0F63 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E3BDB4F92E47687B008B0F63 /* PersonalFinanceApp */;
@@ -399,67 +392,14 @@
 			target = E3BDB4F92E47687B008B0F63 /* PersonalFinanceApp */;
 			targetProxy = E3BDB5142E47687D008B0F63 /* PBXContainerItemProxy */;
 		};
+		E3WDGT000000000000000014 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E3WDGT00000000000000000A /* NokaelWidget */;
+			targetProxy = E3WDGT000000000000000013 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		E3WDGT000000000000000016 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = NokaelWidget/NokaelWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 66KU6QPFZL;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = NokaelWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Nokael Money";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 2.1;
-				PRODUCT_BUNDLE_IDENTIFIER = nokael.PersonalFinanceApp.NokaelWidget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Debug;
-		};
-		E3WDGT000000000000000017 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = NokaelWidget/NokaelWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 66KU6QPFZL;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = NokaelWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Nokael Money";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 2.1;
-				PRODUCT_BUNDLE_IDENTIFIER = nokael.PersonalFinanceApp.NokaelWidget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Release;
-		};
 		E3BDB51B2E47687D008B0F63 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -596,7 +536,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PersonalFinanceApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Nokael Money";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID keeps Nokael Money locked until you open it.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2025 Nokael Money App. All rights reserved.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -637,7 +579,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PersonalFinanceApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Nokael Money";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Face ID keeps Nokael Money locked until you open it.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2025 Nokael Money App. All rights reserved.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -737,18 +681,67 @@
 			};
 			name = Release;
 		};
+		E3WDGT000000000000000016 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NokaelWidget/NokaelWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 66KU6QPFZL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NokaelWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Nokael Money";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = nokael.PersonalFinanceApp.NokaelWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E3WDGT000000000000000017 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NokaelWidget/NokaelWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 66KU6QPFZL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NokaelWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Nokael Money";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = nokael.PersonalFinanceApp.NokaelWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		E3WDGT000000000000000015 /* Build configuration list for PBXNativeTarget "NokaelWidget" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E3WDGT000000000000000016 /* Debug */,
-				E3WDGT000000000000000017 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		E3BDB4F52E47687B008B0F63 /* Build configuration list for PBXProject "PersonalFinanceApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -785,6 +778,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		E3WDGT000000000000000015 /* Build configuration list for PBXNativeTarget "NokaelWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E3WDGT000000000000000016 /* Debug */,
+				E3WDGT000000000000000017 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -806,11 +808,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		E3WDGT000000000000000019 /* NokaelCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E3NKCPKG000000000000001 /* XCLocalSwiftPackageReference "Packages/NokaelCore" */;
-			productName = NokaelCore;
-		};
 		E3NKCPD0000000000000001 /* NokaelCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E3NKCPKG000000000000001 /* XCLocalSwiftPackageReference "Packages/NokaelCore" */;
@@ -820,6 +817,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E3SPKG000000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		E3WDGT000000000000000019 /* NokaelCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E3NKCPKG000000000000001 /* XCLocalSwiftPackageReference "Packages/NokaelCore" */;
+			productName = NokaelCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

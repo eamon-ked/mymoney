@@ -1,94 +1,63 @@
-# Privacy Policy for Nokael Money App
+# Privacy Policy for Nokael Money
 
-**Last updated: [08/Aug/2025]**
+**Last updated: 26 October 2026**
+
+Nokael Money ("the App") is a budgeting app for iPhone made by Nokael ("we", "us"). This policy explains what happens to your information when you use the App. The short version: **your data stays on your iPhone. We don't collect it, we can't see it, and we don't share it.**
 
 ## 1. Information We Collect
 
-### Personal Information
-- Email address (for account creation and authentication)
-- Full name (optional, for personalization)
-- Financial data you input (accounts, transactions, goals, loans)
+**None.** The App has no account, no sign-in and no server. We do not collect, store or receive any personal information or financial data. There are no analytics, advertising or tracking tools in the App.
 
-### Technical Information
-- Device information (iOS version, device model)
-- App usage analytics (crash reports, performance data)
-- Network connectivity status
+## 2. Where Your Data Is Stored
 
-## 2. How We Use Your Information
+Everything you enter (accounts, transactions, budget categories, bills, debts, savings goals and settings) is saved only on your iPhone, in the App's local database (Apple's SwiftData). It never leaves your device unless you choose to export or back it up yourself.
 
-- **Account Management**: To create and manage your user account
-- **Data Synchronization**: To sync your financial data across devices
-- **App Functionality**: To provide core app features (tracking, analysis, goals)
-- **Security**: To authenticate users and protect your data
-- **Improvements**: To improve app performance and user experience
+If you delete the App, its data is removed from your iPhone. We have no copy and cannot recover it.
 
-## 3. Data Storage and Security
+## 3. Backups and Exports
 
-### Local Storage
-- Financial data is stored locally on your device using SwiftData
-- Biometric authentication data is handled by iOS system
+You can create a backup of your data as a JSON file, or export transactions as a CSV file. You choose where to save these files (for example, the Files app, iCloud Drive or another app). Once saved, those files are handled by the place you put them and by that provider's own privacy policy. We never receive them.
 
-### Cloud Storage
-- Data is synced to Supabase (our secure cloud provider)
-- All data is encrypted in transit and at rest
-- We use Row Level Security (RLS) to ensure data isolation
+When you import a bank statement (CSV) or restore a backup, the file is read on your iPhone and is not sent anywhere.
 
-### Security Measures
-- End-to-end encryption for data transmission
-- Secure authentication using Supabase Auth
-- Regular security audits and updates
+## 4. Apple Intelligence
 
-## 4. Data Sharing
+Some features use Apple Intelligence through Apple's FoundationModels framework. These run on your device. Your data is not sent to us, and the App does not send it to any third-party AI service.
 
-**We do not sell, rent, or share your personal information with third parties** except:
-- Supabase (our cloud provider) - for data storage and sync
-- Apple (for App Store distribution and analytics)
-- Legal requirements (if required by law)
+## 5. Face ID
 
-## 5. Your Rights
+If you turn on Face ID lock, iOS handles the check. The App only learns whether the check succeeded. We never see or store your face data.
 
-You have the right to:
-- **Access**: View all your stored data
-- **Delete**: Delete your account and all associated data
-- **Export**: Request a copy of your data
-- **Correction**: Update or correct your information
+## 6. Bill Reminders
 
-## 6. Account Deletion
+Bill reminders are local notifications scheduled on your iPhone by iOS. No push server is involved.
 
-- You can delete your account through the app: Settings → Account → Delete Account
-- This will permanently remove all your data from our servers
-- Local data will also be cleared from your device
+## 7. Widget
 
-## 7. Data Retention
+The home screen widget shows a short summary (such as your safe-to-spend amount). The App writes this summary to a shared storage area on your iPhone (an App Group) so the widget can read it. It stays on your device.
 
-- Your data is retained as long as your account is active
-- Upon account deletion, all data is permanently removed within 30 days
-- Backup data may be retained for up to 90 days for security purposes
+## 8. Purchases
 
-## 8. Children's Privacy
+Nokael Plus subscriptions and the lifetime purchase are processed by Apple through the App Store. We do not receive your name, payment card or billing details. The App only receives confirmation from Apple of which purchases are active, so it can unlock features. Apple's handling of your purchase information is covered by Apple's privacy policy.
 
-This app is not intended for children under 13. We do not knowingly collect personal information from children under 13.
+## 9. Data Sharing
 
-## 9. Changes to This Policy
+We do not sell, rent or share any information, because we do not have any.
 
-We may update this privacy policy from time to time. We will notify you of any changes by:
-- Posting the new policy in the app
-- Updating the "Last updated" date
-- Sending an email notification for significant changes
+## 10. Your Choices
 
-## 10. Contact Us
+- **View and edit** your data at any time in the App.
+- **Export** your data as a JSON backup or CSV file.
+- **Delete** your data by deleting the App, or by erasing data from within the App's settings.
 
-If you have questions about this privacy policy, please contact us at:
-- Email: [info@nokael.com]
-- Website: [www.nokael.com]
+## 11. Children's Privacy
 
-## 11. Legal Basis (GDPR)
+The App is not directed at children under 13, and we do not knowingly collect information from anyone, including children.
 
-For users in the European Union, our legal basis for processing your data is:
-- **Consent**: You consent to data processing by using the app
-- **Contract**: Processing is necessary to provide app services
-- **Legitimate Interest**: To improve app functionality and security
+## 12. Changes to This Policy
 
----
+If we change this policy, we will update the "Last updated" date above and post the new version at this address. Because we do not collect contact details, we cannot notify you directly.
 
-**Note**: Replace [08/Aug/2025], [info@nokael.com], and [www.nokael.com] with your actual information before hosting this policy.
+## 13. Contact Us
+
+Questions about this policy? Email **info@nokael.com**.

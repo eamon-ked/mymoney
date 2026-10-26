@@ -1,119 +1,83 @@
-# Terms of Service for Nokael Money App
+# Terms of Use for Nokael Money
 
-**Last updated: [Date]**
+**Last updated: 26 October 2026**
 
 ## 1. Acceptance of Terms
 
-By downloading, installing, or using the Nokael Money App ("the App"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
+By downloading or using Nokael Money ("the App"), made by Nokael ("we", "us"), you agree to these Terms of Use ("Terms"). If you do not agree, please do not use the App.
 
-## 2. Description of Service
+These Terms sit alongside Apple's Licensed Application End User License Agreement (the "Apple EULA"): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/. The Apple EULA applies to your use of the App. If anything here conflicts with the Apple EULA, the Apple EULA wins.
 
-The Nokael Money App is a financial management application that allows users to:
-- Track personal finances and accounts
-- Manage transactions and budgets
-- Set and monitor financial goals
-- Track loans and debt
-- Sync data across devices
+## 2. What the App Does
 
-## 3. User Accounts
+Nokael Money helps you plan and track your personal money on your iPhone: budget, safe-to-spend, bills and reminders, debts, savings goals, forecasts, reports and statement import. The App works without an account. All your data is stored on your device, as described in our Privacy Policy.
 
-### Account Creation
-- You must provide accurate and complete information when creating an account
-- You are responsible for maintaining the security of your account credentials
-- You must be at least 13 years old to create an account
+## 3. Not Financial Advice
 
-### Account Responsibilities
-- You are responsible for all activities that occur under your account
-- You must notify us immediately of any unauthorized use of your account
-- You may not share your account credentials with others
+The App gives budgeting information only. It does **not** provide financial, tax, legal or investment advice. Figures such as safe-to-spend, forecasts, interest and payoff estimates, and Apple Intelligence suggestions are estimates based on what you enter and may be incomplete or wrong. Check important numbers yourself and speak to a qualified professional before making financial decisions.
 
-## 4. Acceptable Use
+## 4. Nokael Plus
 
-### You agree not to:
-- Use the App for any illegal or unauthorized purpose
-- Attempt to gain unauthorized access to our systems
-- Interfere with or disrupt the App's functionality
-- Upload malicious code or content
-- Violate any applicable laws or regulations
+The App is free to download. Some features need **Nokael Plus**, available as:
 
-### You agree to:
-- Use the App only for personal financial management
-- Provide accurate and truthful information
-- Respect the privacy and rights of other users
+| Plan | Price |
+| --- | --- |
+| Monthly | AED 14.99 per month |
+| Yearly | AED 99.99 per year, with a 1-week free trial |
+| Lifetime | AED 249.99, one-time purchase |
 
-## 5. Data and Privacy
+Prices are shown in UAE dirhams. Apple shows the price in your local currency before you buy, and prices may vary by country.
 
-### Your Data
-- You retain ownership of all data you input into the App
-- We process your data in accordance with our Privacy Policy
-- You are responsible for the accuracy of your financial data
+### Subscriptions
 
-### Data Security
-- We implement reasonable security measures to protect your data
-- However, no method of transmission over the internet is 100% secure
-- You acknowledge that you use the App at your own risk
+- Payment is charged to your Apple account when you confirm the purchase, or when a free trial ends.
+- Subscriptions **renew automatically** for the same period and price unless you cancel at least **24 hours before the end of the current period**. Your account is charged for renewal within the 24 hours before the period ends.
+- You can manage or cancel a subscription in your Apple account settings (Settings → your name → Subscriptions). Deleting the App does not cancel a subscription.
+- If you cancel, Plus stays active until the end of the period you have paid for.
+- If you buy a subscription during the free trial, any unused part of the trial ends.
 
-## 6. Intellectual Property
+### Lifetime
 
-### Our Rights
-- The App and its content are owned by us or our licensors
-- All trademarks, service marks, and logos are our property
-- You may not copy, modify, or distribute our intellectual property
+The lifetime purchase is a one-time payment that unlocks Nokael Plus for as long as the App is offered, with no renewal.
 
-### Your Rights
-- You retain ownership of content you create using the App
-- You grant us a license to store and process your data for app functionality
+### Refunds and Restoring
 
-## 7. Disclaimers
+All purchases are processed by Apple. Refund requests are handled by Apple at https://reportaproblem.apple.com. You can restore purchases on a new device signed in to the same Apple account using "Restore Purchases" in the App.
 
-### Financial Information
-- The App is for informational purposes only
-- We do not provide financial, investment, or tax advice
-- You should consult with qualified professionals for financial decisions
-- We are not responsible for any financial losses or decisions made based on app data
+We may change which features are included in Plus or change prices in future. Price changes to an existing subscription follow Apple's rules, including notice to you.
 
-### Service Availability
-- We strive to maintain high availability but cannot guarantee uninterrupted service
-- The App may be temporarily unavailable for maintenance or updates
-- We are not liable for any damages caused by service interruptions
+## 5. Your Data
 
-## 8. Limitation of Liability
+Your data belongs to you and stays on your iPhone. Because we have no server, we cannot recover lost data. You are responsible for keeping backups (the App can save a JSON backup file wherever you choose).
 
-To the maximum extent permitted by law:
-- We shall not be liable for any indirect, incidental, or consequential damages
-- Our total liability shall not exceed the amount you paid for the App (if any)
-- We are not liable for any damages arising from your use of the App
+## 6. Acceptable Use
 
-## 9. Termination
+Use the App only for lawful, personal purposes. Do not try to copy, reverse engineer, resell or tamper with the App or its purchase system, except where the law allows.
 
-### By You
-- You may delete your account at any time through the App
-- Account deletion will permanently remove all your data
+## 7. Intellectual Property
 
-### By Us
-- We may terminate or suspend your account for violations of these Terms
-- We will provide reasonable notice before termination (except for violations)
+The App, its design and its content belong to us or our licensors. These Terms and the Apple EULA give you a personal, non-transferable licence to use the App on Apple devices you own or control.
 
-## 10. Changes to Terms
+## 8. Disclaimers
 
-- We may update these Terms from time to time
-- We will notify you of significant changes through the App
-- Continued use of the App after changes constitutes acceptance of new Terms
+The App is provided "as is" and "as available". We work to keep it accurate and reliable but do not promise it will be error-free or always available, or that its calculations will suit your situation.
+
+## 9. Limitation of Liability
+
+To the extent the law allows, we are not liable for indirect or consequential losses, or for financial decisions you make using the App. Our total liability to you is limited to the amount you paid for the App and Nokael Plus in the 12 months before the claim. Nothing in these Terms limits rights you have under consumer law that cannot be excluded.
+
+## 10. Changes to These Terms
+
+We may update these Terms. We will change the "Last updated" date and post the new version here. Continuing to use the App after a change means you accept the updated Terms.
 
 ## 11. Governing Law
 
-These Terms are governed by the laws of [Your Jurisdiction]. Any disputes shall be resolved in the courts of [Your Jurisdiction].
+These Terms are governed by the laws of the United Arab Emirates, without affecting any mandatory consumer protections in the country where you live.
 
-## 12. Contact Information
+## 12. Severability
 
-For questions about these Terms, contact us at:
-- Email: [your-email@domain.com]
-- Website: [your-website.com]
+If any part of these Terms cannot be enforced, the rest still applies.
 
-## 13. Severability
+## 13. Contact
 
-If any provision of these Terms is found to be unenforceable, the remaining provisions will remain in full force and effect.
-
----
-
-**Note**: Replace [Date], [Your Jurisdiction], [your-email@domain.com], and [your-website.com] with your actual information before hosting these terms.
+Questions about these Terms? Email **info@nokael.com**.

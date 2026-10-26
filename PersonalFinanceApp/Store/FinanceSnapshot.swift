@@ -162,6 +162,15 @@ struct FinanceSnapshot {
 
     func state(of occurrence: Occurrence) -> OccurrenceState { occurrence.state(today: today, calendar: calendar) }
 
+    /// Days before each bill's due date to remind; negative means never
+    func reminderDays(for itemId: UUID) -> Int { itemRecords[itemId]?.reminderDaysBefore ?? 2 }
+
+    func billReminders(hour: Int, now: Date) -> [BillReminder] {
+        ReminderPlanner.plan(items: items, occurrences: occurrences,
+                             daysBefore: itemRecords.mapValues(\.reminderDaysBefore),
+                             now: now, hour: hour, calendar: calendar)
+    }
+
     // MARK: - Debts
 
     var debts: [LedgerAccountRecord] { accounts.filter { $0.kind.isLiability } }

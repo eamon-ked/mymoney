@@ -65,7 +65,9 @@ struct RootView: View {
                 #endif
             }
         }
+        .task(id: store.revision) { await BillReminders.sync(store.snapshot) }
         .onAppear {
+            NotificationRouter.openPlan = { tab = .plan }
             store.extendSchedules()
             #if DEBUG
             // Screenshot helper: -tab budget|activity|accounts|plan

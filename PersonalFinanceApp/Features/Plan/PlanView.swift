@@ -237,8 +237,10 @@ struct PlannedItemEditor: View {
     @State private var end = Date()
     @State private var accountId: UUID?
     @State private var categoryId: UUID?
+    @State private var reminderDays = 2
     @State private var error: String?
     @State private var confirmStop = false
+    @AppStorage(BillReminders.enabledKey) private var remindersOn = false
 
     private var direction: Direction {
         switch sheet {
@@ -265,11 +267,23 @@ struct PlannedItemEditor: View {
                     }
                     Toggle("Amount varies (estimate)", isOn: $isEstimate)
                 }
-                Section("When") {
+                Section {
                     DatePicker(existing == nil ? "Next due" : "Starts", selection: $start, displayedComponents: .date)
                     FrequencyPicker(frequency: $frequency)
                     Toggle("Ends", isOn: $hasEnd)
                     if hasEnd { DatePicker("Last one", selection: $end, in: start..., displayedComponents: .date) }
+                    if direction == .outflow {
+                        Picker("Remind me", selection: $reminderDays) {
+                            ForEach(BillReminders.choices, id: \.days) { Text($0.label).tag($0.days) }
+                        }
+                        .disabled(!remindersOn)
+                    }
+                } header: {
+                    Text("When")
+                } footer: {
+                    if direction == .outflow && !remindersOn {
+                        Text("Turn on reminders in Settings to be reminded before bills are due.")
+                    }
                 }
                 Section {
                     AccountPicker(title: direction == .inflow ? "Paid into" : "Paid from", accounts: snapshot.accounts, selection: $accountId)
@@ -323,6 +337,7 @@ struct PlannedItemEditor: View {
         end = item.schedule.end ?? Date()
         accountId = item.accountId
         categoryId = item.categoryId
+        reminderDays = store.snapshot.reminderDays(for: item.id)
     }
 
     private func save() {
@@ -334,7 +349,7 @@ struct PlannedItemEditor: View {
                                                   frequency: frequency, end: hasEnd ? store.snapshot.endOfDay(end) : nil),
                                accountId: accountId, categoryId: categoryId, debtId: existing?.debtId)
         do {
-            try store.savePlannedItem(item)
+            try store.savePlannedItem(item, reminderDays: direction == .outflow ? reminderDays : nil)
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
     }

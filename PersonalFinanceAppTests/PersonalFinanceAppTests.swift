@@ -118,6 +118,27 @@ struct LedgerStoreTests {
         #expect(s.state(of: s.occurrences.first { $0.id == occ.id }!) == .paid)
     }
 
+    @Test("Reminders follow each bill's choice and stop once it's paid")
+    func billReminders() throws {
+        let account = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(12000), openingDate: today)
+        let rent = PlannedItem(name: "Rent", direction: .outflow, amount: Self.aed(2800),
+                               schedule: Schedule(start: Self.date(2026, 10, 28), frequency: .monthly(every: 1)),
+                               accountId: account.id, categoryId: category("Rent or mortgage").id)
+        try store.savePlannedItem(rent, reminderDays: 1)
+        let first = try #require(store.snapshot.billReminders(hour: 9, now: today).first)
+        #expect(first.fireDate == Self.dubai.date(from: DateComponents(year: 2026, month: 10, day: 27, hour: 9)))
+
+        // Saving again without a choice keeps it; paying removes that due date's reminder
+        try store.savePlannedItem(rent)
+        #expect(store.snapshot.reminderDays(for: rent.id) == 1)
+        try store.pay(occurrenceId: first.occurrenceId, amount: Self.aed(2800), accountId: account.id, categoryId: nil,
+                      date: today, key: UUID())
+        #expect(!store.snapshot.billReminders(hour: 9, now: today).contains { $0.occurrenceId == first.occurrenceId })
+
+        try store.savePlannedItem(rent, reminderDays: -1)
+        #expect(store.snapshot.billReminders(hour: 9, now: today).isEmpty)
+    }
+
     @Test("BILL-05: editing a bill only changes future unpaid ones")
     func editingABill() throws {
         let account = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(9000), openingDate: today)

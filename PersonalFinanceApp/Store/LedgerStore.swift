@@ -330,14 +330,18 @@ final class LedgerStore {
 
     // MARK: - Bills and expected income
 
-    func savePlannedItem(_ item: PlannedItem) throws {
+    /// `reminderDays`: days before each due date to remind, negative for never; nil keeps the current choice
+    func savePlannedItem(_ item: PlannedItem, reminderDays: Int? = nil) throws {
         guard !item.name.trimmingCharacters(in: .whitespaces).isEmpty else { throw StoreError.invalid("Give it a name.") }
         guard item.amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
         let id = item.id
         if let record = fetch(PlannedItemRecord.self, #Predicate { $0.id == id }).first {
             record.update(from: item)
+            if let reminderDays { record.reminderDaysBefore = reminderDays }
         } else {
-            context.insert(PlannedItemRecord(item))
+            let record = PlannedItemRecord(item)
+            if let reminderDays { record.reminderDaysBefore = reminderDays }
+            context.insert(record)
         }
         regenerateOccurrences(for: item)
         try commit()

@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main
 struct NokaelMoneyApp: App {
@@ -26,6 +27,7 @@ struct NokaelMoneyApp: App {
         if args.contains("-demoData") { DemoData.load(into: store) }
         #endif
         _store = State(initialValue: store)
+        UNUserNotificationCenter.current().delegate = NotificationRouter.shared
     }
 
     var body: some Scene {

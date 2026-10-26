@@ -255,7 +255,7 @@ struct PlusSection: View {
             Text("Nokael Plus")
         } footer: {
             if plus.currentPlan == nil {
-                Text("Statement import, Apple Intelligence, Money ahead, reports, the widget, unlimited goals and more.")
+                Text("Apple Pay and bank SMS capture, statement import, Apple Intelligence, Money ahead, reports, the widget, unlimited goals and more.")
             }
         }
     }

@@ -20,9 +20,11 @@ You can create a backup of your data as a JSON file, or export transactions as a
 
 When you import a bank statement (CSV) or restore a backup, the file is read on your iPhone and is not sent anywhere.
 
-## 4. Apple Intelligence
+## 4. Apple Intelligence, Siri and Automatic Capture
 
 Some features use Apple Intelligence through Apple's FoundationModels framework. These run on your device. Your data is not sent to us, and the App does not send it to any third-party AI service.
+
+If you use Siri or set up a Shortcuts automation to send Apple Pay purchases or bank text messages to the App, that information is read on your device. The App keeps only the resulting entry (amount, shop name, date and, if present, the card name or last four digits). It does not keep the message itself or read any other messages. The App cannot read your messages or Apple Wallet unless you set up such an automation, and you can turn the automation off in the Shortcuts app at any time.
 
 ## 5. Face ID
 

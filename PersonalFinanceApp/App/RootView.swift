@@ -49,11 +49,13 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|settings|add|import|paywall|ask
+                // Screenshot helper: -screen forecast|reports|capture|settings|add|import|paywall|ask
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
                     NavigationStack { ReportsView() }
+                } else if UserDefaults.standard.string(forKey: "screen") == "capture" {
+                    NavigationStack { CaptureSetupView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "settings" {
                     SettingsView()
                 } else if UserDefaults.standard.string(forKey: "screen") == "add" {
@@ -88,6 +90,8 @@ struct RootView: View {
             if let t = UserDefaults.standard.string(forKey: "tab") {
                 tab = ["budget": .budget, "activity": .activity, "accounts": .accounts, "plan": .plan][t] ?? .home
             }
+            // Capture helper: -captureSMS "<message>" and -captureApplePay "card|merchant|amount"
+            Task { await debugCaptures() }
             #endif
         }
         .onChange(of: scenePhase) { _, phase in
@@ -115,6 +119,29 @@ struct RootView: View {
             EntryEditor(kind: kind)
         }
     }
+
+    #if DEBUG
+    private func debugCaptures() async {
+        let defaults = UserDefaults.standard
+        if let pay = defaults.string(forKey: "captureApplePay") {
+            let parts = pay.split(separator: "|").map(String.init)
+            if parts.count == 3, let amount = Decimal(string: parts[2]) {
+                let capture = Capture(source: .applePay, direction: .spent, amount: Money(amount, currency: store.currency),
+                                      merchant: parts[1], cardHint: parts[0], date: store.now().addingTimeInterval(-120), text: pay)
+                let outcome = try? await CaptureService.record(capture, in: store, isPlus: plus.isPlus)
+                print("captureApplePay:", outcome.map { "\($0)" } ?? "error")
+            }
+        }
+        if let text = defaults.string(forKey: "captureSMS") {
+            if let capture = await CaptureService.read(message: text, homeCurrency: store.currency, date: store.now()) {
+                let outcome = try? await CaptureService.record(capture, in: store, isPlus: plus.isPlus)
+                print("captureSMS:", outcome.map { "\($0)" } ?? "error")
+            } else {
+                print("captureSMS: not a transaction")
+            }
+        }
+    }
+    #endif
 
     private func authenticate() {
         let context = LAContext()

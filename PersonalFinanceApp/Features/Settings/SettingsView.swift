@@ -44,6 +44,14 @@ struct SettingsView: View {
                     Text("Asks for Face ID or your passcode when the app opens.")
                 }
 
+                Section {
+                    NavigationLink { CaptureSetupView() } label: {
+                        Label("Siri & automatic capture", systemImage: "wallet.pass")
+                    }
+                } footer: {
+                    Text("Add by voice, and save Apple Pay purchases and bank SMS alerts as they happen.")
+                }
+
                 BillRemindersSection()
 
                 AppleIntelligenceSection()

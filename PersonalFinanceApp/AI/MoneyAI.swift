@@ -90,6 +90,45 @@ enum MoneyAI {
         return try response.content.value(String.self)
     }
 
+    // MARK: - Bank SMS alerts
+
+    @Generable
+    struct AlertOutput {
+        @Guide(description: "True only if money actually left or arrived in the account; false for codes, offers, reminders, declines")
+        var isTransaction: Bool
+        @Guide(description: "true if money was received or refunded, false if spent or sent")
+        var isIncoming: Bool
+        @Guide(description: "The amount moved, as a plain number without currency")
+        var amount: Double
+        @Guide(description: "Three-letter currency code of that amount, e.g. AED")
+        var currency: String
+        @Guide(description: "The shop, payee or payer, in normal capitalisation; empty if none")
+        var merchant: String
+        @Guide(description: "Last four digits of the card or account, or empty")
+        var cardLast4: String
+    }
+
+    /// Reads a bank alert the rule-based reader couldn't. The amount must
+    /// appear in the message, so a made-up number is never saved.
+    static func readAlert(_ text: String, homeCurrency: String, date: Date) async throws -> Capture? {
+        let session = LanguageModelSession(instructions: """
+            Read one SMS from a bank and say whether it reports money moving, how much, and where. \
+            Ignore available balances and credit limits; they are not the amount moved.
+            """)
+        let out = try await session.respond(to: text, generating: AlertOutput.self, options: GenerationOptions(sampling: .greedy)).content
+        guard out.isTransaction, out.amount > 0 else { return nil }
+        let code = out.currency.uppercased().count == 3 ? out.currency.uppercased() : homeCurrency
+        let money = Money(Decimal(string: String(format: "%.2f", out.amount)) ?? 0, currency: code)
+        let digitsInText = text.filter { $0.isNumber }
+        let amountDigits = String(format: "%.2f", out.amount).filter(\.isNumber)
+        let whole = String(Int(out.amount))
+        guard digitsInText.contains(amountDigits.hasSuffix("00") ? whole : amountDigits) else { return nil }
+        let card = out.cardLast4.filter(\.isNumber)
+        return Capture(source: .sms, direction: out.isIncoming ? .received : .spent, amount: money,
+                       merchant: out.merchant.trimmingCharacters(in: .whitespaces),
+                       cardHint: card.count == 4 ? card : nil, date: date, text: text)
+    }
+
     // MARK: - The month in a few lines
 
     @Generable

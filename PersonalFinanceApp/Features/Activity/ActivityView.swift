@@ -10,7 +10,7 @@ import SwiftUI
 import NokaelCore
 
 enum ActivityFilter: String, CaseIterable, Identifiable {
-    case all = "All", expenses = "Expenses", income = "Income", transfers = "Transfers", scheduled = "Scheduled"
+    case all = "All", review = "To review", expenses = "Expenses", income = "Income", transfers = "Transfers", scheduled = "Scheduled"
     var id: String { rawValue }
 }
 
@@ -68,7 +68,7 @@ struct ActivityView: View {
     private var filterChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(ActivityFilter.allCases) { f in
+                ForEach(ActivityFilter.allCases.filter { $0 != .review || filter == .review || snapshot.entries().contains(where: \.needsReview) }) { f in
                     Button { filter = f } label: {
                         Text(f.rawValue)
                             .font(.subheadline.weight(.medium))
@@ -89,6 +89,7 @@ struct ActivityView: View {
         return snapshot.entries().filter { record in
             let kindMatches: Bool = switch filter {
             case .all, .scheduled: true
+            case .review: record.needsReview
             case .expenses: record.kind == .expense || record.kind == .debtPayment
             case .income: record.kind == .income
             case .transfers: record.kind == .transfer
@@ -158,6 +159,8 @@ struct EntryRow: View {
                     .strikethrough(record.status == .void)
                 if record.status == .void {
                     StatusBadge(text: "Deleted")
+                } else if record.needsReview {
+                    StatusBadge(text: "New", color: .orange)
                 } else if record.cleared == .reconciled {
                     Image(systemName: "checkmark.seal.fill").font(.caption2).foregroundStyle(.secondary)
                         .accessibilityLabel("Reconciled")

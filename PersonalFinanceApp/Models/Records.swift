@@ -107,6 +107,12 @@ final class EntryRecord {
     @Relationship(deleteRule: .cascade, inverse: \LineRecord.entry) var lines: [LineRecord] = []
     var createdAt: Date
     var updatedAt: Date
+    /// Where an automatic entry came from (`Capture.Source`); nil when typed in
+    var sourceRaw: String? = nil
+    /// The Wallet card name or last four digits it arrived with
+    var cardHint: String? = nil
+    /// Saved automatically and not yet looked at
+    var needsReview: Bool = false
 
     init(from entry: Entry, notes: String = "", replacesId: UUID? = nil) {
         self.id = entry.id
@@ -132,6 +138,7 @@ final class EntryRecord {
         get { ClearedState(rawValue: clearedRaw) ?? .uncleared }
         set { clearedRaw = newValue.rawValue }
     }
+    var source: Capture.Source? { sourceRaw.flatMap(Capture.Source.init(rawValue:)) }
 
     var entry: Entry {
         Entry(id: id, kind: kind, date: date, status: status, cleared: cleared, memo: memo,
@@ -362,6 +369,10 @@ final class SettingsRecord {
     /// When a backup file was last saved, for the reminder on Home
     var lastBackupAt: Date?
     var updatedAt: Date
+    /// Country whose banks are suggested for SMS capture; nil follows the phone
+    var bankRegion: String? = nil
+    /// SMS senders the person chose; empty accepts any message that reads as a transaction
+    var bankSenders: [String] = []
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {
         self.currency = currency
@@ -381,9 +392,30 @@ final class SettingsRecord {
     var locale: Locale { Locale(identifier: localeIdentifier) }
 }
 
+/// A Wallet card or card number the person tied to one of their accounts
+@Model
+final class CardLinkRecord {
+    @Attribute(.unique) var hint: String
+    var accountId: UUID
+    var createdAt: Date
+
+    init(hint: String, accountId: UUID) {
+        self.hint = CardLinkRecord.key(hint)
+        self.accountId = accountId
+        self.createdAt = Date()
+    }
+
+    /// "ENBD Visa " and "enbd visa" are the same card
+    static func key(_ hint: String) -> String {
+        hint.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+}
+
 enum Schema1 {
+    // New models and properties with defaults migrate on their own
     static let models: [any PersistentModel.Type] = [
         LedgerAccountRecord.self, EntryRecord.self, LineRecord.self, AllocationRecord.self,
-        PlannedItemRecord.self, OccurrenceRecord.self, ReserveRecord.self, AuditRecord.self, SettingsRecord.self
+        PlannedItemRecord.self, OccurrenceRecord.self, ReserveRecord.self, AuditRecord.self, SettingsRecord.self,
+        CardLinkRecord.self
     ]
 }

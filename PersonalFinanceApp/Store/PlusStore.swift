@@ -13,11 +13,12 @@ import StoreKit
 
 /// Features that need Nokael Plus, with how the paywall introduces each
 enum PlusFeature: String, Identifiable, CaseIterable {
-    case statementImport, appleIntelligence, moneyAhead, reports, widget, goals, payoffPlanner, export
+    case autoCapture, statementImport, appleIntelligence, moneyAhead, reports, widget, goals, payoffPlanner, export
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .autoCapture: return "Automatic capture"
         case .statementImport: return "Import bank statements"
         case .appleIntelligence: return "Apple Intelligence"
         case .moneyAhead: return "Money ahead"
@@ -31,6 +32,7 @@ enum PlusFeature: String, Identifiable, CaseIterable {
 
     var detail: String {
         switch self {
+        case .autoCapture: return "Apple Pay purchases and bank SMS alerts saved for you"
         case .statementImport: return "Bring in a CSV from your bank; what's already recorded is skipped"
         case .appleIntelligence: return "Add from a sentence, ask about your money, a monthly summary"
         case .moneyAhead: return "Your balance day by day for the next 60 days"
@@ -44,6 +46,7 @@ enum PlusFeature: String, Identifiable, CaseIterable {
 
     var symbol: String {
         switch self {
+        case .autoCapture: return "wallet.pass"
         case .statementImport: return "square.and.arrow.down"
         case .appleIntelligence: return "sparkles"
         case .moneyAhead: return "chart.line.uptrend.xyaxis"

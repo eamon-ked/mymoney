@@ -298,6 +298,9 @@ final class LedgerStore {
         if fresh.occurrenceId == nil { fresh.occurrenceId = before.occurrenceId }
         let record = insert(fresh, notes: notes)
         record.replacesId = originalId
+        // Editing an automatic entry counts as reviewing it
+        record.sourceRaw = original.sourceRaw
+        record.cardHint = original.cardHint
         if let occ = fresh.occurrenceId { applyPayment(of: fresh, to: occ) }
         context.insert(AuditRecord(action: "entry.edited", subjectId: fresh.id,
                                    summary: "Changed \"\(before.memo)\" (\(describe(before))) to \(describe(fresh))"))
@@ -313,6 +316,69 @@ final class LedgerStore {
         if let occ = record.occurrenceId { removePayment(of: entry, from: occ) }
         context.insert(AuditRecord(action: "entry.voided", subjectId: entryId,
                                    summary: "Deleted \"\(entry.memo)\" (\(describe(entry)))", reason: reason))
+        try commit()
+    }
+
+    // MARK: - Automatic entries
+
+    /// Saves an entry that arrived by itself (Apple Pay, a bank SMS, Siri)
+    @discardableResult
+    func postCaptured(_ entry: Entry, source: Capture.Source, cardHint: String?, needsReview: Bool) throws -> UUID {
+        let key = entry.idempotencyKey
+        if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first { return existing.id }
+        do { try EntryFactory.validate(entry) } catch { throw StoreError.from(error) }
+        let record = insert(entry, notes: "")
+        record.sourceRaw = source.rawValue
+        record.cardHint = cardHint
+        record.needsReview = needsReview
+        context.insert(AuditRecord(action: "entry.captured", subjectId: entry.id,
+                                   summary: "\(source.title) added \"\(entry.memo)\" (\(describe(entry)))"))
+        try commit()
+        return entry.id
+    }
+
+    /// The same purchase arrived again from somewhere else; keep what's new
+    func enrichCaptured(_ entryId: UUID, cardHint: String?) throws {
+        guard let record = entryRecord(entryId) else { throw StoreError.notFound }
+        guard record.cardHint == nil, let cardHint else { return }
+        record.cardHint = cardHint
+        try commit()
+    }
+
+    func markReviewed(_ entryId: UUID) throws {
+        guard let record = entryRecord(entryId), record.needsReview else { return }
+        record.needsReview = false
+        record.updatedAt = now()
+        try commit()
+    }
+
+    func markAllReviewed() throws {
+        for record in fetch(EntryRecord.self, #Predicate { $0.needsReview }) { record.needsReview = false }
+        try commit()
+    }
+
+    /// The account a Wallet card or card number belongs to, once the person said so
+    func linkedAccount(forCard hint: String) -> UUID? {
+        let key = CardLinkRecord.key(hint)
+        guard let id = fetch(CardLinkRecord.self, #Predicate { $0.hint == key }).first?.accountId,
+              let account = account(id), !account.archived else { return nil }
+        return id
+    }
+
+    func linkCard(_ hint: String, to accountId: UUID) throws {
+        let key = CardLinkRecord.key(hint)
+        guard !key.isEmpty else { return }
+        if let existing = fetch(CardLinkRecord.self, #Predicate { $0.hint == key }).first {
+            existing.accountId = accountId
+        } else {
+            context.insert(CardLinkRecord(hint: hint, accountId: accountId))
+        }
+        try commit()
+    }
+
+    func unlinkCard(_ hint: String) throws {
+        let key = CardLinkRecord.key(hint)
+        for link in fetch(CardLinkRecord.self, #Predicate { $0.hint == key }) { context.delete(link) }
         try commit()
     }
 

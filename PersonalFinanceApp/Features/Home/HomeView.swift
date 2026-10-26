@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import AppIntents
 import NokaelCore
 
 struct HomeView: View {
@@ -20,6 +21,8 @@ struct HomeView: View {
     @State private var paying: Occurrence?
     @State private var showingAsk = false
     @State private var paywall: PlusFeature?
+    @State private var reviewing: EntryRecord?
+    @AppStorage("showSiriTip") private var showSiriTip = true
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -31,6 +34,8 @@ struct HomeView: View {
                 insightSection
 
                 alertsSection
+
+                ReviewSection(selected: $reviewing)
 
                 Section {
                     HStack(spacing: 12) {
@@ -48,6 +53,14 @@ struct HomeView: View {
                 comingUpSection
                 budgetHealthSection
                 reservesSection
+
+                if snapshot.setupComplete && !Self.screenshotMode {
+                    Section {
+                        SiriTipView(intent: LogSpendingIntent(), isVisible: $showSiriTip)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
+                }
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Your money")
@@ -68,6 +81,7 @@ struct HomeView: View {
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
+            .sheet(item: $reviewing) { EntryDetailView(record: $0) }
             .paywall($paywall)
             .sheet(isPresented: $showingAsk) {
                 #if canImport(FoundationModels)

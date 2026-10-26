@@ -31,6 +31,7 @@ struct EntryDetailView: View {
                                         color: record.status == .void ? .red : .green)
                             if record.cleared == .reconciled { StatusBadge(text: "Reconciled") }
                             StatusBadge(text: kindName)
+                            if let source = record.source { StatusBadge(text: source.title, color: .blue) }
                         }
                         .padding(.top, 4)
                     }
@@ -47,6 +48,10 @@ struct EntryDetailView: View {
                             }
                         }
                     }
+                }
+
+                if record.needsReview && record.status == .posted {
+                    reviewSection
                 }
 
                 if !record.notes.isEmpty {
@@ -98,6 +103,37 @@ struct EntryDetailView: View {
                 Text("Balances, budget and safe-to-spend update straight away. A record of it stays in the history.")
             }
         }
+    }
+
+    /// An automatic entry: confirm it, or teach Nokael which account a new card is
+    @ViewBuilder private var reviewSection: some View {
+        let account = record.lines.compactMap { snapshot.account($0.accountId) }.first { $0.kind.isBalanceSheet }
+        Section {
+            Button {
+                do { try store.markReviewed(record.id); dismiss() } catch { self.error = StoreError.from(error).errorDescription }
+            } label: {
+                Label("Looks right", systemImage: "checkmark.circle.fill")
+            }
+            if let hint = record.cardHint, let account, store.linkedAccount(forCard: hint) != account.id {
+                Button {
+                    do {
+                        try store.linkCard(hint, to: account.id)
+                        try store.markReviewed(record.id)
+                        dismiss()
+                    } catch { self.error = StoreError.from(error).errorDescription }
+                } label: {
+                    Label("Always use \(account.name) for \(cardName(hint))", systemImage: "creditcard")
+                }
+            }
+        } header: {
+            Text("Check this entry")
+        } footer: {
+            Text("Saved automatically\(record.source.map { " from \($0.title)" } ?? ""). If the category or account is wrong, tap Edit.")
+        }
+    }
+
+    private func cardName(_ hint: String) -> String {
+        hint.count == 4 && hint.allSatisfy(\.isNumber) ? "card ending \(hint)" : hint
     }
 
     private var editable: Bool {

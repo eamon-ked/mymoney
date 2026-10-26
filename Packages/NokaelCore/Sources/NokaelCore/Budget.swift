@@ -117,13 +117,14 @@ public struct Budget: Sendable {
         guard let start = BudgetMonth.start(of: month, calendar: calendar),
               let end = BudgetMonth.end(of: month, calendar: calendar) else { return .zero(currency) }
         let ids = budgetAccountIds
-        let offBudgetDebts = Set(ledger.accounts.values.filter { $0.kind.isLiability && !$0.onBudget }.map(\.id))
+        // Loans only: a card's principal paid for purchases that were already counted
+        let loans = Set(ledger.accounts.values.filter { $0.kind == .loan }.map(\.id))
         return ledger.posted
             .filter { $0.date >= start && $0.date < end && $0.lines.contains { ids.contains($0.accountId) } }
             .compactMap { entry -> Money? in
                 guard let charge = entry.amount(on: categoryId) else { return nil }
                 guard entry.kind == .debtPayment else { return charge }
-                let principal = entry.lines.filter { offBudgetDebts.contains($0.accountId) }.map(\.amount).sum(currency)
+                let principal = entry.lines.filter { loans.contains($0.accountId) }.map(\.amount).sum(currency)
                 return charge + principal
             }
             .sum(currency)

@@ -116,6 +116,7 @@ struct DebtResplitTests {
         let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
         let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
         try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: Self.aed(5781), dueDay: 26), for: loan.id, paidFrom: nil)
+        loan.onBudget = true  // as on the phone: an on-budget loan still uses up the whole instalment
         let row = LedgerStore.ImportedRow(date: LedgerStoreTests.date(2026, 10, 26), memo: "LOAN INSTALMENT", amount: Self.aed(-5781),
                                           target: .transfer(loan.id), key: UUID())
         _ = try store.importRows([row], into: bank.id)

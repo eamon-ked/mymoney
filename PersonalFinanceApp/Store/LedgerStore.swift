@@ -365,6 +365,23 @@ final class LedgerStore {
     }
 
     /// The same purchase arrived again from somewhere else; keep what's new
+    /// Notes that a bank message reached the app and what became of it (never the message itself),
+    /// so the person can see their automation is running
+    func noteBankMessage(from sender: String?, outcome: String) {
+        let from = sender.flatMap { $0.isEmpty ? nil : $0 } ?? "an unknown sender"
+        context.insert(AuditRecord(action: "sms.read", subjectId: UUID(), summary: "From \(from): \(outcome)"))
+        try? commit()
+    }
+
+    var lastBankMessage: AuditRecord? {
+        _ = revision
+        let action = "sms.read"
+        var descriptor = FetchDescriptor<AuditRecord>(predicate: #Predicate { $0.action == action },
+                                                      sortBy: [SortDescriptor(\.date, order: .reverse)])
+        descriptor.fetchLimit = 1
+        return try? context.fetch(descriptor).first
+    }
+
     func enrichCaptured(_ entryId: UUID, cardHint: String?) throws {
         guard let record = entryRecord(entryId) else { throw StoreError.notFound }
         guard record.cardHint == nil, let cardHint else { return }

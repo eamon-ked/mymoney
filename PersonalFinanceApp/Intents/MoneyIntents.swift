@@ -243,12 +243,21 @@ struct LogBankMessageIntent: AppIntent {
         let store = services.store
         await services.plus.refresh()
         guard CaptureService.accepts(sender: sender, settings: store.settings) else {
+            store.noteBankMessage(from: sender, outcome: "ignored, not one of your banks")
             return .result(dialog: "Not from one of your banks, so it was ignored.")
         }
         guard let capture = await CaptureService.read(message: message, homeCurrency: store.currency, date: store.now()) else {
+            store.noteBankMessage(from: sender, outcome: "no purchase or deposit found in it")
             return .result(dialog: "No purchase or deposit in that message.")
         }
-        let outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus)
+        let outcome: CaptureService.Outcome
+        do {
+            outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus)
+        } catch {
+            store.noteBankMessage(from: sender, outcome: "couldn't be saved")
+            throw error
+        }
+        store.noteBankMessage(from: sender, outcome: outcome == .needsPlus ? "not saved, needs Nokael Plus" : outcome.message.lowercased())
         WidgetSync.update(store.snapshot, isPlus: services.plus.isPlus)
         return .result(dialog: IntentDialog(stringLiteral: outcome.message))
     }

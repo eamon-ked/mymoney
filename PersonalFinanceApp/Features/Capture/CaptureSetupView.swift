@@ -167,6 +167,14 @@ struct CaptureSetupView: View {
                 "Tap New Blank Automation and add “Read Bank Message” from Nokael Money.",
                 "Set Message to Shortcut Input, and Sender to Shortcut Input › Sender, then tap Done.",
             ])
+            if let last = store.lastBankMessage {
+                LabeledContent("Last alert", value: last.date.formatted(.relative(presentation: .named)))
+                Text(last.summary).font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                Label("No alert has reached Nokael Money yet. If your bank has texted since you set this up, open the automation and check it's on and set to Run Immediately.",
+                      systemImage: "exclamationmark.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
         } header: {
             Text("Bank SMS alerts")
         } footer: {

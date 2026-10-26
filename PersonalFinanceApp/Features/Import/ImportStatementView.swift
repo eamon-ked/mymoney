@@ -33,6 +33,8 @@ struct ImportStatementView: View {
     private var account: LedgerAccountRecord? { snapshot.account(accountId) }
     private var inbox: [StatementRow] { rows.filter { matched[$0.id] == nil } }
     private var ready: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] != nil } }
+    private var unsorted: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] == nil } }
+    private var allSelected: Bool { inbox.allSatisfy { !skipped.contains($0.id) } }
 
     var body: some View {
         NavigationStack {
@@ -56,13 +58,6 @@ struct ImportStatementView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(added == nil ? "Cancel" : "Close") { dismiss() } }
-                if fileText != nil && added == nil {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Add \(ready.count)", action: add)
-                            .disabled(ready.isEmpty)
-                            .accessibilityIdentifier("addImported")
-                    }
-                }
             }
             #if DEBUG
             .onAppear { if fileText == nil { debugLoad() } }
@@ -110,6 +105,8 @@ struct ImportStatementView: View {
 
             if let error { Section { FieldError(message: error) } }
 
+            if !unsorted.isEmpty { sortTheRest }
+
             Section {
                 if inbox.isEmpty {
                     Text("Everything in this file is already recorded.").foregroundStyle(.secondary)
@@ -119,10 +116,21 @@ struct ImportStatementView: View {
                              label: label(for: targets[row.id]))
                 }
             } header: {
-                Text("To add · \(inbox.count)")
+                HStack {
+                    Text("To add · \(inbox.count)")
+                    Spacer()
+                    if !inbox.isEmpty {
+                        Button(allSelected ? "Untick all" : "Tick all") {
+                            skipped = allSelected ? Set(inbox.map(\.id)) : []
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .textCase(nil)
+                        .accessibilityIdentifier("importSelectAll")
+                    }
+                }
             } footer: {
                 if !inbox.isEmpty {
-                    Text("Pick where each one goes. Rows without a choice, or switched off, aren't added.")
+                    Text("Ticked rows are added once they have a category. Untick a row to leave it out.")
                 }
             }
 
@@ -140,6 +148,60 @@ struct ImportStatementView: View {
             }
         }
         .onChange(of: flipSigns) { _, _ in parse() }
+        .safeAreaInset(edge: .bottom) { if !inbox.isEmpty { addBar } }
+    }
+
+    /// One choice for every ticked row that has none yet
+    private var sortTheRest: some View {
+        let out = unsorted.filter(\.amount.isNegative)
+        let into = unsorted.filter { !$0.amount.isNegative }
+        return Section {
+            if !out.isEmpty {
+                bulkMenu("Put \(out.count) money-out \(out.count == 1 ? "row" : "rows") in…",
+                         categories: snapshot.expenseCategories, rows: out)
+            }
+            if !into.isEmpty {
+                bulkMenu("Put \(into.count) money-in \(into.count == 1 ? "row" : "rows") in…",
+                         categories: snapshot.incomeCategories, rows: into)
+            }
+        } header: {
+            Text("\(unsorted.count) still need a category")
+        } footer: {
+            Text("Sorts all of them at once. You can still change any single row below.")
+        }
+    }
+
+    private func bulkMenu(_ title: String, categories: [LedgerAccountRecord], rows: [StatementRow]) -> some View {
+        Menu {
+            ForEach(categories, id: \.id) { c in
+                Button { for row in rows { targets[row.id] = .category(c.id) } } label: { Label(c.name, systemImage: c.icon) }
+            }
+        } label: {
+            Label(title, systemImage: "square.stack.3d.down.right")
+        }
+    }
+
+    private var addBar: some View {
+        VStack(spacing: 6) {
+            Text(summary).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button(action: add) {
+                Text(ready.isEmpty ? "Choose a category to add" : "Add \(ready.count) \(ready.count == 1 ? "entry" : "entries")")
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(ready.isEmpty)
+            .accessibilityIdentifier("addImported")
+        }
+        .padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
+        .background(.bar)
+    }
+
+    private var summary: String {
+        let left = inbox.count - ready.count - unsorted.count
+        var parts = ["\(ready.count) ready"]
+        if !unsorted.isEmpty { parts.append("\(unsorted.count) need a category") }
+        if left > 0 { parts.append("\(left) left out") }
+        return parts.joined(separator: " · ")
     }
 
     #if DEBUG
@@ -310,40 +372,46 @@ private struct InboxRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Button { skipped.toggle() } label: {
-                Image(systemName: skipped ? "circle" : (target == nil ? "circle.dashed" : "checkmark.circle.fill"))
-                    .font(.title3)
-                    .foregroundStyle(skipped || target == nil ? Color.secondary : Color.accentColor)
+                Image(systemName: skipped ? "square" : "checkmark.square.fill")
+                    .font(.title2)
+                    .foregroundStyle(skipped ? Color.secondary : Color.accentColor)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel(skipped ? "Include" : "Leave out")
+            .accessibilityLabel(row.description)
+            .accessibilityValue(skipped ? "Not ticked" : "Ticked")
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(row.description.isEmpty ? "No description" : row.description).lineLimit(2)
+                        .strikethrough(skipped)
                     Spacer(minLength: 8)
                     Text(row.amount.signed).font(.subheadline.weight(.semibold)).monospacedDigit()
                         .foregroundStyle(row.amount.isNegative ? Color.primary : Palette.positive)
                 }
                 Text(row.date.formatted(date: .abbreviated, time: .omitted)).font(.caption).foregroundStyle(.secondary)
-                Menu {
-                    ForEach(options, id: \.0) { group in
-                        Section(group.0) {
-                            ForEach(group.1) { option in
-                                Button { target = option.target; skipped = false } label: {
-                                    Label(option.title, systemImage: option.symbol)
+                if skipped {
+                    Text("Left out · tick to add it").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                } else {
+                    Menu {
+                        ForEach(options, id: \.0) { group in
+                            Section(group.0) {
+                                ForEach(group.1) { option in
+                                    Button { target = option.target } label: {
+                                        Label(option.title, systemImage: option.symbol)
+                                    }
                                 }
                             }
                         }
+                    } label: {
+                        Label(label ?? "Choose a category", systemImage: label == nil ? "exclamationmark.circle.fill" : "checkmark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(label == nil ? Color.orange : Color.accentColor)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill((label == nil ? Color.orange : Color.accentColor).opacity(0.15)))
                     }
-                } label: {
-                    Label(label ?? "Choose where it goes", systemImage: label == nil ? "questionmark.circle" : "tag")
-                        .font(.caption.weight(.medium))
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.gray.opacity(0.15)))
                 }
-                .disabled(skipped)
             }
         }
-        .opacity(skipped ? 0.5 : 1)
+        .opacity(skipped ? 0.45 : 1)
     }
 }

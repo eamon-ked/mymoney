@@ -48,13 +48,15 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|settings
+                // Screenshot helper: -screen forecast|reports|settings|add
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
                     NavigationStack { ReportsView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "settings" {
                     SettingsView()
+                } else if UserDefaults.standard.string(forKey: "screen") == "add" {
+                    EntryEditor(kind: .expense)
                 } else {
                     tabs
                 }

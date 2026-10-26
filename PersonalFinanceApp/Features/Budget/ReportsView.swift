@@ -31,6 +31,8 @@ struct ReportsView: View {
         List {
             Section { banner(report).bannerRow() }
 
+            storySection
+
             Section("Last 6 months") {
                 trendChart(trend).frame(height: 190).padding(.vertical, 8)
             }
@@ -80,6 +82,14 @@ struct ReportsView: View {
             }
         }
         .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
+    }
+
+    @ViewBuilder private var storySection: some View {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *), AppleIntelligence.isReady {
+            Section { MonthStoryView(monthKey: currentMonth) }
+        }
+        #endif
     }
 
     private func banner(_ report: MonthReport) -> some View {

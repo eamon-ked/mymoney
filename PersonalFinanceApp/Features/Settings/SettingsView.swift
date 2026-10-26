@@ -37,6 +37,8 @@ struct SettingsView: View {
                     Text("Asks for Face ID or your passcode when the app opens.")
                 }
 
+                AppleIntelligenceSection()
+
                 BackupSection()
 
                 Section {

@@ -36,6 +36,12 @@ struct EntryEditor: View {
     @State private var saving = false
     @State private var didLoad = false
     @State private var categoryTouched = false
+    // Apple Intelligence: a sentence read into the fields, and category guesses
+    @State private var sentence = ""
+    @State private var reading = false
+    @State private var readNote: String?
+    @State private var pendingDraft: DraftEntry?
+    @State private var categorySuggested = false
     @FocusState private var amountFocused: Bool
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -52,6 +58,10 @@ struct EntryEditor: View {
                     .pickerStyle(.segmented)
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
+                }
+
+                if editing == nil && kind != .adjustment && AppleIntelligence.isReady {
+                    describeSection
                 }
 
                 Section {
@@ -117,7 +127,12 @@ struct EntryEditor: View {
             }
             .onAppear(perform: load)
             .onChange(of: memo) { _, text in suggestFromHistory(text) }
-            .onChange(of: kind) { _, _ in categoryId = nil; error = nil }
+            .onChange(of: kind) { _, _ in
+                categoryId = nil
+                error = nil
+                if let draft = pendingDraft { pendingDraft = nil; fill(from: draft) }
+            }
+            .task(id: memo) { await suggestCategory() }
         }
     }
 
@@ -130,6 +145,7 @@ struct EntryEditor: View {
             CategoryChips(categories: snapshot.expenseCategories, selection: $categoryId, touched: $categoryTouched)
             TextField("Description (e.g. Carrefour)", text: $memo)
                 .accessibilityIdentifier("memoField")
+            if categorySuggested && !categoryTouched { AIBadge(text: "Category suggested by Apple Intelligence") }
         }
         Section {
             AccountPicker(title: "Paid from", accounts: spendingAccounts, selection: $accountId)
@@ -141,6 +157,7 @@ struct EntryEditor: View {
         Section("Received as") {
             CategoryChips(categories: snapshot.incomeCategories, selection: $categoryId, touched: $categoryTouched)
             TextField("Description (e.g. October salary)", text: $memo)
+            if categorySuggested && !categoryTouched { AIBadge(text: "Category suggested by Apple Intelligence") }
         }
         Section {
             AccountPicker(title: "Paid into", accounts: spendingAccounts, selection: $accountId)
@@ -171,6 +188,29 @@ struct EntryEditor: View {
             DatePicker("As of", selection: $date, displayedComponents: .date)
         } footer: {
             Text("For corrections only. To check against a bank statement, use Reconcile on the account instead.")
+        }
+    }
+
+    @ViewBuilder private var describeSection: some View {
+        Section {
+            HStack(spacing: 8) {
+                TextField("e.g. Lunch 45 at Shake Shack yesterday", text: $sentence, axis: .vertical)
+                    .lineLimit(1...3)
+                    .submitLabel(.done)
+                    .onSubmit { Task { await readSentence() } }
+                    .accessibilityIdentifier("describeField")
+                if reading {
+                    ProgressView()
+                } else {
+                    Button { Task { await readSentence() } } label: { Image(systemName: "sparkles").font(.title3) }
+                        .buttonStyle(.borderless)
+                        .disabled(sentence.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityLabel("Fill in from description")
+                }
+            }
+            if let readNote { Text(readNote).font(.caption).foregroundStyle(.secondary) }
+        } header: {
+            AIBadge(text: "Describe it")
         }
     }
 
@@ -205,6 +245,13 @@ struct EntryEditor: View {
             accountId = store.settings.lastUsedAccountId.flatMap { id in spendingAccounts.first { $0.id == id }?.id }
                 ?? spendingAccounts.first { $0.kind.defaultSpendable }?.id ?? spendingAccounts.first?.id
             amountFocused = true
+            #if DEBUG
+            // Test helper: -describe "Lunch 45 at Shake Shack yesterday"
+            if let text = UserDefaults.standard.string(forKey: "describe") {
+                sentence = text
+                Task { await readSentence() }
+            }
+            #endif
         }
     }
 
@@ -220,6 +267,95 @@ struct EntryEditor: View {
         if let line = match.lines.first(where: { snapshot.account($0.accountId)?.kind == wanted }) {
             categoryId = line.accountId
         }
+    }
+
+    // MARK: - Apple Intelligence
+
+    private func readSentence() async {
+        let text = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !reading else { return }
+        #if canImport(FoundationModels)
+        guard #available(iOS 26.0, *) else { return }
+        reading = true
+        readNote = nil
+        defer { reading = false }
+        do {
+            let draft = try await MoneyAI.draft(from: text, categories: snapshot.expenseCategories.map(\.name),
+                                                income: snapshot.incomeCategories.map(\.name),
+                                                accounts: spendingAccounts.map(\.name), today: Date())
+            if draft.kind != kind {
+                pendingDraft = draft
+                kind = draft.kind
+            } else {
+                fill(from: draft)
+            }
+            readNote = "Filled in below. Check it, then tap Save."
+        } catch {
+            #if DEBUG
+            print("MoneyAI.draft failed:", error)
+            #endif
+            readNote = AppleIntelligence.message(for: error)
+        }
+        #endif
+    }
+
+    private func fill(from draft: DraftEntry) {
+        func named(_ name: String?, in list: [LedgerAccountRecord]) -> UUID? {
+            guard let name = name?.lowercased(), !name.isEmpty else { return nil }
+            return list.first { $0.name.lowercased() == name }?.id
+        }
+        if let value = draft.amount { amountText = MoneyFormat.editable(Money(value, currency: currency)) }
+        let categories = kind == .income ? snapshot.incomeCategories : snapshot.expenseCategories
+        if let id = named(draft.category, in: categories) {
+            categoryId = id
+            categoryTouched = true
+            categorySuggested = false
+        }
+        if !draft.memo.isEmpty { memo = draft.memo }
+        if let id = named(draft.account, in: spendingAccounts) ?? mentioned(in: sentence, excluding: draft.toAccount) { accountId = id }
+        if kind == .transfer, let id = named(draft.toAccount, in: spendingAccounts.filter { $0.id != accountId }) { toAccountId = id }
+        date = Calendar.current.date(byAdding: .day, value: -draft.daysAgo, to: Date()) ?? Date()
+        amountFocused = false
+    }
+
+    /// An account the sentence names by a distinctive word ("my Mashreq card" → Mashreq Cashback)
+    private func mentioned(in text: String, excluding other: String?) -> UUID? {
+        let generic: Set<String> = ["card", "bank", "account", "current", "savings", "saving", "cash", "loan", "credit", "debit", "wallet"]
+        let words = Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        return spendingAccounts.first { a in
+            a.name != other && a.name.lowercased().split { !$0.isLetter && !$0.isNumber }
+                .contains { $0.count >= 3 && !generic.contains(String($0)) && words.contains(String($0)) }
+        }?.id
+    }
+
+    /// When past entries don't say, ask the model which category fits
+    private func suggestCategory() async {
+        guard editing == nil, !categoryTouched, kind == .expense || kind == .income, AppleIntelligence.isReady else { return }
+        let text = memo.trimmingCharacters(in: .whitespaces)
+        guard text.count >= 3, categoryId == nil || categorySuggested else { return }
+        let needle = text.lowercased()
+        guard !snapshot.entryRecords.contains(where: { $0.status == .posted && $0.memo.lowercased().hasPrefix(needle) }) else { return }
+        #if canImport(FoundationModels)
+        guard #available(iOS 26.0, *) else { return }
+        try? await Task.sleep(for: .milliseconds(700))
+        guard !Task.isCancelled else { return }
+        let wanted: AccountKind = kind == .income ? .income : .expense
+        let categories = wanted == .income ? snapshot.incomeCategories : snapshot.expenseCategories
+        var examples: [(String, String)] = []
+        var seen = Set<String>()
+        for record in snapshot.entryRecords where record.status == .posted && !seen.contains(record.memo.lowercased()) {
+            guard let line = record.lines.first(where: { snapshot.account($0.accountId)?.kind == wanted }),
+                  let name = snapshot.account(line.accountId)?.name, name != record.memo else { continue }
+            seen.insert(record.memo.lowercased())
+            examples.append((record.memo, name))
+            if examples.count >= 12 { break }
+        }
+        guard let name = try? await MoneyAI.category(for: text, options: categories.map(\.name), examples: examples),
+              !Task.isCancelled, !categoryTouched,
+              let match = categories.first(where: { $0.name == name }) else { return }
+        categoryId = match.id
+        categorySuggested = true
+        #endif
     }
 
     // MARK: - Saving
@@ -327,6 +463,7 @@ struct CategoryChips: View {
         if categories.isEmpty {
             Text("No categories yet. Add some in Budget.").foregroundStyle(.secondary)
         } else {
+            ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(categories, id: \.id) { c in
@@ -345,9 +482,15 @@ struct CategoryChips: View {
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(selected ? .isSelected : [])
                         .accessibilityIdentifier("category-\(c.name)")
+                        .id(c.id)
                     }
                 }
                 .padding(.vertical, 4)
+            }
+            // A category picked for the person (history or Apple Intelligence) scrolls into view
+            .onChange(of: selection) { _, id in
+                if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+            }
             }
         }
     }

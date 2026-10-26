@@ -17,6 +17,7 @@ struct HomeView: View {
     @State private var showingSettings = false
     @State private var explanation: Explanation?
     @State private var paying: Occurrence?
+    @State private var showingAsk = false
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -24,6 +25,8 @@ struct HomeView: View {
         NavigationStack {
             List {
                 Section { safeToSpendBanner.bannerRow() }
+
+                insightSection
 
                 alertsSection
 
@@ -51,13 +54,34 @@ struct HomeView: View {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
                 }
+                if AppleIntelligence.isReady {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { showingAsk = true } label: { Image(systemName: "sparkles") }
+                            .accessibilityLabel("Ask about your money")
+                    }
+                }
                 GlobalAddButton()
             }
             .sheet(isPresented: $showingSafeToSpend) { SafeToSpendView() }
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
+            .sheet(isPresented: $showingAsk) {
+                #if canImport(FoundationModels)
+                if #available(iOS 26.0, *) { AskMoneyView() }
+                #endif
+            }
         }
+    }
+
+    // MARK: - Apple Intelligence
+
+    @ViewBuilder private var insightSection: some View {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *), AppleIntelligence.isReady, snapshot.setupComplete {
+            Section { InsightCard { showingAsk = true } }
+        }
+        #endif
     }
 
     // MARK: - Safe to spend

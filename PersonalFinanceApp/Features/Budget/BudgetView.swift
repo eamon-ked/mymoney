@@ -43,7 +43,12 @@ struct BudgetView: View {
                                       : "Add an account with money in it to start planning",
                                   tint: available.isNegative ? .red : Palette.budget,
                                   action: { explanation = availableExplanation(available) }) {
-                        ProgressBar(value: progress.fraction, tint: .white).padding(.horizontal, 24).padding(.top, 6)
+                        VStack(spacing: 4) {
+                            ProgressBar(value: progress.fraction, tint: .white)
+                            Text("\(Int((progress.fraction * 100).rounded()))% of this month's money planned")
+                                .font(.caption2).foregroundStyle(.white.opacity(0.85))
+                        }
+                        .padding(.horizontal, 24).padding(.top, 6)
                     }
                     .bannerRow()
                 }
@@ -74,7 +79,10 @@ struct BudgetView: View {
                         }
                     } header: {
                         let remaining = group.categories.map { budget.line($0.id, month: currentMonth).remaining }.sum(store.currency)
-                        HStack { Text(group.name); Spacer(); Text("\(remaining.compact) left").monospacedDigit() }
+                        HStack {
+                            Text(group.name); Spacer()
+                            if !remaining.isZero { Text("\(remaining.compact) left").monospacedDigit() }
+                        }
                     } footer: {
                         if group.name == groups.first?.name {
                             Text("Tap a category to set how much you plan to spend on it this month.")
@@ -99,6 +107,9 @@ struct BudgetView: View {
                             Image(systemName: "chevron.right")
                         }.accessibilityLabel("Next month")
                     }
+                    // Rows scroll under the toolbar, so the switcher keeps its own backing
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule())
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
@@ -172,13 +183,13 @@ struct BudgetRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ListRow(title: category.name,
-                    caption: "\(line.spent.compact) spent of \((line.allocated + line.carriedIn).compact)",
-                    symbol: category.icon, color: Color(hex: category.colorHex)) {
-                AmountPill(text: line.isOverspent ? "\(line.remaining.magnitude.compact) over" : "\(line.remaining.compact) left",
-                           style: line.isOverspent ? .negative : (line.remaining.isPositive ? .positive : .neutral))
-            }
             let planned = line.allocated + line.carriedIn
+            ListRow(title: category.name, caption: caption(planned: planned),
+                    symbol: category.icon, color: Color(hex: category.colorHex)) {
+                AmountPill(text: pill(planned: planned),
+                           style: line.isOverspent ? .negative
+                               : (line.remaining.isPositive || (planned.isPositive && category.name == "Loan payments") ? .positive : .neutral))
+            }
             if planned.isPositive {
                 ProgressBar(value: Double(line.spent.minorUnits) / Double(planned.minorUnits),
                             tint: line.isOverspent ? .red : Color(hex: category.colorHex))
@@ -186,6 +197,18 @@ struct BudgetRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private func caption(planned: Money) -> String {
+        if planned.isPositive { return "\(line.spent.compact) spent of \(planned.compact)" }
+        return line.spent.isPositive ? "\(line.spent.compact) spent, nothing planned" : "Not planned this month"
+    }
+
+    private func pill(planned: Money) -> String {
+        if line.isOverspent { return "\(line.remaining.magnitude.compact) over" }
+        if !planned.isPositive { return "Plan" }
+        if line.remaining.isZero { return category.name == "Loan payments" ? "Paid" : "All spent" }
+        return "\(line.remaining.compact) left"
     }
 }
 

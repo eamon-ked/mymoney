@@ -117,11 +117,14 @@ struct FinanceSnapshot {
     }
 
     /// Safe-to-spend runs until the day before the next expected income, or month end
-    var defaultPeriodEnd: Date {
-        let nextIncome = occurrences
+    var nextIncomeDate: Date? {
+        occurrences
             .filter { occ in items.first { $0.id == occ.itemId }?.direction == .inflow && occ.dueDate > today && !occ.remaining.isZero }
             .map(\.dueDate).min()
-        if let nextIncome, let dayBefore = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: nextIncome)) {
+    }
+
+    var defaultPeriodEnd: Date {
+        if let nextIncome = nextIncomeDate, let dayBefore = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: nextIncome)) {
             return endOfDay(max(dayBefore, today))
         }
         let monthEnd = BudgetMonth.end(of: monthKey, calendar: calendar) ?? today
@@ -155,7 +158,11 @@ struct FinanceSnapshot {
     }
 
     func safeToSpend(through end: Date? = nil) -> SafeToSpend {
-        safeToSpendCalculator.calculate(today: today, periodEnd: end ?? defaultPeriodEnd)
+        // Bills due on payday are held back too: the salary may land after them
+        guard end == nil, let payday = nextIncomeDate else {
+            return safeToSpendCalculator.calculate(today: today, periodEnd: end ?? defaultPeriodEnd)
+        }
+        return safeToSpendCalculator.calculate(today: today, periodEnd: defaultPeriodEnd, billsThrough: endOfDay(payday))
     }
 
     // MARK: - Plan

@@ -156,8 +156,8 @@ struct PlanView: View {
             return "\(item.name) \(when)\(next.dueDate.formatted(.dateTime.day().month(.abbreviated))) · \(next.remaining.compact)"
         }()
         return SummaryBanner(title: "Bills due in 30 days", amount: total.compact, caption: caption, tint: Palette.plan) {
-            BannerFigures(figures: [("Debt", snapshot.totalDebt.compact),
-                                    ("Set aside", snapshot.activeReservesTotal.compact)])
+            BannerFigures(figures: [("Debt", snapshot.totalDebt.compact)]
+                          + (snapshot.activeReservesTotal.isPositive ? [("Set aside", snapshot.activeReservesTotal.compact)] : []))
         }
     }
 
@@ -238,12 +238,14 @@ struct PlannedItemRow: View {
 
     var body: some View {
         let next = snapshot.occurrences.first { $0.itemId == item.id && !$0.remaining.isZero && !$0.skipped }
+        // A bill looks like what it pays: the card or loan, else its category
+        let look = (item.debtId ?? item.categoryId).flatMap { snapshot.account($0) }.flatMap { $0.icon.isEmpty ? nil : $0 }
         ListRow(title: item.name,
                 caption: [item.schedule.frequency.label,
                           next.map { "next " + $0.dueDate.formatted(.dateTime.day().month(.abbreviated)) },
                           item.isEstimate ? "estimate" : nil].compactMap { $0 }.joined(separator: " · "),
-                symbol: item.direction == .inflow ? "arrow.down.circle.fill" : "calendar",
-                color: item.direction == .inflow ? .green : Palette.plan) {
+                symbol: item.direction == .inflow ? "arrow.down.circle.fill" : look?.icon ?? "calendar",
+                color: item.direction == .inflow ? .green : look.map { Color(hex: $0.colorHex) } ?? Palette.plan) {
             AmountPill(text: (item.direction == .inflow ? "+" : "") + item.amount.compact,
                        style: item.direction == .inflow ? .positive : .neutral)
         }

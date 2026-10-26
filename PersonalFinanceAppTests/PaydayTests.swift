@@ -74,6 +74,21 @@ struct PaydayTests {
         #expect(entry.occurrenceId != nil)
     }
 
+    @Test func rentDueOnPaydayIsHeldBack() throws {
+        let payday = LedgerStoreTests.date(2026, 10, 27)
+        try store.savePlannedItem(PlannedItem(name: "Salary", direction: .inflow, amount: Self.aed(20000),
+                                              schedule: Schedule(start: payday, frequency: .monthly(every: 1)),
+                                              accountId: bank.id, categoryId: category("Salary").id))
+        try store.savePlannedItem(PlannedItem(name: "Rent", direction: .outflow, amount: Self.aed(800),
+                                              schedule: Schedule(start: payday, frequency: .monthly(every: 1)),
+                                              accountId: bank.id))
+        let sts = store.snapshot.safeToSpend()
+        // Runs to the day before payday, but rent on payday still comes out
+        #expect(sts.periodEnd < payday)
+        #expect(sts.obligations.contains { $0.label == "Rent" && $0.detail == "Due on payday" })
+        #expect(sts.amount == Self.aed(1100 - 800) - store.snapshot.settings.buffer)
+    }
+
     @Test func aDifferentAmountSaidThisMonthWins() throws {
         try addSalary()
         let plan = PaydayPlan.make(store.snapshot, said: Self.aed(21500))

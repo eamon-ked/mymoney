@@ -118,8 +118,9 @@ public struct SafeToSpendCalculator: Sendable {
     }
 
     /// Safe to spend from `today` through `periodEnd`. Uses only posted balances:
-    /// expected income never raises today's number.
-    public func calculate(today: Date, periodEnd: Date) -> SafeToSpend {
+    /// expected income never raises today's number. Bills are held back through
+    /// `billsThrough` (default `periodEnd`), so one due on payday isn't left to luck.
+    public func calculate(today: Date, periodEnd: Date, billsThrough: Date? = nil) -> SafeToSpend {
         let accounts = spendableAccounts
         guard !accounts.isEmpty else {
             return SafeToSpend(amount: nil, periodEnd: periodEnd, statuses: [.incompleteSetup], spendable: [],
@@ -131,10 +132,10 @@ public struct SafeToSpendCalculator: Sendable {
             BreakdownItem(label: $0.name, amount: ledger.balance(of: $0.id, asOf: today), sourceIds: [$0.id])
         }
 
-        let due = dueOutflows(through: periodEnd)
+        let due = dueOutflows(through: max(periodEnd, billsThrough ?? periodEnd))
         let obligations = due.map { pair in
             BreakdownItem(label: pair.item.name, amount: pair.occurrence.remaining,
-                          detail: pair.occurrence.isEstimate ? "Estimate" : nil,
+                          detail: pair.occurrence.isEstimate ? "Estimate" : pair.occurrence.dueDate > periodEnd ? "Due on payday" : nil,
                           sourceIds: [pair.occurrence.id])
         }
 

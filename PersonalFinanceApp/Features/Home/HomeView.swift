@@ -51,7 +51,7 @@ struct HomeView: View {
                 Section {
                     HStack(spacing: 12) {
                         FigureCard(title: "Cash & bank", value: snapshot.cashAndBank.compact,
-                                   detail: "\(snapshot.accounts.filter { $0.kind.isAsset && $0.kind != .investment }.count) accounts",
+                                   detail: cashAccountCount,
                                    tint: Palette.accounts) { explanation = cashExplanation }
                         FigureCard(title: "Total debt", value: snapshot.totalDebt.compact,
                                    detail: "\(snapshot.accounts.filter { $0.kind.isLiability && !snapshot.balance($0.id).isZero }.count) cards & loans",
@@ -92,7 +92,7 @@ struct HomeView: View {
                 if AppleIntelligence.isReady {
                     ToolbarItem(placement: .primaryAction) {
                         Button { if plus.isPlus { showingAsk = true } else { paywall = .appleIntelligence } } label: {
-                            Text("\(Image(systemName: "sparkles")) Ask").font(.body.weight(.semibold))
+                            Image(systemName: "sparkles")
                         }
                             .accessibilityLabel("Ask about your money")
                     }
@@ -305,15 +305,22 @@ struct HomeView: View {
     }
 
     @ViewBuilder private var reservesSection: some View {
-        if !snapshot.reserves.isEmpty {
+        // An empty goal says nothing here; Plan is where it gets started
+        let held = snapshot.reserves.filter { $0.amount.isPositive }
+        if !held.isEmpty {
             Section("Set aside") {
-                ForEach(snapshot.reserves) { r in
+                ForEach(held) { r in
                     ListRow(title: r.name, caption: snapshot.account(r.accountId)?.name, symbol: "lock.fill", color: Palette.plan) {
                         AmountPill(r.amount)
                     }
                 }
             }
         }
+    }
+
+    private var cashAccountCount: String {
+        let n = snapshot.accounts.filter { $0.kind.isAsset && $0.kind != .investment }.count
+        return n == 1 ? "1 account" : "\(n) accounts"
     }
 
     // MARK: - Explanations

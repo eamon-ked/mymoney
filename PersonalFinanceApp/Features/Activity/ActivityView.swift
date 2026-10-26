@@ -153,8 +153,8 @@ struct EntryRow: View {
             .filter { $0.record.kind.isBalanceSheet }
         ListRow(title: record.memo.isEmpty ? (category?.name ?? "Entry") : record.memo,
                 caption: caption(category: category, sheet: sheet.map(\.record)),
-                symbol: symbol(category),
-                color: category.map { Color(hex: $0.colorHex) } ?? kindColor) {
+                symbol: symbol(category ?? debt(sheet)),
+                color: (category ?? debt(sheet)).map { Color(hex: $0.colorHex) } ?? kindColor) {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(amountText(entry, sheet: sheet))
                     .font(.subheadline.weight(.semibold))
@@ -171,6 +171,11 @@ struct EntryRow: View {
                 }
             }
         }
+    }
+
+    /// A card or loan payment has no category, so it takes the debt's look
+    private func debt(_ sheet: [(record: LedgerAccountRecord, amount: Money)]) -> LedgerAccountRecord? {
+        record.kind == .transfer ? nil : sheet.map(\.record).first { $0.kind.isLiability }
     }
 
     private var kindColor: Color {

@@ -61,8 +61,10 @@ struct CaptureSetupView: View {
 
     private var siriSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Say to Siri").font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Ready to use, nothing to create", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.green)
+                Text("Just say “Hey Siri” and one of these:").font(.subheadline).foregroundStyle(.secondary)
                 ForEach(["“Log spending in Nokael Money”, then “45 at Carrefour”",
                          "“What's safe to spend in Nokael Money”",
                          "“Add income in Nokael Money”"], id: \.self) { phrase in
@@ -70,9 +72,13 @@ struct CaptureSetupView: View {
                 }
             }
             .padding(.vertical, 4)
-            Button { openURL(URL(string: "shortcuts://")!) } label: {
-                Label("Use in the Shortcuts app", systemImage: "square.2.layers.3d")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Want a button for it? Open Nokael Money in Shortcuts, then press and hold one to add it to your Home Screen or Action button.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                ShortcutsLink()
+                    .shortcutsLinkStyle(.automaticOutline)
             }
+            .padding(.vertical, 4)
         } header: {
             Text("Siri")
         } footer: {

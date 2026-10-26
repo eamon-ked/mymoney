@@ -44,6 +44,10 @@ struct DebtSection: View {
 
     var body: some View {
         Section {
+            Button { sheet = .pay } label: { Label("I made a payment", systemImage: "checkmark.circle.fill") }
+                .bold()
+                .disabled(!snapshot.owed(debt.id).isPositive)
+                .accessibilityIdentifier("payDebt")
             if let terms = debt.debtTerms {
                 LabeledContent("Interest", value: terms.rateText)
                 LabeledContent("Monthly payment", value: terms.monthlyPayment.compact)
@@ -59,10 +63,6 @@ struct DebtSection: View {
                     Label("Add the interest rate and monthly payment", systemImage: "percent")
                 }
             }
-            Button { sheet = .pay } label: { Label("Make a payment", systemImage: "arrow.down.right.circle") }
-                .bold()
-                .disabled(!snapshot.owed(debt.id).isPositive)
-                .accessibilityIdentifier("payDebt")
         } header: {
             Text(debt.kind == .creditCard ? "Card" : "Loan")
         } footer: {

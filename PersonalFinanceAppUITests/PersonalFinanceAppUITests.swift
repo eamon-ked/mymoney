@@ -94,8 +94,9 @@ final class JourneyUITests: XCTestCase {
     func testJourneyB_BuyGroceries() throws {
         completeSetup()
 
-        // Global Add → expense, amount first
+        // Add → "I spent money" → amount first
         app.buttons["globalAdd"].tap()
+        app.buttons["add-I spent money"].tap()
         let amount = app.textFields["amountField"]
         XCTAssertTrue(amount.waitForExistence(timeout: 5))
         amount.typeText("85")
@@ -117,6 +118,7 @@ final class JourneyUITests: XCTestCase {
     func testDoubleTapSaveCreatesOneEntry() throws {
         completeSetup()
         app.buttons["globalAdd"].tap()
+        app.buttons["add-I spent money"].tap()
         let amount = app.textFields["amountField"]
         XCTAssertTrue(amount.waitForExistence(timeout: 5))
         amount.typeText("40")

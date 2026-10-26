@@ -21,6 +21,7 @@ enum GuideAction: Hashable {
     case capture
     case tab(AppTab)
     case backup
+    case payDebt
 }
 
 struct GuideTopic: Identifiable, Hashable {
@@ -37,15 +38,14 @@ struct GuideTopic: Identifiable, Hashable {
 enum AppGuide {
     static let topics: [GuideTopic] = [
         GuideTopic(id: "income", title: "Add your salary or other income", symbol: "arrow.down.circle.fill",
-                   steps: ["Tap + at the top right of any screen.",
-                           "At the top, switch from Expense to Income.",
+                   steps: ["Tap Received on Home, or Add at the top right and choose “I received money”.",
                            "Enter the amount, choose the kind of income (for example Salary) and the account it was paid into.",
                            "Tap Save. Your balance and safe-to-spend update straight away."],
                    tip: "Paid every month? Open More options and turn on Repeats, so next month's salary shows in Plan as expected.",
                    action: .add(.income), actionTitle: "Add income now",
                    keywords: ["salary", "income", "paid", "pay", "received", "receive", "got", "earn", "wage", "bonus", "deposit", "money in"]),
         GuideTopic(id: "expense", title: "Add something you spent", symbol: "arrow.up.right.circle.fill",
-                   steps: ["Tap + at the top right of any screen.",
+                   steps: ["Tap Spent on Home, or Add at the top right and choose “I spent money”.",
                            "Enter the amount, what it was for and the account it was paid from.",
                            "Tap Save."],
                    tip: "Faster: say “Log spending in Nokael Money” to Siri, then “45 at Carrefour”.",
@@ -67,9 +67,16 @@ enum AppGuide {
                    tip: "iOS doesn't let any app read old messages; capture starts from the moment you set it up. Use a statement import for earlier ones.",
                    action: .capture, actionTitle: "Set it up now",
                    keywords: ["apple pay", "wallet", "sms", "message", "messages", "alert", "automatic", "auto", "sync", "card", "siri", "voice"]),
+        GuideTopic(id: "loan", title: "Pay a loan or credit card", symbol: "creditcard.fill",
+                   steps: ["Tap Pay a loan on Home, or Add at the top right and choose “I paid a loan or credit card”.",
+                           "Pick the loan or card if you have more than one.",
+                           "Enter what you paid and the account it came from, then tap Record.",
+                           "What you owe goes down by the payment minus interest, which is worked out for you."],
+                   tip: "Add the interest rate and monthly payment on the loan's page (Accounts tab) and Nokael reminds you when it's due. Haven't added the loan yet? The same button walks you through it.",
+                   action: .payDebt, actionTitle: "Pay a loan or card now",
+                   keywords: ["loan", "car loan", "personal loan", "mortgage", "credit card", "card payment", "installment", "instalment", "emi", "debt", "owe", "repay", "repayment"]),
         GuideTopic(id: "transfer", title: "Move money between your accounts", symbol: "arrow.left.arrow.right.circle.fill",
-                   steps: ["Tap + at the top right.",
-                           "At the top, switch to Transfer.",
+                   steps: ["Tap Add at the top right and choose “I moved money between my accounts”.",
                            "Choose where it came from and where it went, then tap Save."],
                    tip: "Paying off a credit card from your bank account is a transfer, not spending.",
                    action: .add(.transfer), actionTitle: "Add a transfer now",
@@ -81,7 +88,7 @@ enum AppGuide {
                    tip: nil, action: .tab(.activity), actionTitle: "Open Activity",
                    keywords: ["edit", "change", "delete", "remove", "wrong", "mistake", "fix", "undo"]),
         GuideTopic(id: "balance", title: "Correct an account's balance", symbol: "slider.horizontal.3",
-                   steps: ["Press and hold + at the top right, then choose Balance adjustment.",
+                   steps: ["Tap Add at the top right and choose “A balance is wrong”.",
                            "Pick the account and enter what it really holds today.",
                            "Add a short reason and tap Save."],
                    tip: "To compare with a statement instead, open the account in Accounts and tap Check against a statement.",
@@ -89,10 +96,10 @@ enum AppGuide {
                    keywords: ["balance", "wrong balance", "correct", "adjust", "reconcile", "doesn't match", "bank says"]),
         GuideTopic(id: "account", title: "Add a bank account, card or loan", symbol: "building.columns.fill",
                    steps: ["Open the Accounts tab.",
-                           "Tap + and choose New account.",
+                           "Tap + at the top right and choose New account.",
                            "Pick the type, name it, enter today's balance and tap Add."],
                    tip: nil, action: .tab(.accounts), actionTitle: "Open Accounts",
-                   keywords: ["account", "new account", "add bank", "credit card", "loan", "cash", "wallet account"]),
+                   keywords: ["new account", "add bank", "add account", "add a loan", "add my loan", "add a card", "cash", "wallet account"]),
         GuideTopic(id: "budget", title: "Plan your spending for the month", symbol: "chart.pie.fill",
                    steps: ["Open the Budget tab.",
                            "Tap a category and enter how much you plan to spend this month.",
@@ -160,6 +167,7 @@ struct GuideView: View {
     @State private var importAccount: ImportRequest?
     @State private var paywall: PlusFeature?
     @State private var expanded: String?
+    @State private var payingDebt = false
 
     struct AddRequest: Identifiable { let id = UUID(); let kind: AddKind; let draft: DraftEntry? }
     struct ImportRequest: Identifiable { let id: UUID }
@@ -223,6 +231,7 @@ struct GuideView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(item: $adding) { request in EntryEditor(kind: request.kind, prefill: request.draft) }
             .sheet(item: $importAccount) { ImportStatementView(accountId: $0.id) }
+            .sheet(isPresented: $payingDebt) { AddChooser(focus: .debts) }
             .paywall($paywall)
             .onAppear {
                 if !initialQuestion.isEmpty && asked.isEmpty { question = initialQuestion; ask() }
@@ -280,6 +289,8 @@ struct GuideView: View {
             Button { selectTab(tab); dismiss() } label: { Label(title, systemImage: "arrow.right.circle") }
         case .backup:
             EmptyView()
+        case .payDebt:
+            Button { payingDebt = true } label: { Label(title, systemImage: "creditcard") }
         }
     }
 
@@ -316,8 +327,11 @@ struct GuideView: View {
         draft = nil
         expanded = nil
         let snapshot = store.snapshot
-        // "I got my salary 20,000" is something to add, not only a question
-        if let spoken = AlertParser.spoken(text, homeCurrency: store.currency, date: Date()) {
+        // "I got my salary 20,000" is something to add, not only a question. Loan
+        // payments and transfers have their own forms, which the topic opens.
+        let topTopic = AppGuide.match(text).first?.id ?? ""
+        if !["loan", "transfer", "balance"].contains(topTopic),
+           let spoken = AlertParser.spoken(text, homeCurrency: store.currency, date: Date()) {
             var entry = DraftEntry()
             let lower = text.lowercased()
             let incoming = spoken.direction == .received || lower.contains("salary") || lower.contains("paid me")

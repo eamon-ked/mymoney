@@ -39,6 +39,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .home
     @State private var adding: AddKind?
+    @State private var choosing: ChooseRequest?
     @State private var unlocked = false
 
     var body: some View {
@@ -49,11 +50,13 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|guide [-ask <text>]|capture|settings|add|import|paywall|ask
+                // Screenshot helper: -screen forecast|reports|choose|guide [-ask <text>]|capture|settings|add|import|paywall|ask
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
                     NavigationStack { ReportsView() }
+                } else if UserDefaults.standard.string(forKey: "screen") == "choose" {
+                    AddChooser()
                 } else if UserDefaults.standard.string(forKey: "screen") == "guide" {
                     GuideView(initialQuestion: UserDefaults.standard.string(forKey: "ask") ?? "")
                 } else if UserDefaults.standard.string(forKey: "screen") == "capture" {
@@ -116,9 +119,13 @@ struct RootView: View {
                 .tabItem { Label("Plan", systemImage: "calendar") }
         }
         .environment(\.addEntry, AddEntryAction { adding = $0 })
+        .environment(\.chooseAdd, ChooseAddAction { choosing = ChooseRequest(focus: $0) })
         .environment(\.selectTab, SelectTabAction { tab = $0 })
         .sheet(item: $adding) { kind in
             EntryEditor(kind: kind)
+        }
+        .sheet(item: $choosing) { request in
+            AddChooser(focus: request.focus)
         }
     }
 
@@ -173,6 +180,17 @@ struct AddEntryAction {
     func callAsFunction(_ kind: AddKind) { open(kind) }
 }
 
+struct ChooseRequest: Identifiable {
+    let id = UUID()
+    let focus: AddChooser.Focus?
+}
+
+/// Opens "What happened?", optionally straight at paying a loan
+struct ChooseAddAction {
+    let open: (AddChooser.Focus?) -> Void
+    func callAsFunction(_ focus: AddChooser.Focus? = nil) { open(focus) }
+}
+
 struct SelectTabAction {
     let select: (AppTab) -> Void
     func callAsFunction(_ tab: AppTab) { select(tab) }
@@ -181,25 +199,20 @@ struct SelectTabAction {
 extension EnvironmentValues {
     @Entry var addEntry = AddEntryAction { _ in }
     @Entry var selectTab = SelectTabAction { _ in }
+    @Entry var chooseAdd = ChooseAddAction { _ in }
 }
 
-/// The + button in every tab's toolbar
+/// The Add button in every tab's toolbar: asks what happened
 struct GlobalAddButton: ToolbarContent {
-    @Environment(\.addEntry) private var addEntry
+    @Environment(\.chooseAdd) private var chooseAdd
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Menu {
-                ForEach(AddKind.allCases) { kind in
-                    Button { addEntry(kind) } label: { Label(kind.title, systemImage: kind.symbol) }
-                }
-            } label: {
-                Image(systemName: "plus").font(.body.weight(.semibold))
-            } primaryAction: {
-                addEntry(.expense)
+            Button { chooseAdd() } label: {
+                Label("Add", systemImage: "plus").labelStyle(.titleAndIcon).font(.body.weight(.semibold))
             }
             .accessibilityLabel("Add")
-            .accessibilityHint("Tap to add an expense, hold for income, transfer or adjustment")
+            .accessibilityHint("Add money spent, received, a loan payment and more")
             .accessibilityIdentifier("globalAdd")
         }
     }

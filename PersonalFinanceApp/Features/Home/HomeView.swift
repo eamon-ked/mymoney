@@ -32,6 +32,14 @@ struct HomeView: View {
             List {
                 Section { safeToSpendBanner.bannerRow() }
 
+                if snapshot.setupComplete {
+                    Section {
+                        QuickActions()
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
+                }
+
                 insightSection
 
                 alertsSection

@@ -68,7 +68,10 @@ struct RootView: View {
                 #endif
             }
         }
-        .task(id: store.revision) { await BillReminders.sync(store.snapshot) }
+        .task(id: store.revision) {
+            WidgetSync.update(store.snapshot)
+            await BillReminders.sync(store.snapshot)
+        }
         .onAppear {
             NotificationRouter.openPlan = { tab = .plan }
             store.extendSchedules()

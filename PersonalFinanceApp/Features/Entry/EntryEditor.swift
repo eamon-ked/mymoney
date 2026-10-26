@@ -46,6 +46,8 @@ struct EntryEditor: View {
     @State private var readNote: String?
     @State private var pendingDraft: DraftEntry?
     @State private var categorySuggested = false
+    /// "Salary" was said: hand over to Payday, which uses the salary saved in Plan
+    @State private var payday: GuideView.PaydayRequest?
     @FocusState private var amountFocused: Bool
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -53,6 +55,14 @@ struct EntryEditor: View {
     private var amount: Money? { MoneyFormat.parse(amountText, currency: currency) }
 
     var body: some View {
+        if let payday {
+            PaydaySheet(said: payday.said)
+        } else {
+            editor
+        }
+    }
+
+    private var editor: some View {
         NavigationStack {
             Form {
                 if editing == nil && kind != .adjustment {
@@ -78,6 +88,26 @@ struct EntryEditor: View {
                             }
                             .buttonStyle(.plain)
                         }
+                    }
+                }
+
+                if kind == .income && editing == nil && prefill == nil, let salary = PaydayPlan.salaryItem(snapshot) {
+                    Section {
+                        Button { payday = GuideView.PaydayRequest(said: nil) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "banknote.fill").font(.title3).foregroundStyle(.green)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Is this your \(salary.name.lowercased())?").font(.body.weight(.semibold))
+                                    Text("Use the \(salary.amount.compact) saved in your plan, into \(snapshot.account(salary.accountId)?.name ?? "your account")")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("useSavedSalary")
                     }
                 }
 
@@ -293,15 +323,22 @@ struct EntryEditor: View {
     private func readSentence() async {
         let text = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !reading else { return }
+        // A salary is already set up in Plan: use it, never a guessed amount
+        if PaydayPlan.mentionsSalary(text) {
+            payday = GuideView.PaydayRequest(said: AlertParser.spoken(text, homeCurrency: currency, date: Date())?.amount)
+            return
+        }
         #if canImport(FoundationModels)
         guard #available(iOS 26.0, *) else { return }
         reading = true
         readNote = nil
         defer { reading = false }
         do {
-            let draft = try await MoneyAI.draft(from: text, categories: snapshot.expenseCategories.map(\.name),
+            var draft = try await MoneyAI.draft(from: text, categories: snapshot.expenseCategories.map(\.name),
                                                 income: snapshot.incomeCategories.map(\.name),
                                                 accounts: spendingAccounts.map(\.name), today: Date())
+            // Only an amount that was actually said; the model sometimes invents one
+            if !text.contains(where: \.isNumber) { draft.amount = nil }
             if draft.kind != kind {
                 pendingDraft = draft
                 kind = draft.kind

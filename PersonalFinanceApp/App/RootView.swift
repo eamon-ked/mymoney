@@ -70,7 +70,7 @@ struct RootView: View {
                 } else if UserDefaults.standard.string(forKey: "screen") == "settings" {
                     SettingsView()
                 } else if UserDefaults.standard.string(forKey: "screen") == "add" {
-                    EntryEditor(kind: .expense)
+                    EntryEditor(kind: UserDefaults.standard.string(forKey: "addKind") == "income" ? .income : .expense)
                 } else if UserDefaults.standard.string(forKey: "screen") == "ask" {
                     #if canImport(FoundationModels)
                     if #available(iOS 26.0, *) { AskMoneyView() }

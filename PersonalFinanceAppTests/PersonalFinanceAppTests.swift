@@ -260,7 +260,7 @@ struct LedgerStoreTests {
         #expect(s.balance(bank.id) == Self.aed(11000))
         #expect(s.owed(loan.id) == Self.aed(29150))
         // The budget counts the whole instalment: the principal left the budget too
-        #expect(s.budget.spent(category("Interest & fees").id, month: s.monthKey) == Self.aed(1000))
+        #expect(s.budget.spent(category("Loan payments").id, month: s.monthKey) == Self.aed(1000))
         #expect(s.netWorth.total == Self.aed(12000 - 30000 - 150))
     }
 

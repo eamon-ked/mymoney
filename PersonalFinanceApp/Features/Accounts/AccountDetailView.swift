@@ -158,9 +158,9 @@ struct AccountSettingsSection: View {
     private var budgetExplanation: String {
         switch account.kind {
         case .loan where account.onBudget:
-            return "Budget: this loan is in your budget, so everything you owe on it is taken out of Available to allocate. Turn it off unless you mean that. Monthly payments are still counted under Interest & fees either way."
+            return "Budget: this loan is in your budget, so everything you owe on it is taken out of Available to allocate. Turn it off unless you mean that. Its monthly payments are planned under Loan payments either way."
         case .loan:
-            return "Budget: loans stay outside your budget, so what you still owe doesn't eat into Available to allocate. Each monthly payment leaves your bank account and is counted in full under Interest & fees in Budget, interest and the part that lowers the loan together."
+            return "Budget: loans stay outside your budget, so what you still owe doesn't eat into Available to allocate. Each monthly payment is its own line in Budget, Loan payments, planned for you at the full instalment: interest and the part that lowers the loan together."
         case .creditCard:
             return "Part of my budget: card purchases come out of their budget categories when you make them, so paying the card off later isn't counted twice. Turn it off only if you never plan this card's spending in Budget."
         default:

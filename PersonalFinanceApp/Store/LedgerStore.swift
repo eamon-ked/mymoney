@@ -67,6 +67,7 @@ final class LedgerStore {
         self.calendar = calendar
         self.now = now
         ensureSettingsAndSystemAccounts()
+        try? tidyLoanPayments()
     }
 
     // MARK: - Reading
@@ -633,14 +634,27 @@ final class LedgerStore {
 
     /// Where interest and fees are recorded as spending; recreated if it was removed
     var interestCategory: LedgerAccountRecord {
+        systemCategory("Interest & fees", colorHex: "#8E8E93", icon: "percent", group: "Other", sortOrder: 99)
+    }
+
+    /// Where loan instalments are budgeted: the whole payment, interest and repayment together
+    var loanCategory: LedgerAccountRecord {
+        systemCategory("Loan payments", colorHex: "#5E5CE6", icon: "building.columns", group: "Bills", sortOrder: 98)
+    }
+
+    /// A loan is paid from its own line; card interest and fees stay in Interest & fees
+    func chargeCategory(for debt: LedgerAccountRecord) -> LedgerAccountRecord {
+        debt.kind == .loan ? loanCategory : interestCategory
+    }
+
+    private func systemCategory(_ name: String, colorHex: String, icon: String, group: String, sortOrder: Int) -> LedgerAccountRecord {
         let raw = AccountKind.expense.rawValue
-        let name = "Interest & fees"
         if let existing = fetch(LedgerAccountRecord.self, #Predicate { $0.kindRaw == raw && $0.name == name }).first {
             if existing.archived { existing.archived = false }
             return existing
         }
-        let record = LedgerAccountRecord(name: name, kind: .expense, currency: currency, colorHex: "#8E8E93",
-                                         icon: "percent", group: "Other", sortOrder: 99)
+        let record = LedgerAccountRecord(name: name, kind: .expense, currency: currency, colorHex: colorHex,
+                                         icon: icon, group: group, sortOrder: sortOrder)
         context.insert(record)
         return record
     }
@@ -694,22 +708,61 @@ final class LedgerStore {
         let entry: Entry
         do {
             entry = try EntryFactory.debtPayment(principal: principal, interest: interest, fees: fees,
-                                                 from: funding.info, debt: debt.info, interestCategory: interestCategory.info,
+                                                 from: funding.info, debt: debt.info, interestCategory: chargeCategory(for: debt).info,
                                                  date: date, memo: "\(debt.name) payment", key: key, occurrenceId: occurrenceId)
         } catch { throw StoreError.from(error) }
         let id = try post(entry)
-        try planInstalment(on: date)
+        try planInstalments(for: BudgetMonth.key(for: date, calendar: snapshot.calendar), category: chargeCategory(for: debt))
         return id
     }
 
-    /// A paid instalment is money that was always going to go, so it never shows as
-    /// overspending: if the month's plan for the interest budget falls short, it's raised to cover it.
-    private func planInstalment(on date: Date) throws {
-        let month = BudgetMonth.key(for: date, calendar: snapshot.calendar)
-        let categoryId = interestCategory.id
-        let line = snapshot.budget.line(categoryId, month: month)
-        guard line.remaining.isNegative else { return }
-        try setAllocation(line.allocated - line.remaining, categoryId: categoryId, month: month)
+    /// Instalments are money that was always going to go, so they're planned on their own: a budget line
+    /// is raised to cover what's been paid from it and, for Loan payments, every loan's monthly instalment.
+    private func planInstalments(for month: String, category: LedgerAccountRecord) throws {
+        var needed = snapshot.budget.spent(category.id, month: month)
+        if category.id == loanCategory.id {
+            let monthly = fetch(LedgerAccountRecord.self).filter { $0.kind == .loan && !$0.archived }
+                .compactMap { $0.debtTerms?.monthlyPayment }.sum(currency)
+            needed = Money.max(needed, monthly)
+        }
+        let line = snapshot.budget.line(category.id, month: month)
+        let shortfall = needed - line.allocated - line.carriedIn
+        guard shortfall.isPositive else { return }
+        try setAllocation(line.allocated + shortfall, categoryId: category.id, month: month)
+    }
+
+    /// Moves loan instalments recorded under Interest & fees, and the money planned for them, to
+    /// Loan payments, then plans this month's instalments. Safe to run on every launch.
+    func tidyLoanPayments() throws {
+        let interest = interestCategory
+        let loans = fetch(LedgerAccountRecord.self).filter { $0.kind == .loan }
+        guard !loans.isEmpty else { return }
+        let loanIds = Set(loans.map(\.id))
+        let target = loanCategory
+        let moved = fetch(EntryRecord.self).filter { record in
+            record.status == .posted && record.kind == .debtPayment
+                && record.entry.lines.contains { loanIds.contains($0.accountId) }
+                && record.entry.amount(on: interest.id) != nil
+        }
+        var months = Set<String>()
+        for record in moved {
+            guard let parts = debtPaymentParts(record) else { continue }
+            let entry = try EntryFactory.debtPayment(principal: parts.principal, interest: parts.interest, fees: parts.fees,
+                                                     from: parts.funding.info, debt: parts.debt.info, interestCategory: target.info,
+                                                     date: record.date, memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
+            _ = try replace(record.id, with: entry, notes: record.notes)
+            months.insert(BudgetMonth.key(for: record.date, calendar: calendar))
+        }
+        // What was planned for those instalments under Interest & fees goes with them
+        for month in months {
+            let spent = snapshot.budget.spent(target.id, month: month)
+            let planned = snapshot.budget.allocated(interest.id, month: month)
+            let take = Money.min(spent, planned)
+            guard take.isPositive else { continue }
+            try setAllocation(planned - take, categoryId: interest.id, month: month)
+            try setAllocation(snapshot.budget.allocated(target.id, month: month) + take, categoryId: target.id, month: month)
+        }
+        try planInstalments(for: snapshot.monthKey, category: target)
     }
 
     /// The parts of a recorded card or loan payment
@@ -752,7 +805,7 @@ final class LedgerStore {
         do {
             entry = try EntryFactory.debtPayment(principal: principal, interest: interest, fees: fees,
                                                  from: parts.funding.info, debt: parts.debt.info,
-                                                 interestCategory: interestCategory.info, date: record.date,
+                                                 interestCategory: chargeCategory(for: parts.debt).info, date: record.date,
                                                  memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
         } catch { throw StoreError.from(error) }
         return try replace(entryId, with: entry, notes: record.notes)

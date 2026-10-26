@@ -89,7 +89,7 @@ struct DebtResplitTests {
         let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
         let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
         try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: Self.aed(5781), dueDay: 26), for: loan.id, paidFrom: bank.id)
-        let interest = store.interestCategory
+        let interest = store.loanCategory
         let month = store.snapshot.monthKey
         try store.setAllocation(Self.aed(5781), categoryId: interest.id, month: month)
 
@@ -121,10 +121,40 @@ struct DebtResplitTests {
                                           target: .transfer(loan.id), key: UUID())
         _ = try store.importRows([row], into: bank.id)
 
-        let interest = store.interestCategory
+        let interest = store.loanCategory
         let line = store.snapshot.budget.line(interest.id, month: store.snapshot.monthKey)
         #expect(line.allocated == Self.aed(5781))
         #expect(line.spent == Self.aed(5781))
         #expect(line.remaining == Self.aed(0))
+    }
+
+    @Test func instalmentsUnderInterestMoveToLoanPayments() throws {
+        let container = try ModelContainer(for: Schema(Schema1.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let today = LedgerStoreTests.date(2026, 10, 27)
+        let store = LedgerStore(context: container.mainContext, calendar: LedgerStoreTests.dubai, now: { today })
+        try store.addStarterCategories()
+        let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
+        let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
+        let interest = store.interestCategory
+        let month = store.snapshot.monthKey
+        // As earlier versions recorded it: the instalment under Interest & fees, planned there by hand
+        let old = try EntryFactory.debtPayment(principal: Self.aed(4226.08), interest: Self.aed(1554.92), fees: Self.aed(0),
+                                               from: bank.info, debt: loan.info, interestCategory: interest.info,
+                                               date: LedgerStoreTests.date(2026, 10, 26), memo: "Construction loan payment", key: UUID())
+        _ = try store.post(old)
+        try store.setAllocation(Self.aed(5781), categoryId: interest.id, month: month)
+
+        try store.tidyLoanPayments()
+
+        let loanLine = store.snapshot.budget.line(store.loanCategory.id, month: month)
+        #expect(loanLine.allocated == Self.aed(5781))
+        #expect(loanLine.spent == Self.aed(5781))
+        #expect(loanLine.remaining == Self.aed(0))
+        let interestLine = store.snapshot.budget.line(interest.id, month: month)
+        #expect(interestLine.allocated == Self.aed(0))
+        #expect(interestLine.spent == Self.aed(0))
+        #expect(store.snapshot.owed(loan.id) == Self.aed(248787.39 - 4226.08))
+        try store.tidyLoanPayments()
+        #expect(store.snapshot.budget.line(store.loanCategory.id, month: month).allocated == Self.aed(5781))
     }
 }

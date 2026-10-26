@@ -214,6 +214,9 @@ struct FinanceDigest: Sendable {
         out += "Each category:\n" + used.map {
             "- \($0.name): spent \($0.spent) of \($0.planned) planned, \($0.remaining) left"
         }.joined(separator: "\n")
+        if used.contains(where: { $0.name == "Loan payments" }) {
+            out += "\nLoan payments are fixed loan instalments (interest plus repaying the loan), not spending to cut back on."
+        }
         return out
     }
 

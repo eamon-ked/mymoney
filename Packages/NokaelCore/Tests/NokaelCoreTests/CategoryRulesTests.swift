@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import NokaelCore
 
@@ -29,4 +30,13 @@ struct CategoryRulesTests {
         #expect(CategoryRules.guess("Talabat order", income: false, categories: ["Food & drink", "Bills"]) == "Food & drink")
         #expect(CategoryRules.guess("Talabat order", income: false, categories: ["Bills"]) == nil)
     }
+}
+
+@Test func loanInstalmentsFindTheirLoan() {
+    let car = UUID(), home = UUID()
+    #expect(StatementImport.loan(for: "LOANRECOVERY-EMI:11392149P022001", loans: [(home, "Construction loan")]) == home)
+    #expect(StatementImport.loan(for: "CAR LOAN INSTALMENT", loans: [(home, "Construction loan"), (car, "Car loan")]) == car)
+    #expect(StatementImport.loan(for: "LOAN EMI 0412", loans: [(home, "Construction loan"), (car, "Car loan")]) == nil)
+    #expect(StatementImport.loan(for: "PUR 07/10 ADNOC RABD ABUDHABI", loans: [(home, "Construction loan")]) == nil)
+    #expect(StatementImport.loan(for: "PUR LEMON TREE", loans: [(home, "Construction loan")]) == nil)
 }

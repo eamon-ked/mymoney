@@ -270,6 +270,7 @@ struct ImportStatementView: View {
             return (record.memo, c.id)
         }
         let others = snapshot.accounts.filter { $0.id != accountId }.map { (id: $0.id, name: $0.name) }
+        let loans = snapshot.accounts.filter { $0.kind == .loan && !$0.archived }.map { (id: $0.id, name: $0.name) }
         var next: [Int: LedgerStore.ImportedRow.Target] = [:]
         var billsTaken: Set<UUID> = []
         for row in inbox {
@@ -278,6 +279,8 @@ struct ImportStatementView: View {
                !billsTaken.contains(occ.id) {
                 billsTaken.insert(occ.id)
                 next[row.id] = .bill(occ.id)
+            } else if row.amount.isNegative, let id = StatementImport.loan(for: row.description, loans: loans) {
+                next[row.id] = .transfer(id)
             } else if let id = StatementImport.account(for: row.description, accounts: others) {
                 next[row.id] = .transfer(id)
             } else if let id = StatementImport.category(for: row.description, history: history),
@@ -356,7 +359,8 @@ struct ImportStatementView: View {
     private func label(for target: LedgerStore.ImportedRow.Target?) -> String? {
         switch target {
         case .category(let id): return snapshot.account(id)?.name
-        case .transfer(let id): return snapshot.account(id).map { "Transfer · \($0.name)" }
+        case .transfer(let id):
+            return snapshot.account(id).map { $0.kind == .loan ? "Pays \($0.name)" : "Transfer · \($0.name)" }
         case .bill(let occId):
             return snapshot.occurrences.first { $0.id == occId }.flatMap(snapshot.item(for:)).map { "Pays \($0.name)" }
         case nil: return nil

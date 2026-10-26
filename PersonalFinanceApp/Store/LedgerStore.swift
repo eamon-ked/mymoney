@@ -250,6 +250,8 @@ final class LedgerStore {
     func importRows(_ rows: [ImportedRow], into accountId: UUID) throws -> Int {
         guard let account = account(accountId) else { throw StoreError.notFound }
         let bills = rows.filter { if case .bill = $0.target { return true } else { return false } }
+        // Money out to a loan is an instalment: split into interest and principal like Pay a loan
+        var instalments: [(row: ImportedRow, loanId: UUID)] = []
         do {
             for row in rows {
                 let size = row.amount.magnitude
@@ -262,6 +264,10 @@ final class LedgerStore {
                     _ = try stage(entry)
                 case .transfer(let id):
                     guard let other = self.account(id) else { throw StoreError.notFound }
+                    if row.amount.isNegative, other.kind == .loan, account.kind.isAsset {
+                        instalments.append((row, id))
+                        continue
+                    }
                     let entry = row.amount.isNegative
                         ? try EntryFactory.transfer(size, from: account.info, to: other.info, date: row.date, memo: row.memo, key: row.key)
                         : try EntryFactory.transfer(size, from: other.info, to: account.info, date: row.date, memo: row.memo, key: row.key)
@@ -281,6 +287,20 @@ final class LedgerStore {
             guard case .bill(let occurrenceId) = row.target else { continue }
             try pay(occurrenceId: occurrenceId, amount: row.amount.magnitude, accountId: accountId, categoryId: nil,
                     date: row.date, key: row.key)
+        }
+        for (row, loanId) in instalments {
+            guard let loan = self.account(loanId) else { continue }
+            let amount = row.amount.magnitude
+            let split = DebtCalculator.split(payment: amount, owed: snapshot.balance(loanId).negated,
+                                             annualRateBps: loan.debtRateBps ?? 0)
+            if split.overpaid.isPositive {
+                // More than is owed: keep it as a plain transfer rather than refuse the row
+                let entry = try EntryFactory.transfer(amount, from: account.info, to: loan.info, date: row.date, memo: row.memo, key: row.key)
+                _ = try post(entry)
+            } else {
+                try payDebt(loanId, from: accountId, amount: amount, interest: split.interest, fees: .zero(amount.currency),
+                            date: row.date, key: row.key)
+            }
         }
         return rows.count
     }

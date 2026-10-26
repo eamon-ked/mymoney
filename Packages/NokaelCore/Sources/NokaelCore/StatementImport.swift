@@ -306,6 +306,17 @@ public enum StatementImport {
         return hits.count == 1 ? hits[0].id : nil
     }
 
+    /// A loan instalment ("LOANRECOVERY-EMI:1139…", "MORTGAGE INSTALMENT") goes to the loan
+    /// it names, else to the only loan there is
+    public static func loan(for description: String, loans: [(id: UUID, name: String)]) -> UUID? {
+        guard !loans.isEmpty else { return nil }
+        let words = description.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+        let marks = ["loan", "emi", "instal", "mortgage", "finance", "repayment"]
+        guard words.contains(where: { w in marks.contains { w == $0 || ($0.count > 3 && w.contains($0)) } }) else { return nil }
+        if let named = account(for: description, accounts: loans) { return named }
+        return loans.count == 1 ? loans[0].id : nil
+    }
+
     /// "POS PURCHASE CARREFOUR CITY 1234 DUBAI AE" → ["carrefour", "city"]
     static func merchantWords(_ text: String, limit: Int = 3) -> [String] {
         let noise: Set = ["pos", "purchase", "card", "ae", "uae", "dubai", "abu", "dhabi", "sharjah", "llc", "the",

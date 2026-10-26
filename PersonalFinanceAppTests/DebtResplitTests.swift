@@ -36,4 +36,24 @@ struct DebtResplitTests {
         let after = try #require(store.debtPaymentParts(fresh))
         #expect(after.interest == Self.aed(1400) && after.fees == Self.aed(25) && after.principal == Self.aed(4356))
     }
+
+    @Test func importedInstalmentIsSplitNotMovedWhole() throws {
+        let container = try ModelContainer(for: Schema(Schema1.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let today = LedgerStoreTests.date(2026, 10, 26)
+        let store = LedgerStore(context: container.mainContext, calendar: LedgerStoreTests.dubai, now: { today })
+        try store.addStarterCategories()
+        let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
+        let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-373000), openingDate: today)
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 500, monthlyPayment: Self.aed(5781), dueDay: nil), for: loan.id, paidFrom: nil)
+
+        let memo = "LOANRECOVERY-EMI:11392149P022001"
+        #expect(StatementImport.loan(for: memo, loans: [(loan.id, loan.name)]) == loan.id)
+        _ = try store.importRows([.init(date: today, memo: memo, amount: Self.aed(-5781), target: .transfer(loan.id), key: UUID())],
+                                 into: bank.id)
+
+        #expect(store.snapshot.balance(bank.id) == Self.aed(6308.73))
+        let interest = DebtCalculator.monthlyInterest(owed: Self.aed(373000), annualRateBps: 500)
+        #expect(interest == Self.aed(1554.17))
+        #expect(store.snapshot.owed(loan.id) == Self.aed(373000) - (Self.aed(5781) - interest))
+    }
 }

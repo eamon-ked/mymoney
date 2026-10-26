@@ -127,7 +127,11 @@ struct AccountSettingsSection: View {
             if account.kind.isAsset {
                 Toggle("Money I can spend", isOn: binding(\.spendable))
             }
-            Toggle("Part of my budget", isOn: binding(\.onBudget))
+            // A loan in the budget would take everything owed out of Available to allocate,
+            // so it's only offered to switch back off
+            if account.kind != .loan || account.onBudget {
+                Toggle("Part of my budget", isOn: binding(\.onBudget))
+            }
             Button(account.archived ? "Restore account" : "Archive account", role: account.archived ? nil : .destructive) {
                 if account.archived { update { $0.archived = false } } else { confirmArchive = true }
             }
@@ -145,10 +149,23 @@ struct AccountSettingsSection: View {
     }
 
     private var footer: String {
-        var lines = ["Net worth: whether this account is added to what you own or owe."]
-        if account.kind.isAsset { lines.append("Spendable: whether its money counts towards safe-to-spend.") }
-        lines.append("Budget: whether its money is planned in Budget.")
-        return lines.joined(separator: "\n")
+        var lines = ["Counts in net worth: whether this account is added to what you own or owe."]
+        if account.kind.isAsset { lines.append("Money I can spend: whether its money counts towards safe-to-spend.") }
+        lines.append(budgetExplanation)
+        return lines.joined(separator: "\n\n")
+    }
+
+    private var budgetExplanation: String {
+        switch account.kind {
+        case .loan where account.onBudget:
+            return "Budget: this loan is in your budget, so everything you owe on it is taken out of Available to allocate. Turn it off unless you mean that. Monthly payments are still counted under Interest & fees either way."
+        case .loan:
+            return "Budget: loans stay outside your budget, so what you still owe doesn't eat into Available to allocate. Each monthly payment leaves your bank account and is counted in full under Interest & fees in Budget, interest and the part that lowers the loan together."
+        case .creditCard:
+            return "Part of my budget: card purchases come out of their budget categories when you make them, so paying the card off later isn't counted twice. Turn it off only if you never plan this card's spending in Budget."
+        default:
+            return "Part of my budget: the money here can be shared out in Budget. Turn it off for money you don't plan month to month, like long-term savings or investments."
+        }
     }
 
     private func binding(_ path: ReferenceWritableKeyPath<LedgerAccountRecord, Bool>) -> Binding<Bool> {

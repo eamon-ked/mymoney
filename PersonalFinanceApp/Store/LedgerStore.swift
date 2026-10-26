@@ -213,7 +213,10 @@ final class LedgerStore {
     private func stage(_ entry: Entry, notes: String = "") throws -> UUID {
         let key = entry.idempotencyKey
         if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first {
-            return existing.id
+            guard existing.status == .void else { return existing.id }
+            // Deleted, then added again on purpose (a statement row re-imported):
+            // the deleted one gives up its key so the new one can be saved
+            existing.idempotencyKey = UUID()
         }
         do { try EntryFactory.validate(entry) } catch { throw StoreError.from(error) }
         insert(entry, notes: notes)
@@ -245,10 +248,13 @@ final class LedgerStore {
 
     /// Adds statement rows to one account. Category and transfer rows are saved
     /// together, all or nothing; bill payments go through `pay` so debts split.
-    /// Returns how many rows were added.
+    /// Returns how many rows were new (a row already saved is left alone).
     @discardableResult
     func importRows(_ rows: [ImportedRow], into accountId: UUID) throws -> Int {
         guard let account = account(accountId) else { throw StoreError.notFound }
+        let keys = rows.map(\.key)
+        let saved = Set(fetch(EntryRecord.self, #Predicate { keys.contains($0.idempotencyKey) })
+            .filter { $0.status == .posted }.map(\.idempotencyKey))
         let bills = rows.filter { if case .bill = $0.target { return true } else { return false } }
         // Money out to a loan is an instalment: split into interest and principal like Pay a loan
         var instalments: [(row: ImportedRow, loanId: UUID)] = []
@@ -302,7 +308,7 @@ final class LedgerStore {
                             date: row.date, key: row.key)
             }
         }
-        return rows.count
+        return rows.filter { !saved.contains($0.key) }.count
     }
 
     /// Edits keep history: the original is voided, a replacement posted, and both linked

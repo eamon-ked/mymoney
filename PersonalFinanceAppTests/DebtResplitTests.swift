@@ -56,4 +56,28 @@ struct DebtResplitTests {
         #expect(interest == Self.aed(1554.17))
         #expect(store.snapshot.owed(loan.id) == Self.aed(373000) - (Self.aed(5781) - interest))
     }
+
+    @Test func deletedImportedRowCanBeImportedAgain() throws {
+        let container = try ModelContainer(for: Schema(Schema1.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let today = LedgerStoreTests.date(2026, 10, 26)
+        let store = LedgerStore(context: container.mainContext, calendar: LedgerStoreTests.dubai, now: { today })
+        try store.addStarterCategories()
+        let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
+        let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: Self.aed(5781), dueDay: nil), for: loan.id, paidFrom: nil)
+        let row = LedgerStore.ImportedRow(date: today, memo: "LOANRECOVERY-EMI:11392149P022001", amount: Self.aed(-5781),
+                                          target: .transfer(loan.id), key: UUID())
+
+        #expect(try store.importRows([row], into: bank.id) == 1)
+        #expect(try store.importRows([row], into: bank.id) == 0)
+        let first = try #require(store.snapshot.entries().first { $0.kind == .debtPayment })
+        let parts = try #require(store.debtPaymentParts(first))
+        #expect(parts.interest == Self.aed(1554.92) && parts.principal == Self.aed(4226.08))
+
+        try store.void(first.id)
+        #expect(store.snapshot.balance(bank.id) == Self.aed(12089.73))
+        #expect(try store.importRows([row], into: bank.id) == 1)
+        #expect(store.snapshot.balance(bank.id) == Self.aed(6308.73))
+        #expect(store.snapshot.owed(loan.id) == Self.aed(248787.39 - 4226.08))
+    }
 }

@@ -161,12 +161,17 @@ struct CaptureSetupView: View {
         }
 
         Section {
-            SetupSteps(steps: [
-                "Open Shortcuts, tap Automation, then +.",
-                "Choose Message. Set Message Contains to “\(BankSenders.keyword(region: region))”, leave Sender empty, and choose Run Immediately.",
-                "Tap New Blank Automation and add “Read Bank Message” from Nokael Money.",
-                "Set Message to Shortcut Input, and Sender to Shortcut Input › Sender, then tap Done.",
-            ])
+            Button {
+                openURL(Self.bankAlertShortcut)
+            } label: {
+                Label("Add the bank alerts automation", systemImage: "bolt.badge.automatic.fill")
+            }
+            .accessibilityIdentifier("addBankAutomation")
+            Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs whenever a message mentions AED.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            DisclosureGroup("Set it up by hand instead") {
+                SetupSteps(steps: manualSteps)
+            }
             if let last = store.lastBankMessage {
                 LabeledContent("Last alert", value: last.date.formatted(.relative(presentation: .named)))
                 Text(last.summary).font(.subheadline).foregroundStyle(.secondary)
@@ -180,6 +185,18 @@ struct CaptureSetupView: View {
         } footer: {
             Text("Messages are read on this iPhone and never leave it. Only the purchase is saved, not the message. One-time codes, declined payments and offers are ignored.")
         }
+    }
+
+    /// A shared shortcut carrying the Message trigger and the Read Bank Message action
+    static let bankAlertShortcut = URL(string: "https://www.icloud.com/shortcuts/fed66c38583b44b5a58eb557cda7d879")!
+
+    private var manualSteps: [String] {
+        [
+            "Open Shortcuts, tap Automation, then +, and choose Message (“When I receive a message”).",
+            "Add the filter Message contains “\(BankSenders.keyword(region: region))”, with no sender, and choose Run Immediately if asked.",
+            "Add “Read Bank Message” from Nokael Money.",
+            "Set Message to Shortcut Input, and Sender to Shortcut Input › Sender, then go back to save.",
+        ]
     }
 
     // MARK: - Try it

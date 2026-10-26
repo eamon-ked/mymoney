@@ -242,6 +242,9 @@ struct LogBankMessageIntent: AppIntent {
         let services = AppServices.shared
         let store = services.store
         await services.plus.refresh()
+        // An automation wired with the whole input as Sender passes the message twice; treat that as no sender
+        let sender = sender.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty || $0 == message.trimmingCharacters(in: .whitespacesAndNewlines) ? nil : $0 }
         guard CaptureService.accepts(sender: sender, settings: store.settings) else {
             store.noteBankMessage(from: sender, outcome: "ignored, not one of your banks")
             return .result(dialog: "Not from one of your banks, so it was ignored.")

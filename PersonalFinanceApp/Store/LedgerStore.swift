@@ -674,6 +674,50 @@ final class LedgerStore {
         return try post(entry)
     }
 
+    /// The parts of a recorded card or loan payment
+    struct DebtPaymentParts {
+        let debt: LedgerAccountRecord
+        let funding: LedgerAccountRecord
+        let total: Money
+        let principal: Money
+        let interest: Money
+        let fees: Money
+    }
+
+    func debtPaymentParts(_ record: EntryRecord) -> DebtPaymentParts? {
+        guard record.kind == .debtPayment else { return nil }
+        let entry = record.entry
+        guard let fundingLine = entry.lines.first(where: { account($0.accountId)?.kind.isAsset == true }),
+              let funding = account(fundingLine.accountId),
+              let debtLine = entry.lines.first(where: { account($0.accountId)?.kind.isLiability == true }),
+              let debt = account(debtLine.accountId) else { return nil }
+        let charges = entry.lines.filter { account($0.accountId)?.kind == .expense }.map(\.amount)
+        let zero = Money.zero(fundingLine.amount.currency)
+        return DebtPaymentParts(debt: debt, funding: funding, total: fundingLine.amount.negated, principal: debtLine.amount,
+                                interest: charges.first ?? zero, fees: charges.dropFirst().sum(zero.currency))
+    }
+
+    /// Re-splits a recorded payment with the interest and fees from the lender's statement
+    @discardableResult
+    func resplitDebtPayment(_ entryId: UUID, interest: Money, fees: Money) throws -> UUID {
+        guard let record = entryRecord(entryId), record.status == .posted, let parts = debtPaymentParts(record) else {
+            throw StoreError.notFound
+        }
+        guard !interest.isNegative, !fees.isNegative else { throw StoreError.invalid("Interest and fees can't be negative.") }
+        guard !(parts.total < interest + fees) else { throw StoreError.invalid("Interest and fees can't be more than the payment.") }
+        let principal = parts.total - interest - fees
+        let owedBefore = snapshot.balance(parts.debt.id).negated + parts.principal
+        if owedBefore < principal { throw StoreError.invalid("That would pay off more than was owed. Raise the interest.") }
+        let entry: Entry
+        do {
+            entry = try EntryFactory.debtPayment(principal: principal, interest: interest, fees: fees,
+                                                 from: parts.funding.info, debt: parts.debt.info,
+                                                 interestCategory: interestCategory.info, date: record.date,
+                                                 memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
+        } catch { throw StoreError.from(error) }
+        return try replace(entryId, with: entry, notes: record.notes)
+    }
+
     // MARK: - Reserves
 
     /// Saves money set aside, or a savings goal (a set-aside amount with a target)

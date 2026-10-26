@@ -399,3 +399,67 @@ struct PayDebtSheet: View {
         } catch { self.error = StoreError.from(error).errorDescription }
     }
 }
+
+// MARK: - Changing a recorded split
+
+/// The lender's own figures for a payment already recorded with an estimate
+struct ResplitSheet: View {
+    @Environment(LedgerStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let record: EntryRecord
+    let parts: LedgerStore.DebtPaymentParts
+
+    @State private var interestText = ""
+    @State private var feesText = ""
+    @State private var error: String?
+
+    private var interest: Money? { interestText.isEmpty ? .zero(store.currency) : MoneyFormat.parse(interestText, currency: store.currency) }
+    private var fees: Money? { feesText.isEmpty ? .zero(store.currency) : MoneyFormat.parse(feesText, currency: store.currency) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("You paid", value: parts.total.formatted)
+                    moneyField("Interest", text: $interestText)
+                    moneyField("Fees", text: $feesText)
+                } footer: {
+                    Text("Use the interest shown for this payment on your loan or card statement, or in your bank's app.")
+                }
+                if let interest, let fees, !(parts.total < interest + fees) {
+                    Section {
+                        LabeledContent("Comes off \(parts.debt.name)", value: (parts.total - interest - fees).formatted).bold()
+                    }
+                }
+                if let error { Section { FieldError(message: error) } }
+            }
+            .navigationTitle("Change the split")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save) }
+            }
+            .onAppear {
+                interestText = MoneyFormat.editable(parts.interest, emptyWhenZero: true)
+                feesText = MoneyFormat.editable(parts.fees, emptyWhenZero: true)
+            }
+        }
+    }
+
+    private func moneyField(_ title: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(store.currency).foregroundStyle(.secondary)
+            TextField("0", text: text).keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 110)
+        }
+    }
+
+    private func save() {
+        guard let interest, let fees else { error = "Enter interest and fees as numbers."; return }
+        do {
+            try store.resplitDebtPayment(record.id, interest: interest, fees: fees)
+            dismiss()
+        } catch { self.error = StoreError.from(error).errorDescription }
+    }
+}

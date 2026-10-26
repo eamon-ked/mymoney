@@ -75,6 +75,9 @@ struct RootView: View {
                     #if canImport(FoundationModels)
                     if #available(iOS 26.0, *) { AskMoneyView() }
                     #endif
+                } else if UserDefaults.standard.string(forKey: "screen") == "debtpay",
+                          let paid = store.snapshot.entryRecords.first(where: { $0.kind == .debtPayment && $0.status == .posted }) {
+                    EntryDetailView(record: paid)
                 } else if UserDefaults.standard.string(forKey: "screen") == "loan" {
                     NewLoanSheet()
                 } else if UserDefaults.standard.string(forKey: "screen") == "paywall" {
@@ -146,6 +149,15 @@ struct RootView: View {
     #if DEBUG
     private func debugCaptures() async {
         let defaults = UserDefaults.standard
+        if defaults.string(forKey: "screen") == "debtpay",
+           !store.snapshot.entryRecords.contains(where: { $0.kind == .debtPayment }),
+           let loan = store.snapshot.debts.first(where: { $0.kind == .loan }) ?? store.snapshot.debts.first,
+           let bank = store.snapshot.accounts.first(where: \.spendable) {
+            let owed = store.snapshot.owed(loan.id)
+            let interest = DebtCalculator.monthlyInterest(owed: owed, annualRateBps: loan.debtRateBps ?? 500)
+            _ = try? store.payDebt(loan.id, from: bank.id, amount: Money(1500, currency: store.currency), interest: interest,
+                                   fees: .zero(store.currency), date: store.now(), key: UUID())
+        }
         if let pay = defaults.string(forKey: "captureApplePay") {
             let parts = pay.split(separator: "|").map(String.init)
             if parts.count == 3, let amount = Decimal(string: parts[2]) {

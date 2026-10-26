@@ -16,6 +16,7 @@ struct EntryDetailView: View {
     @State private var editing = false
     @State private var confirmDelete = false
     @State private var error: String?
+    @State private var resplitting = false
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -38,6 +39,9 @@ struct EntryDetailView: View {
                     .padding(.vertical, 4)
                 }
 
+                if record.status == .posted, let parts = store.debtPaymentParts(record) {
+                    debtSplit(parts)
+                } else {
                 Section("What moved") {
                     ForEach(Array(record.entry.lines.enumerated()), id: \.offset) { _, line in
                         if let account = snapshot.account(line.accountId), !account.isSystem {
@@ -48,6 +52,7 @@ struct EntryDetailView: View {
                             }
                         }
                     }
+                }
                 }
 
                 if record.needsReview && record.status == .posted {
@@ -92,6 +97,9 @@ struct EntryDetailView: View {
                     ToolbarItem(placement: .primaryAction) { Button("Edit") { editing = true } }
                 }
             }
+            .sheet(isPresented: $resplitting, onDismiss: { dismiss() }) {
+                if let parts = store.debtPaymentParts(record) { ResplitSheet(record: record, parts: parts) }
+            }
             .sheet(isPresented: $editing, onDismiss: { dismiss() }) {
                 EntryEditor(kind: addKind, editing: record)
             }
@@ -102,6 +110,26 @@ struct EntryDetailView: View {
             } message: {
                 Text("Balances, budget and safe-to-spend update straight away. A record of it stays in the history.")
             }
+        }
+    }
+
+    /// A card or loan payment in plain words: what was paid, what came off the debt, what was interest
+    private func debtSplit(_ parts: LedgerStore.DebtPaymentParts) -> some View {
+        let rate = parts.debt.debtTerms?.rateText
+        return Section {
+            LabeledContent("You paid", value: parts.total.formatted)
+            LabeledContent("From", value: parts.funding.name)
+            LabeledContent("Came off \(parts.debt.name)", value: parts.principal.formatted).bold()
+            if parts.interest.isPositive { LabeledContent("Interest", value: parts.interest.formatted) }
+            if parts.fees.isPositive { LabeledContent("Fees", value: parts.fees.formatted) }
+            LabeledContent("You owe now", value: snapshot.owed(parts.debt.id).formatted)
+            Button("Change the split") { resplitting = true }
+        } header: {
+            Text("How this payment was split")
+        } footer: {
+            Text(parts.interest.isPositive
+                 ? "Part of every payment is the lender's interest, which counts as spending; the rest lowers what you owe. The interest here is one month at \(rate ?? "the loan's rate") on what you owed. If your bank's statement shows a different interest figure, tap Change the split."
+                 : "All of it lowered what you owe. If your bank charged interest on this payment, tap Change the split and enter it.")
         }
     }
 

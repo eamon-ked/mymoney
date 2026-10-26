@@ -75,6 +75,8 @@ struct RootView: View {
                     #if canImport(FoundationModels)
                     if #available(iOS 26.0, *) { AskMoneyView() }
                     #endif
+                } else if UserDefaults.standard.string(forKey: "screen") == "loan" {
+                    NewLoanSheet()
                 } else if UserDefaults.standard.string(forKey: "screen") == "paywall" {
                     PaywallView(feature: .statementImport)
                 } else if UserDefaults.standard.string(forKey: "screen") == "import",

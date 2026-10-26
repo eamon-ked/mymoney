@@ -22,6 +22,7 @@ enum GuideAction: Hashable {
     case tab(AppTab)
     case backup
     case payDebt
+    case addLoan
 }
 
 struct GuideTopic: Identifiable, Hashable {
@@ -72,7 +73,7 @@ enum AppGuide {
                            "Pick the loan or card if you have more than one.",
                            "Enter what you paid and the account it came from, then tap Record.",
                            "What you owe goes down by the payment minus interest, which is worked out for you."],
-                   tip: "Add the interest rate and monthly payment on the loan's page (Accounts tab) and Nokael reminds you when it's due. Haven't added the loan yet? The same button walks you through it.",
+                   tip: "Haven't added the loan yet? The same button asks for what you owe and the monthly payment first.",
                    action: .payDebt, actionTitle: "Pay a loan or card now",
                    keywords: ["loan", "car loan", "personal loan", "mortgage", "credit card", "card payment", "installment", "instalment", "emi", "debt", "owe", "repay", "repayment"]),
         GuideTopic(id: "transfer", title: "Move money between your accounts", symbol: "arrow.left.arrow.right.circle.fill",
@@ -94,12 +95,19 @@ enum AppGuide {
                    tip: "To compare with a statement instead, open the account in Accounts and tap Check against a statement.",
                    action: .add(.adjustment), actionTitle: "Correct a balance now",
                    keywords: ["balance", "wrong balance", "correct", "adjust", "reconcile", "doesn't match", "bank says"]),
-        GuideTopic(id: "account", title: "Add a bank account, card or loan", symbol: "building.columns.fill",
+        GuideTopic(id: "addLoan", title: "Add a loan or credit card", symbol: "creditcard.fill",
+                   steps: ["Tap Add at the top right and choose “I have a loan or credit card”.",
+                           "Enter what you still owe today and the monthly payment.",
+                           "Pick the day it's paid, and it's added to your bills automatically."],
+                   tip: "The interest rate is optional. Each payment then lowers what you owe.",
+                   action: .addLoan, actionTitle: "Add a loan or card now",
+                   keywords: ["add a loan", "add my loan", "new loan", "took a loan", "got a loan", "add a card", "add credit card", "new credit card", "mortgage", "car loan", "personal loan"]),
+        GuideTopic(id: "account", title: "Add a bank account or cash", symbol: "building.columns.fill",
                    steps: ["Open the Accounts tab.",
                            "Tap New account at the top left.",
                            "Pick the type, name it, enter today's balance and tap Add."],
                    tip: nil, action: .tab(.accounts), actionTitle: "Open Accounts",
-                   keywords: ["new account", "add bank", "add account", "add a loan", "add my loan", "add a card", "cash", "wallet account"]),
+                   keywords: ["new account", "add bank", "add account", "cash", "wallet account", "savings account"]),
         GuideTopic(id: "budget", title: "Plan your spending for the month", symbol: "chart.pie.fill",
                    steps: ["Open the Budget tab.",
                            "Tap a category and enter how much you plan to spend this month.",
@@ -139,9 +147,17 @@ enum AppGuide {
         let lower = text.lowercased()
         let scored = topics.map { topic in
             (topic, topic.keywords.reduce(0) { $0 + (lower.contains($1) ? ($1.contains(" ") ? 3 : 2) : 0) }
-                + (lower.contains(topic.title.lowercased()) ? 4 : 0))
+                + (lower.contains(topic.title.lowercased()) ? 4 : 0)
+                + (topic.id == "addLoan" && addsALoan(lower) ? 6 : 0))
         }
         return scored.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
+    }
+
+    /// "How do I add my car loan" is about adding one, "I paid my car loan" about paying it
+    private static func addsALoan(_ lower: String) -> Bool {
+        ["loan", "card", "mortgage", "debt"].contains(where: lower.contains)
+            && ["add", "new", "took", "got a", "have a", "set up", "setup", "enter", "where"].contains(where: lower.contains)
+            && !["pay", "paid", "instal"].contains(where: lower.contains)
     }
 
     /// Every topic as plain text, for the on-device model
@@ -168,6 +184,7 @@ struct GuideView: View {
     @State private var paywall: PlusFeature?
     @State private var expanded: String?
     @State private var payingDebt = false
+    @State private var addingLoan = false
     @State private var payday: PaydayRequest?
     @State private var paydaySaid: Money??
 
@@ -237,6 +254,7 @@ struct GuideView: View {
             .sheet(item: $adding) { request in EntryEditor(kind: request.kind, prefill: request.draft) }
             .sheet(item: $importAccount) { ImportStatementView(accountId: $0.id) }
             .sheet(isPresented: $payingDebt) { AddChooser(focus: .debts) }
+            .sheet(isPresented: $addingLoan) { NewLoanSheet() }
             .sheet(item: $payday) { PaydaySheet(said: $0.said) }
             .paywall($paywall)
             .onAppear {
@@ -297,6 +315,8 @@ struct GuideView: View {
             EmptyView()
         case .payDebt:
             Button { payingDebt = true } label: { Label(title, systemImage: "creditcard") }
+        case .addLoan:
+            Button { addingLoan = true } label: { Label(title, systemImage: "creditcard") }
         }
     }
 

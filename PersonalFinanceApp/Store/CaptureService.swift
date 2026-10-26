@@ -110,7 +110,7 @@ enum CaptureService {
         return snapshot.accounts.first(where: \.spendable)?.id
     }
 
-    /// Last time's category for this shop, then Apple Intelligence, then "Other"
+    /// Last time's category for this shop, then well-known shops, then Apple Intelligence, then "Other"
     static func category(for merchant: String, income: Bool, snapshot: FinanceSnapshot, store: LedgerStore) async throws -> LedgerAccountRecord {
         let options = income ? snapshot.incomeCategories : snapshot.expenseCategories
         let kind: AccountKind = income ? .income : .expense
@@ -120,6 +120,10 @@ enum CaptureService {
             return (record.memo, line.accountId)
         }
         if !merchant.isEmpty, let id = StatementImport.category(for: merchant, history: history), let found = snapshot.account(id) {
+            return found
+        }
+        if let name = CategoryRules.guess(merchant, income: income, categories: options.map(\.name)),
+           let found = options.first(where: { $0.name == name }) {
             return found
         }
         #if canImport(FoundationModels)

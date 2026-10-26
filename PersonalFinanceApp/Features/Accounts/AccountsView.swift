@@ -28,6 +28,7 @@ enum AccountSection: String, CaseIterable, Identifiable {
 struct AccountsView: View {
     @Environment(LedgerStore.self) private var store
     @State private var addingAccount = false
+    @State private var addingLoan = false
     @State private var explanation: Explanation?
     @State private var showArchived = false
 
@@ -78,6 +79,16 @@ struct AccountsView: View {
                     }
                 }
 
+                Section {
+                    Button { addingLoan = true } label: {
+                        Label("Add a loan or credit card", systemImage: "creditcard")
+                    }
+                    .accessibilityIdentifier("addLoan")
+                    Button { addingAccount = true } label: {
+                        Label("Add a bank account, cash or savings", systemImage: "building.columns")
+                    }
+                }
+
                 if !snapshot.archivedAccounts.isEmpty {
                     Section {
                         DisclosureGroup("Archived (\(snapshot.archivedAccounts.count))", isExpanded: $showArchived) {
@@ -100,6 +111,7 @@ struct AccountsView: View {
                 GlobalAddButton()
             }
             .sheet(isPresented: $addingAccount) { NewAccountSheet() }
+            .sheet(isPresented: $addingLoan) { NewLoanSheet() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
         }
     }

@@ -28,6 +28,9 @@ struct ImportStatementView: View {
     @State private var skipped: Set<Int> = []
     @State private var error: String?
     @State private var added: Int?
+    /// Rows still being given a suggested category
+    @State private var suggesting = 0
+    @State private var suggestTask: Task<Void, Never>?
 
     private var snapshot: FinanceSnapshot { store.snapshot }
     private var account: LedgerAccountRecord? { snapshot.account(accountId) }
@@ -105,7 +108,14 @@ struct ImportStatementView: View {
 
             if let error { Section { FieldError(message: error) } }
 
-            if !unsorted.isEmpty { sortTheRest }
+            if suggesting > 0 {
+                Section {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Suggesting categories… \(suggesting) to go").foregroundStyle(.secondary)
+                    }
+                }
+            } else if !unsorted.isEmpty { sortTheRest }
 
             Section {
                 if inbox.isEmpty {
@@ -130,7 +140,7 @@ struct ImportStatementView: View {
                 }
             } footer: {
                 if !inbox.isEmpty {
-                    Text("Ticked rows are added once they have a category. Untick a row to leave it out.")
+                    Text("Categories are suggested for you; tap one to change it. Untick a row to leave it out.")
                 }
             }
 
@@ -276,6 +286,35 @@ struct ImportStatementView: View {
             }
         }
         targets = next
+        suggestRest()
+    }
+
+    /// Everything else: well-known shops, then Apple Intelligence, then "Other",
+    /// so every row arrives with a category the person only has to glance at
+    private func suggestRest() {
+        suggestTask?.cancel()
+        let pending = inbox.filter { targets[$0.id] == nil }
+        suggesting = pending.count
+        guard !pending.isEmpty else { return }
+        suggestTask = Task {
+            var memo: [String: UUID] = [:]
+            for row in pending {
+                if Task.isCancelled { return }
+                let income = !row.amount.isNegative
+                let key = "\(income)|\(row.description.lowercased())"
+                let id: UUID?
+                if let known = memo[key] {
+                    id = known
+                } else {
+                    id = try? await CaptureService.category(for: row.description, income: income,
+                                                            snapshot: store.snapshot, store: store).id
+                    memo[key] = id
+                }
+                if Task.isCancelled { return }
+                if let id, targets[row.id] == nil { targets[row.id] = .category(id) }
+                suggesting -= 1
+            }
+        }
     }
 
     // MARK: - Choices

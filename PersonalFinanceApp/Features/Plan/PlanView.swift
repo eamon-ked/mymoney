@@ -17,6 +17,7 @@ struct PlanView: View {
     @State private var editingItem: PlannedItemSheet?
     @State private var paying: Occurrence?
     @State private var addingReserve = false
+    @State private var addingLoan = false
     @State private var addingGoal = false
     @State private var editingReserve: Reserve?
 
@@ -123,6 +124,7 @@ struct PlanView: View {
                         Button { editingItem = .new(.inflow) } label: { Label("Expected income", systemImage: "arrow.down.circle") }
                         Button { newGoal() } label: { Label("Savings goal", systemImage: "target") }
                         Button { addingReserve = true } label: { Label("Money set aside", systemImage: "lock") }
+                        Button { addingLoan = true } label: { Label("Loan or credit card", systemImage: "creditcard") }
                     } label: { Text("New bill or goal").font(.body.weight(.semibold)) }
                     .accessibilityLabel("New bill, expected income or savings goal")
                 }
@@ -131,6 +133,7 @@ struct PlanView: View {
             .sheet(item: $editingItem) { PlannedItemEditor(sheet: $0) }
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
             .sheet(isPresented: $addingReserve) { ReserveEditor() }
+            .sheet(isPresented: $addingLoan) { NewLoanSheet() }
             .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
             .paywall($paywall)
             .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }

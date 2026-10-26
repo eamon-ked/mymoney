@@ -41,7 +41,7 @@ struct AddChooser: View {
         case .bill(let occurrence):
             PayScheduledSheet(occurrence: occurrence)
         case .newDebt:
-            NewAccountSheet()
+            NewLoanSheet()
         case .payday:
             PaydaySheet()
         case .help:
@@ -65,7 +65,7 @@ struct AddChooser: View {
                            symbol: "cart.fill", color: Palette.home) { step = .entry(.expense) }
                     choice("I received money", detail: "Salary, a refund, money someone sent you",
                            symbol: "arrow.down.circle.fill", color: .green) { step = .entry(.income) }
-                    choice("I paid a loan or credit card", detail: debts.isEmpty ? "Add the loan or card first, it takes a minute"
+                    choice("I paid a loan or credit card", detail: debts.isEmpty ? "First tell us about the loan, it takes a minute"
                                                                                  : "Lowers what you owe; interest is worked out for you",
                            symbol: "creditcard.fill", color: .red) {
                         if debts.isEmpty { step = .newDebt }
@@ -97,6 +97,8 @@ struct AddChooser: View {
                     }
                     choice("I moved money between my accounts", detail: "Bank to savings, cash withdrawal",
                            symbol: "arrow.left.arrow.right.circle.fill", color: .blue) { step = .entry(.transfer) }
+                    choice("I have a loan or credit card", detail: "Car loan, personal loan, mortgage or a card: add what you owe",
+                           symbol: "plus.rectangle.on.rectangle", color: .orange) { step = .newDebt }
                     choice("A balance is wrong", detail: "Set what an account really holds today",
                            symbol: "slider.horizontal.3", color: .gray) { step = .entry(.adjustment) }
                 }

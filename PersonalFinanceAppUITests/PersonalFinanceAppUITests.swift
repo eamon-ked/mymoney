@@ -170,6 +170,6 @@ final class JourneyUITests: XCTestCase {
         amount.typeText("1000")
         app.buttons["saveGoalMoney"].tap()
 
-        XCTAssertTrue(element(containing: "AED 7,000.00").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(containing: "AED 7,000").waitForExistence(timeout: 5))
     }
 }

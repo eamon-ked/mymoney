@@ -35,7 +35,7 @@ struct AccountDetailView: View {
         return List {
             Section {
                 SummaryBanner(title: account.kind.isLiability ? (balance.isNegative ? "You owe" : "Balance") : "Balance",
-                              amount: (account.kind.isLiability && balance.isNegative ? balance.magnitude : balance).formatted,
+                              amount: (account.kind.isLiability && balance.isNegative ? balance.magnitude : balance).compact,
                               caption: confirmedCaption(account),
                               tint: balance.isNegative && !account.kind.isLiability ? .red : Color(hex: account.colorHex))
                 .bannerRow()

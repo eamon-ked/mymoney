@@ -32,7 +32,7 @@ struct BudgetView: View {
             List {
                 Section {
                     SummaryBanner(title: available.isNegative ? "Planned more than you have" : "Available to allocate",
-                                  amount: available.formatted,
+                                  amount: available.compact,
                                   caption: progress.planningFunds.isPositive
                                       ? "\(Int(progress.fraction * 100))% of this month's money has a plan"
                                       : "Add an account with money in it to start planning",

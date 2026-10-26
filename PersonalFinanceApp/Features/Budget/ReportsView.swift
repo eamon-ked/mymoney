@@ -100,7 +100,7 @@ struct ReportsView: View {
             if diff.isZero { return "The same as last month" }
             return "\(diff.magnitude.compact) \(diff.isPositive ? "more" : "less") than last month"
         }()
-        return SummaryBanner(title: "Spent in \(title(currentMonth))", amount: t.spending.formatted, caption: caption,
+        return SummaryBanner(title: "Spent in \(title(currentMonth))", amount: t.spending.compact, caption: caption,
                              tint: Palette.budget, action: { explanation = explain(report) }) {
             BannerFigures(figures: [("Income", t.income.compact),
                                     ("Left over", t.leftOver.isNegative ? t.leftOver.signed : t.leftOver.compact),

@@ -80,7 +80,7 @@ struct GoalDetailView: View {
     private func content(_ goal: Reserve, _ progress: GoalProgress) -> some View {
         List {
             Section {
-                SummaryBanner(title: goal.name, amount: progress.saved.formatted,
+                SummaryBanner(title: goal.name, amount: progress.saved.compact,
                               caption: "saved of \(progress.target.formatted)", tint: progress.tint) {
                     ProgressBar(value: progress.fraction, tint: .white)
                         .padding(.top, 6)

@@ -126,7 +126,7 @@ struct PlanView: View {
             let when = state == .overdue ? "was due " : "next: "
             return "\(item.name) \(when)\(next.dueDate.formatted(.dateTime.day().month(.abbreviated))) · \(next.remaining.compact)"
         }()
-        return SummaryBanner(title: "Bills due in 30 days", amount: total.formatted, caption: caption, tint: Palette.plan) {
+        return SummaryBanner(title: "Bills due in 30 days", amount: total.compact, caption: caption, tint: Palette.plan) {
             BannerFigures(figures: [("Debt", snapshot.totalDebt.compact),
                                     ("Set aside", snapshot.activeReservesTotal.compact)])
         }

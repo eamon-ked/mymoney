@@ -198,7 +198,7 @@ struct ListRow<Trailing: View>: View {
         HStack(spacing: 12) {
             if let symbol { IconBadge(symbol: symbol, color: color) }
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).lineLimit(1)
+                Text(title).lineLimit(2)
                 if let caption, !caption.isEmpty {
                     Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }

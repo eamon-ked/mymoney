@@ -38,7 +38,7 @@ struct AccountsView: View {
             List {
                 Section {
                     let worth = snapshot.netWorth
-                    SummaryBanner(title: "Net worth", amount: worth.total.formatted,
+                    SummaryBanner(title: "Net worth", amount: worth.total.compact,
                                   caption: worth.total.isNegative ? "You owe more than you own right now" : "What you own minus what you owe",
                                   tint: worth.total.isNegative ? .red : Palette.accounts,
                                   action: { explanation = netWorthExplanation(worth) }) {

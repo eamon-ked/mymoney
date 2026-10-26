@@ -99,7 +99,7 @@ struct ForecastView: View {
             return forecast.days.isEmpty ? "No bills or income scheduled"
                 : "on \(forecast.lowestDate.formatted(.dateTime.weekday(.wide).day().month(.wide)))"
         }()
-        return SummaryBanner(title: title, amount: forecast.lowest.formatted, caption: caption,
+        return SummaryBanner(title: title, amount: forecast.lowest.compact, caption: caption,
                              tint: short == nil ? Palette.plan : .red) {
             BannerFigures(figures: [("Now", forecast.start.compact),
                                     ("Coming in", forecast.moneyIn.compact),

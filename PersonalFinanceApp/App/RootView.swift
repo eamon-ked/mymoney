@@ -52,11 +52,13 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|tour|choose|guide [-ask <text>]|capture|settings|add|import|paywall|ask
+                // Screenshot helper: -screen forecast|reports|payday|tour|choose|guide [-ask <text>]|capture|settings|add|import|paywall|ask
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
                     NavigationStack { ReportsView() }
+                } else if UserDefaults.standard.string(forKey: "screen") == "payday" {
+                    PaydaySheet()
                 } else if UserDefaults.standard.string(forKey: "screen") == "tour" {
                     WelcomeTour()
                 } else if UserDefaults.standard.string(forKey: "screen") == "choose" {

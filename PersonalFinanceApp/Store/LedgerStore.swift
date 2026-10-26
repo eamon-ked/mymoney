@@ -512,7 +512,7 @@ final class LedgerStore {
         let entry: Entry
         do {
             if item.direction == .inflow {
-                guard let category = categoryId.flatMap(self.account) ?? defaultIncomeCategory else {
+                guard let category = (categoryId ?? item.categoryId).flatMap(self.account) ?? defaultIncomeCategory else {
                     throw StoreError.invalid("Choose an income category.")
                 }
                 entry = try EntryFactory.income(amount, to: account.info, category: category.info, date: date,

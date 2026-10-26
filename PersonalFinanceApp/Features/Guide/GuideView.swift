@@ -168,9 +168,12 @@ struct GuideView: View {
     @State private var paywall: PlusFeature?
     @State private var expanded: String?
     @State private var payingDebt = false
+    @State private var payday: PaydayRequest?
+    @State private var paydaySaid: Money??
 
     struct AddRequest: Identifiable { let id = UUID(); let kind: AddKind; let draft: DraftEntry? }
     struct ImportRequest: Identifiable { let id: UUID }
+    struct PaydayRequest: Identifiable { let id = UUID(); let said: Money? }
 
     var initialQuestion = ""
 
@@ -193,6 +196,7 @@ struct GuideView: View {
                     Text("For example “I received my salary”, “how do I import a statement” or “spent 45 at Carrefour”.")
                 }
 
+                if let said = paydaySaid { paydaySection(said) }
                 if let draft { draftSection(draft.kind, draft.entry) }
 
                 if thinking || answer != nil {
@@ -213,7 +217,8 @@ struct GuideView: View {
                     }
                 }
 
-                ForEach(matches.prefix(2)) { topic in topicSection(topic, open: true) }
+                // Payday already does it; the manual steps would only distract
+                ForEach(paydaySaid == nil ? Array(matches.prefix(2)) : []) { topic in topicSection(topic, open: true) }
 
                 Section(asked.isEmpty ? "How do I…" : "Other topics") {
                     ForEach(AppGuide.topics.filter { t in !matches.prefix(2).contains(t) }) { topic in
@@ -232,6 +237,7 @@ struct GuideView: View {
             .sheet(item: $adding) { request in EntryEditor(kind: request.kind, prefill: request.draft) }
             .sheet(item: $importAccount) { ImportStatementView(accountId: $0.id) }
             .sheet(isPresented: $payingDebt) { AddChooser(focus: .debts) }
+            .sheet(item: $payday) { PaydaySheet(said: $0.said) }
             .paywall($paywall)
             .onAppear {
                 if !initialQuestion.isEmpty && asked.isEmpty { question = initialQuestion; ask() }
@@ -294,6 +300,31 @@ struct GuideView: View {
         }
     }
 
+    private func paydaySection(_ said: Money?) -> some View {
+        let plan = PaydayPlan.make(store.snapshot, said: said)
+        let account = store.snapshot.account(plan.accountId)?.name ?? "your account"
+        return Section {
+            Button { payday = PaydayRequest(said: said) } label: {
+                HStack {
+                    Image(systemName: "banknote.fill").foregroundStyle(.green)
+                    VStack(alignment: .leading) {
+                        Text(plan.alreadyReceived != nil && said == nil ? "Salary already recorded this month"
+                             : "Record \(plan.amount.compact) salary into \(account)").font(.headline)
+                        Text(plan.item == nil ? "Then plan the month" : "From your plan, then budget and goals for the month")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+        } header: {
+            Text("Payday")
+        } footer: {
+            Text("You'll see everything before it's saved, and can change the amount.")
+        }
+    }
+
     private func draftSection(_ kind: AddKind, _ entry: DraftEntry) -> some View {
         Section {
             let amount = entry.amount.map { MoneyFormat.string(Money($0, currency: store.currency)) } ?? ""
@@ -325,12 +356,16 @@ struct GuideView: View {
         asked = text
         answer = nil
         draft = nil
+        paydaySaid = nil
         expanded = nil
         let snapshot = store.snapshot
         // "I got my salary 20,000" is something to add, not only a question. Loan
         // payments and transfers have their own forms, which the topic opens.
         let topTopic = AppGuide.match(text).first?.id ?? ""
-        if !["loan", "transfer", "balance"].contains(topTopic),
+        if PaydayPlan.mentionsSalary(text) {
+            // Salary uses what's saved in Plan, not guesses from the sentence
+            paydaySaid = .some(AlertParser.spoken(text, homeCurrency: store.currency, date: Date())?.amount)
+        } else if !["loan", "transfer", "balance"].contains(topTopic),
            let spoken = AlertParser.spoken(text, homeCurrency: store.currency, date: Date()) {
             var entry = DraftEntry()
             let lower = text.lowercased()
@@ -343,7 +378,7 @@ struct GuideView: View {
             draft = (entry.kind, entry)
         }
         #if canImport(FoundationModels)
-        if #available(iOS 26.0, *), AppleIntelligence.isReady {
+        if #available(iOS 26.0, *), AppleIntelligence.isReady, paydaySaid == nil {
             thinking = true
             Task {
                 defer { thinking = false }

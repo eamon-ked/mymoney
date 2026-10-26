@@ -23,6 +23,7 @@ struct HomeView: View {
     @State private var paywall: PlusFeature?
     @State private var reviewing: EntryRecord?
     @State private var showingHelp = false
+    @State private var showingPayday = false
     @AppStorage("showSiriTip") private var showSiriTip = true
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -38,6 +39,7 @@ struct HomeView: View {
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.clear)
                     }
+                    PaydayBanner { showingPayday = true }
                 }
 
                 insightSection
@@ -103,6 +105,7 @@ struct HomeView: View {
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
             .sheet(item: $reviewing) { EntryDetailView(record: $0) }
             .sheet(isPresented: $showingHelp) { GuideView() }
+            .sheet(isPresented: $showingPayday) { PaydaySheet() }
             .paywall($paywall)
             .sheet(isPresented: $showingAsk) {
                 #if canImport(FoundationModels)

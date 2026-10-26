@@ -23,6 +23,10 @@ struct LogSpendingIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let services = AppServices.shared
         let store = services.store
+        if PaydayPlan.mentionsSalary(sentence) {
+            let said = AlertParser.spoken(sentence, homeCurrency: store.currency, date: store.now())?.amount
+            return .result(dialog: IntentDialog(stringLiteral: Self.recordSalary(said: said, store: store, isPlus: services.plus.isPlus)))
+        }
         let now = store.now()
         var choices = CaptureService.Choices()
         var capture = AlertParser.spoken(sentence, homeCurrency: store.currency, date: now)
@@ -50,6 +54,27 @@ struct LogSpendingIntent: AppIntent {
         let outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus, choices: choices)
         WidgetSync.update(store.snapshot, isPlus: services.plus.isPlus)
         return .result(dialog: IntentDialog(stringLiteral: Self.summary(outcome, store: store)))
+    }
+
+    /// Salary from what's saved in Plan; the rest of payday is offered in the app
+    @MainActor static func recordSalary(said: Money?, store: LedgerStore, isPlus: Bool) -> String {
+        let plan = PaydayPlan.make(store.snapshot, said: said)
+        if let when = plan.alreadyReceived, said == nil {
+            return "This month's salary is already recorded, on \(when.formatted(.dateTime.day().month(.wide)))."
+        }
+        guard plan.amount.isPositive else {
+            return "How much was it? Say for example “I got my salary, 20,000”."
+        }
+        var choices = PaydayPlan.Choices()
+        choices.copyBudget = false
+        do {
+            let done = try plan.run(store, choices: choices, date: store.now(), key: UUID())
+            WidgetSync.update(store.snapshot, isPlus: isPlus)
+            let more = plan.budgetFrom != nil || !plan.goals.isEmpty ? " Open Nokael Money to plan the month." : ""
+            return done[0] + "." + more
+        } catch {
+            return StoreError.from(error).errorDescription ?? "Couldn't record it."
+        }
     }
 
     @MainActor static func summary(_ outcome: CaptureService.Outcome, store: LedgerStore) -> String {
@@ -123,6 +148,10 @@ struct AddIncomeIntent: AppIntent {
         let store = services.store
         guard let value = Decimal(string: String(format: "%.2f", amount)) else {
             return .result(dialog: "That amount didn't look right.")
+        }
+        if PaydayPlan.mentionsSalary(payer ?? "") {
+            let said = Money(value, currency: store.currency)
+            return .result(dialog: IntentDialog(stringLiteral: LogSpendingIntent.recordSalary(said: said, store: store, isPlus: services.plus.isPlus)))
         }
         let capture = Capture(source: .siri, direction: .received, amount: Money(value, currency: store.currency),
                               merchant: payer ?? "", date: store.now(), text: "income")

@@ -19,6 +19,7 @@ struct AddChooser: View {
         case debt(UUID)
         case bill(Occurrence)
         case newDebt
+        case payday
         case help
     }
 
@@ -41,6 +42,8 @@ struct AddChooser: View {
             PayScheduledSheet(occurrence: occurrence)
         case .newDebt:
             NewAccountSheet()
+        case .payday:
+            PaydaySheet()
         case .help:
             GuideView()
         case nil:
@@ -54,6 +57,10 @@ struct AddChooser: View {
         return NavigationStack {
             List {
                 Section {
+                    if let salary = PaydayPlan.salaryItem(snapshot) {
+                        choice("I got my \(salary.name.lowercased())", detail: "\(salary.amount.compact) into \(snapshot.account(salary.accountId)?.name ?? "your account"), then plan the month",
+                               symbol: "banknote.fill", color: .green) { step = .payday }
+                    }
                     choice("I spent money", detail: "Shopping, food, fuel, a bill you paid on the spot",
                            symbol: "cart.fill", color: Palette.home) { step = .entry(.expense) }
                     choice("I received money", detail: "Salary, a refund, money someone sent you",

@@ -92,7 +92,10 @@ struct SettingsView: View {
             .sheet(isPresented: $showingPlus) { PaywallView() }
             .manageSubscriptionsSheet(isPresented: $managingPlan)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { HelpButton() }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
             .confirmationDialog("Delete all data?", isPresented: $confirmErase, titleVisibility: .visible) {
                 Button("Delete everything", role: .destructive) {
                     do { try store.eraseAllData(); dismiss() } catch { self.error = StoreError.from(error).errorDescription }

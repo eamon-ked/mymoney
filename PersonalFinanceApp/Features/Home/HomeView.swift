@@ -22,6 +22,7 @@ struct HomeView: View {
     @State private var showingAsk = false
     @State private var paywall: PlusFeature?
     @State private var reviewing: EntryRecord?
+    @State private var showingHelp = false
     @AppStorage("showSiriTip") private var showSiriTip = true
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -54,6 +55,14 @@ struct HomeView: View {
                 budgetHealthSection
                 reservesSection
 
+                if !Self.screenshotMode {
+                    Section {
+                        Button { showingHelp = true } label: {
+                            Label("Not sure how to do something? Ask the guide", systemImage: "questionmark.circle")
+                        }
+                    }
+                }
+
                 if snapshot.setupComplete && !Self.screenshotMode {
                     Section {
                         SiriTipView(intent: LogSpendingIntent(), isVisible: $showSiriTip)
@@ -65,9 +74,10 @@ struct HomeView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Your money")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .topBarLeading) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
+                    if !Self.screenshotMode { HelpButton() }
                 }
                 if AppleIntelligence.isReady {
                     ToolbarItem(placement: .primaryAction) {
@@ -82,6 +92,7 @@ struct HomeView: View {
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
             .sheet(item: $reviewing) { EntryDetailView(record: $0) }
+            .sheet(isPresented: $showingHelp) { GuideView() }
             .paywall($paywall)
             .sheet(isPresented: $showingAsk) {
                 #if canImport(FoundationModels)

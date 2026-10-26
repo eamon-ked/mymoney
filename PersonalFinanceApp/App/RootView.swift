@@ -49,11 +49,13 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|capture|settings|add|import|paywall|ask
+                // Screenshot helper: -screen forecast|reports|guide [-ask <text>]|capture|settings|add|import|paywall|ask
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
                     NavigationStack { ReportsView() }
+                } else if UserDefaults.standard.string(forKey: "screen") == "guide" {
+                    GuideView(initialQuestion: UserDefaults.standard.string(forKey: "ask") ?? "")
                 } else if UserDefaults.standard.string(forKey: "screen") == "capture" {
                     NavigationStack { CaptureSetupView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "settings" {

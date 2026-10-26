@@ -175,11 +175,13 @@ enum MoneyAI {
 
     static func assistantSession(_ digest: FinanceDigest) -> LanguageModelSession {
         LanguageModelSession(
-            tools: [BudgetTool(digest: digest), TransactionsTool(digest: digest), TrendTool(digest: digest), BillsTool(digest: digest)],
+            tools: [BudgetTool(digest: digest), TransactionsTool(digest: digest), TrendTool(digest: digest), BillsTool(digest: digest),
+                    HowToTool()],
             instructions: """
                 \(AppleIntelligence.baseInstructions) \
                 Answer questions about the person's money. Use the tools for budgets, transactions, past months and bills. \
-                Keep answers to a few sentences unless asked for detail.
+                When they ask how to do something in the app, or say they received or spent money, use howTo and give its steps \
+                with the exact button names. Keep answers to a few sentences unless asked for detail.
 
                 \(digest.overview)
                 """)
@@ -187,6 +189,29 @@ enum MoneyAI {
 }
 
 // MARK: - Tools the assistant can call
+
+@available(iOS 26.0, *)
+struct HowToTool: Tool {
+    let name = "howTo"
+    let description = "Step-by-step instructions for doing something in the Nokael Money app, such as adding income, importing a statement or setting up Apple Pay capture"
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "What the person wants to do, in their words")
+        var task: String
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let found = await MainActor.run { AppGuide.match(arguments.task).prefix(2) }
+        guard !found.isEmpty else {
+            return "No matching instructions. Topics: " + AppGuide.topics.map(\.title).joined(separator: "; ")
+        }
+        return found.map { t in
+            t.title + ":\n" + t.steps.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+                + (t.tip.map { "\nTip: \($0)" } ?? "")
+        }.joined(separator: "\n\n")
+    }
+}
 
 @available(iOS 26.0, *)
 struct BudgetTool: Tool {

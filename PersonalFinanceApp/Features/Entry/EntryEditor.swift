@@ -19,6 +19,8 @@ struct EntryEditor: View {
     @State var kind: AddKind
     /// Set when editing an existing entry
     var editing: EntryRecord? = nil
+    /// Fields already worked out elsewhere, e.g. by the guide from "I got my salary, 20,000"
+    var prefill: DraftEntry? = nil
 
     // One key per editor session: a double tap or retry can't save twice
     @State private var key = UUID()
@@ -268,6 +270,7 @@ struct EntryEditor: View {
                 Task { await readSentence() }
             }
             #endif
+            if let prefill { fill(from: prefill) }
         }
     }
 

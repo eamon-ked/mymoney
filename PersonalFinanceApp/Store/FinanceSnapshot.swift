@@ -139,7 +139,14 @@ struct FinanceSnapshot {
     }
 
     var safeToSpendCalculator: SafeToSpendCalculator {
-        SafeToSpendCalculator(ledger: ledger, items: items, occurrences: occurrences, reserves: reserves,
+        // A loan's bill already holds back its instalment, so a budget for interest isn't held back twice
+        let interest = accountRecords.first { $0.kind == .expense && $0.name == "Interest & fees" }?.id
+        let billed = items.map { item -> PlannedItem in
+            var item = item
+            if item.debtId != nil, item.categoryId == nil { item.categoryId = interest }
+            return item
+        }
+        return SafeToSpendCalculator(ledger: ledger, items: billed, occurrences: occurrences, reserves: reserves,
                               categoryReservations: categoryReservations, buffer: settings.buffer,
                               lastConfirmed: lastConfirmed, staleAfterDays: settings.staleAfterDays, calendar: calendar)
     }

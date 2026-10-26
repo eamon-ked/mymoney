@@ -80,4 +80,31 @@ struct DebtResplitTests {
         #expect(store.snapshot.balance(bank.id) == Self.aed(6308.73))
         #expect(store.snapshot.owed(loan.id) == Self.aed(248787.39 - 4226.08))
     }
+
+    @Test func paidInstalmentLeavesNothingInItsBudget() throws {
+        let container = try ModelContainer(for: Schema(Schema1.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let today = LedgerStoreTests.date(2026, 10, 20)
+        let store = LedgerStore(context: container.mainContext, calendar: LedgerStoreTests.dubai, now: { today })
+        try store.addStarterCategories()
+        let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
+        let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: Self.aed(5781), dueDay: 26), for: loan.id, paidFrom: bank.id)
+        let interest = store.interestCategory
+        let month = store.snapshot.monthKey
+        try store.setAllocation(Self.aed(5781), categoryId: interest.id, month: month)
+
+        // Before paying: the bill holds the 5,781 back once, not again for the budget
+        let before = store.snapshot.safeToSpend()
+        #expect(before.obligations.map(\.amount).sum("AED") == Self.aed(5781))
+        #expect(before.categoryReservations.allSatisfy { $0.sourceIds != [interest.id] })
+
+        let occ = try #require(store.snapshot.upcomingBills(days: 45).first)
+        try store.pay(occurrenceId: occ.id, amount: Self.aed(5781), accountId: bank.id, categoryId: nil,
+                      date: LedgerStoreTests.date(2026, 10, 26), key: UUID())
+
+        let line = store.snapshot.budget.line(interest.id, month: month)
+        #expect(line.spent == Self.aed(5781))
+        #expect(line.remaining == Self.aed(0))
+        #expect(store.snapshot.owed(loan.id) == Self.aed(248787.39 - 4226.08))
+    }
 }

@@ -717,7 +717,9 @@ final class LedgerStore {
               let funding = account(fundingLine.accountId),
               let debtLine = entry.lines.first(where: { account($0.accountId)?.kind.isLiability == true }),
               let debt = account(debtLine.accountId) else { return nil }
+        // Stored lines have no order; interest is the larger charge, fees the rest
         let charges = entry.lines.filter { account($0.accountId)?.kind == .expense }.map(\.amount)
+            .sorted { $0.minorUnits > $1.minorUnits }
         let zero = Money.zero(fundingLine.amount.currency)
         return DebtPaymentParts(debt: debt, funding: funding, total: fundingLine.amount.negated, principal: debtLine.amount,
                                 interest: charges.first ?? zero, fees: charges.dropFirst().sum(zero.currency))

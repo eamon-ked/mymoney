@@ -110,14 +110,22 @@ public struct Budget: Sendable {
         Set(ledger.accounts.values.filter { $0.kind.isBalanceSheet && $0.onBudget }.map(\.id))
     }
 
-    /// Spending in a category during a month, counting only money from budget accounts
+    /// Spending in a category during a month, counting only money from budget accounts.
+    /// A loan instalment counts in full against its interest category: the part that
+    /// paid the loan down left the budget too, so it can't still be "left" to spend.
     public func spent(_ categoryId: UUID, month: String) -> Money {
         guard let start = BudgetMonth.start(of: month, calendar: calendar),
               let end = BudgetMonth.end(of: month, calendar: calendar) else { return .zero(currency) }
         let ids = budgetAccountIds
+        let offBudgetDebts = Set(ledger.accounts.values.filter { $0.kind.isLiability && !$0.onBudget }.map(\.id))
         return ledger.posted
             .filter { $0.date >= start && $0.date < end && $0.lines.contains { ids.contains($0.accountId) } }
-            .compactMap { $0.amount(on: categoryId) }
+            .compactMap { entry -> Money? in
+                guard let charge = entry.amount(on: categoryId) else { return nil }
+                guard entry.kind == .debtPayment else { return charge }
+                let principal = entry.lines.filter { offBudgetDebts.contains($0.accountId) }.map(\.amount).sum(currency)
+                return charge + principal
+            }
             .sum(currency)
     }
 

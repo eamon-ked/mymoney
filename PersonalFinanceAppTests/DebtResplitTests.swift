@@ -107,4 +107,23 @@ struct DebtResplitTests {
         #expect(line.remaining == Self.aed(0))
         #expect(store.snapshot.owed(loan.id) == Self.aed(248787.39 - 4226.08))
     }
+
+    @Test func unplannedInstalmentIsPlannedWhenPaidNotOverspent() throws {
+        let container = try ModelContainer(for: Schema(Schema1.models), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let today = LedgerStoreTests.date(2026, 10, 20)
+        let store = LedgerStore(context: container.mainContext, calendar: LedgerStoreTests.dubai, now: { today })
+        try store.addStarterCategories()
+        let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
+        let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: Self.aed(5781), dueDay: 26), for: loan.id, paidFrom: nil)
+        let row = LedgerStore.ImportedRow(date: LedgerStoreTests.date(2026, 10, 26), memo: "LOAN INSTALMENT", amount: Self.aed(-5781),
+                                          target: .transfer(loan.id), key: UUID())
+        _ = try store.importRows([row], into: bank.id)
+
+        let interest = store.interestCategory
+        let line = store.snapshot.budget.line(interest.id, month: store.snapshot.monthKey)
+        #expect(line.allocated == Self.aed(5781))
+        #expect(line.spent == Self.aed(5781))
+        #expect(line.remaining == Self.aed(0))
+    }
 }

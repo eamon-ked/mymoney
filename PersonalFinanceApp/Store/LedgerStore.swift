@@ -697,7 +697,19 @@ final class LedgerStore {
                                                  from: funding.info, debt: debt.info, interestCategory: interestCategory.info,
                                                  date: date, memo: "\(debt.name) payment", key: key, occurrenceId: occurrenceId)
         } catch { throw StoreError.from(error) }
-        return try post(entry)
+        let id = try post(entry)
+        try planInstalment(on: date)
+        return id
+    }
+
+    /// A paid instalment is money that was always going to go, so it never shows as
+    /// overspending: if the month's plan for the interest budget falls short, it's raised to cover it.
+    private func planInstalment(on date: Date) throws {
+        let month = BudgetMonth.key(for: date, calendar: snapshot.calendar)
+        let categoryId = interestCategory.id
+        let line = snapshot.budget.line(categoryId, month: month)
+        guard line.remaining.isNegative else { return }
+        try setAllocation(line.allocated - line.remaining, categoryId: categoryId, month: month)
     }
 
     /// The parts of a recorded card or loan payment

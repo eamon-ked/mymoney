@@ -199,6 +199,12 @@ struct EntryRow: View {
             return "\(from) → \(to)"
         }
         var parts: [String] = []
+        if record.kind == .debtPayment, let interest = category.flatMap({ record.entry.amount(on: $0.id) }) {
+            // The whole payment is the row's amount; say how much of it was interest
+            parts.append("\(interest.compact) interest")
+            parts.append(contentsOf: sheet.filter { !$0.kind.isLiability }.map(\.name))
+            return parts.joined(separator: " · ")
+        }
         if let category, record.memo != category.name { parts.append(category.name) }
         parts.append(contentsOf: sheet.map(\.name))
         if record.kind == .adjustment || record.kind == .reconciliation { parts.append("Correction") }
@@ -209,6 +215,8 @@ struct EntryRow: View {
         if let accountId { return entry.amount(on: accountId) }
         switch record.kind {
         case .transfer: return nil
+        // What left the paying account, not what's left after paying the loan down
+        case .debtPayment: return sheet.filter { $0.record.kind.isAsset }.map(\.amount).sum(snapshot.currency)
         default: return sheet.map(\.amount).sum(snapshot.currency)
         }
     }

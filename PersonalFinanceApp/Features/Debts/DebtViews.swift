@@ -28,13 +28,14 @@ extension DebtTerms {
 
 /// The sheets a debt's page opens; owned by the page, since sheets inside list sections are unreliable
 enum DebtSheet: String, Identifiable {
-    case terms, pay
+    case terms, pay, plus
     var id: String { rawValue }
 }
 
 /// Shown on a card's or loan's page, above its entries
 struct DebtSection: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
     let debt: LedgerAccountRecord
     @Binding var sheet: DebtSheet?
     @State private var extraText = ""
@@ -73,6 +74,15 @@ struct DebtSection: View {
         if debt.debtTerms != nil, let payoff = snapshot.payoff(for: debt) {
             Section {
                 PayoffSummary(payoff: payoff)
+                if !plus.isPlus {
+                    Button { sheet = .plus } label: {
+                        HStack {
+                            Text("See what paying extra saves")
+                            Spacer()
+                            PlusBadge()
+                        }
+                    }
+                } else {
                 HStack {
                     Text("Pay extra each month")
                     Spacer()
@@ -86,6 +96,7 @@ struct DebtSection: View {
                 if let extra = MoneyFormat.parse(extraText, currency: store.currency), extra.isPositive,
                    let faster = snapshot.payoff(for: debt, extra: extra) {
                     PayoffComparison(base: payoff, faster: faster, extra: extra)
+                }
                 }
             } header: {
                 Text("Payoff")

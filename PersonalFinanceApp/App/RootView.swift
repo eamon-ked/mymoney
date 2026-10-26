@@ -35,6 +35,7 @@ enum AppTab: Hashable { case home, budget, activity, accounts, plan }
 
 struct RootView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab = .home
     @State private var adding: AddKind?
@@ -48,7 +49,7 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|settings|add|import
+                // Screenshot helper: -screen forecast|reports|settings|add|import|paywall
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
@@ -57,6 +58,8 @@ struct RootView: View {
                     SettingsView()
                 } else if UserDefaults.standard.string(forKey: "screen") == "add" {
                     EntryEditor(kind: .expense)
+                } else if UserDefaults.standard.string(forKey: "screen") == "paywall" {
+                    PaywallView(feature: .statementImport)
                 } else if UserDefaults.standard.string(forKey: "screen") == "import",
                           let account = store.snapshot.accounts.first(where: \.spendable) {
                     ImportStatementView(accountId: account.id)
@@ -69,9 +72,10 @@ struct RootView: View {
             }
         }
         .task(id: store.revision) {
-            WidgetSync.update(store.snapshot)
+            WidgetSync.update(store.snapshot, isPlus: plus.isPlus)
             await BillReminders.sync(store.snapshot)
         }
+        .onChange(of: plus.isPlus) { _, isPlus in WidgetSync.update(store.snapshot, isPlus: isPlus) }
         .onAppear {
             NotificationRouter.openPlan = { tab = .plan }
             store.extendSchedules()

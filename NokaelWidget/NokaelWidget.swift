@@ -36,7 +36,12 @@ struct SafeToSpendWidgetView: View {
 
     var body: some View {
         Group {
-            if let summary = entry.summary {
+            if let summary = entry.summary, summary.isPlus == false {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Nokael Plus", systemImage: "star.circle.fill").font(.caption.weight(.semibold))
+                    Text("Unlock the widget with Nokael Plus in the app").font(.caption).foregroundStyle(.secondary)
+                }
+            } else if let summary = entry.summary {
                 switch family {
                 case .accessoryInline: inline(summary)
                 case .accessoryRectangular: rectangular(summary)
@@ -149,5 +154,5 @@ extension WidgetSummary {
         through: Calendar.current.date(byAdding: .day, value: 9, to: .now) ?? .now,
         bills: [.init(name: "Rent", amount: "AED 6,500", due: Calendar.current.date(byAdding: .day, value: 3, to: .now) ?? .now, overdue: false),
                 .init(name: "Car loan", amount: "AED 1,850", due: Calendar.current.date(byAdding: .day, value: 5, to: .now) ?? .now, overdue: false)],
-        billsTotal: "AED 8,630", updated: .now)
+        billsTotal: "AED 8,630", updated: .now, isPlus: true)
 }

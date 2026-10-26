@@ -11,6 +11,7 @@ import NokaelCore
 
 struct HomeView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
     @Environment(\.selectTab) private var selectTab
     @Environment(\.addEntry) private var addEntry
     @State private var showingSafeToSpend = false
@@ -18,6 +19,7 @@ struct HomeView: View {
     @State private var explanation: Explanation?
     @State private var paying: Occurrence?
     @State private var showingAsk = false
+    @State private var paywall: PlusFeature?
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -56,7 +58,7 @@ struct HomeView: View {
                 }
                 if AppleIntelligence.isReady {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { showingAsk = true } label: { Image(systemName: "sparkles") }
+                        Button { if plus.isPlus { showingAsk = true } else { paywall = .appleIntelligence } } label: { Image(systemName: "sparkles") }
                             .accessibilityLabel("Ask about your money")
                     }
                 }
@@ -66,6 +68,7 @@ struct HomeView: View {
             .sheet(isPresented: $showingSettings) { SettingsView() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
+            .paywall($paywall)
             .sheet(isPresented: $showingAsk) {
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, *) { AskMoneyView() }
@@ -79,7 +82,22 @@ struct HomeView: View {
     @ViewBuilder private var insightSection: some View {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), AppleIntelligence.isReady, snapshot.setupComplete {
-            Section { InsightCard { showingAsk = true } }
+            if plus.isPlus {
+                Section { InsightCard { showingAsk = true } }
+            } else {
+                Section {
+                    Button { paywall = .appleIntelligence } label: {
+                        HStack {
+                            AIBadge(text: "Your month in brief")
+                            Spacer()
+                            PlusBadge()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } footer: {
+                    Text("A short summary of your month and answers to your questions, worked out on this iPhone.")
+                }
+            }
         }
         #endif
     }
@@ -184,8 +202,18 @@ struct HomeView: View {
                 }
             }
             if !snapshot.items.isEmpty {
-                NavigationLink { ForecastView() } label: {
-                    Label("See your balance ahead", systemImage: "chart.line.uptrend.xyaxis")
+                if plus.isPlus {
+                    NavigationLink { ForecastView() } label: {
+                        Label("See your balance ahead", systemImage: "chart.line.uptrend.xyaxis")
+                    }
+                } else {
+                    Button { paywall = .moneyAhead } label: {
+                        HStack {
+                            Label("See your balance ahead", systemImage: "chart.line.uptrend.xyaxis")
+                            Spacer()
+                            PlusBadge()
+                        }
+                    }
                 }
             }
         } header: {

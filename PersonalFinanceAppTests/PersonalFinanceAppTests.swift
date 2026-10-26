@@ -456,3 +456,56 @@ struct LedgerStoreTests {
         #expect(!store.settings.onboardingDone)
     }
 }
+
+// MARK: - Nokael Plus
+
+import StoreKitTest
+
+/// Off on this Mac: SKTestSession can't save its configuration in these
+/// simulators (SKInternalErrorDomain 3). Purchases are checked in the App
+/// Store sandbox through TestFlight instead.
+@MainActor
+@Suite(.disabled("SKTestSession fails in this Mac's simulators"))
+struct PlusStoreTests {
+    @Test("Buying yearly unlocks Plus, and it locks again when the subscription ends")
+    func buyingAndExpiring() async throws {
+        let session = try SKTestSession(configurationFileNamed: "NokaelPlus")
+        session.resetToDefaultState()
+        session.clearTransactions()
+        session.disableDialogs = true
+
+        let plus = PlusStore()
+        await plus.loadProducts()
+        await plus.refresh()
+        #expect(plus.products.map(\.id) == [PlusStore.yearly, PlusStore.monthly, PlusStore.lifetime])
+        #expect(!plus.isPlus)
+
+        let yearly = try #require(plus.products.first { $0.id == PlusStore.yearly })
+        #expect(await yearly.subscription?.isEligibleForIntroOffer == true)
+        #expect(try await plus.purchase(yearly))
+        #expect(plus.isPlus)
+        #expect(plus.currentPlan == "Yearly")
+
+        try session.expireSubscription(productIdentifier: PlusStore.yearly)
+        await plus.refresh()
+        #expect(!plus.isPlus)
+    }
+
+    @Test("Lifetime is kept and comes back with Restore")
+    func lifetime() async throws {
+        let session = try SKTestSession(configurationFileNamed: "NokaelPlus")
+        session.resetToDefaultState()
+        session.clearTransactions()
+        session.disableDialogs = true
+
+        let plus = PlusStore()
+        await plus.loadProducts()
+        let lifetime = try #require(plus.products.first { $0.id == PlusStore.lifetime })
+        #expect(try await plus.purchase(lifetime))
+        let another = PlusStore()
+        await another.refresh()
+        #expect(another.isPlus)
+        #expect(another.currentPlan == "Lifetime")
+    }
+}
+

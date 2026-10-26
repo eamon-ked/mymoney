@@ -12,6 +12,8 @@ import NokaelCore
 
 struct PlanView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
+    @State private var paywall: PlusFeature?
     @State private var editingItem: PlannedItemSheet?
     @State private var paying: Occurrence?
     @State private var addingReserve = false
@@ -26,16 +28,30 @@ struct PlanView: View {
                 Section { banner.bannerRow() }
 
                 Section {
-                    NavigationLink { ForecastView() } label: {
-                        let fc = snapshot.cashForecast(days: 60)
-                        ListRow(title: "Money ahead",
-                                caption: fc.firstShortfall.map { "Short on " + $0.formatted(.dateTime.day().month(.abbreviated)) }
-                                    ?? "Lowest in 60 days: \(fc.lowest.compact)",
-                                symbol: "chart.line.uptrend.xyaxis", color: fc.firstShortfall == nil ? Palette.plan : .red) {
-                            EmptyView()
+                    let fc = snapshot.cashForecast(days: 60)
+                    if plus.isPlus {
+                        NavigationLink { ForecastView() } label: {
+                            ListRow(title: "Money ahead",
+                                    caption: fc.firstShortfall.map { "Short on " + $0.formatted(.dateTime.day().month(.abbreviated)) }
+                                        ?? "Lowest in 60 days: \(fc.lowest.compact)",
+                                    symbol: "chart.line.uptrend.xyaxis", color: fc.firstShortfall == nil ? Palette.plan : .red) {
+                                EmptyView()
+                            }
                         }
+                        .accessibilityIdentifier("moneyAhead")
+                    } else {
+                        // The heads-up is free; the day-by-day detail is Plus
+                        Button { paywall = .moneyAhead } label: {
+                            ListRow(title: "Money ahead",
+                                    caption: fc.firstShortfall == nil ? "Your balance day by day for 60 days"
+                                        : "You may run short in the next 60 days. See when.",
+                                    symbol: "chart.line.uptrend.xyaxis", color: fc.firstShortfall == nil ? Palette.plan : .red) {
+                                PlusBadge()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("moneyAhead")
                     }
-                    .accessibilityIdentifier("moneyAhead")
                 }
 
                 Section {
@@ -101,7 +117,7 @@ struct PlanView: View {
                     Menu {
                         Button { editingItem = .new(.outflow) } label: { Label("Bill", systemImage: "calendar.badge.plus") }
                         Button { editingItem = .new(.inflow) } label: { Label("Expected income", systemImage: "arrow.down.circle") }
-                        Button { addingGoal = true } label: { Label("Savings goal", systemImage: "target") }
+                        Button { newGoal() } label: { Label("Savings goal", systemImage: "target") }
                         Button { addingReserve = true } label: { Label("Money set aside", systemImage: "lock") }
                     } label: { Image(systemName: "calendar.badge.plus") }
                     .accessibilityLabel("Add to plan")
@@ -112,8 +128,14 @@ struct PlanView: View {
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
             .sheet(isPresented: $addingReserve) { ReserveEditor() }
             .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
+            .paywall($paywall)
             .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }
         }
+    }
+
+    /// One goal is free; more need Plus
+    private func newGoal() {
+        if plus.isPlus || snapshot.goals.isEmpty { addingGoal = true } else { paywall = .goals }
     }
 
     private var banner: some View {
@@ -183,7 +205,7 @@ struct PlanView: View {
             HStack {
                 Text("Savings")
                 Spacer()
-                if !snapshot.goals.isEmpty { Button("Add") { addingGoal = true }.font(.caption) }
+                if !snapshot.goals.isEmpty { Button("Add") { newGoal() }.font(.caption) }
             }
         } footer: {
             Text("Saved money stays in its account and is kept out of safe-to-spend, so you can't spend it by accident.")

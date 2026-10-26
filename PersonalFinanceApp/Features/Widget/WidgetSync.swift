@@ -12,7 +12,7 @@ import NokaelCore
 
 @MainActor
 enum WidgetSync {
-    static func update(_ snapshot: FinanceSnapshot) {
+    static func update(_ snapshot: FinanceSnapshot, isPlus: Bool) {
         let args = CommandLine.arguments
         guard !(args.contains("-uiTesting") || args.contains("-demoData")) || args.contains("-widgetData") else { return }
         let sts = snapshot.safeToSpend()
@@ -27,7 +27,8 @@ enum WidgetSync {
                 }
             },
             billsTotal: due.map(\.remaining).sum(snapshot.currency).compact,
-            updated: Date())
+            updated: Date(),
+            isPlus: isPlus)
         try? summary.save()
         WidgetCenter.shared.reloadAllTimelines()
     }

@@ -4,12 +4,17 @@
 //
 
 import SwiftUI
+import StoreKit
 import NokaelCore
 
 struct SettingsView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
     @Environment(\.dismiss) private var dismiss
     @State private var confirmErase = false
+    @State private var paywall: PlusFeature?
+    @State private var showingPlus = false
+    @State private var managingPlan = false
     @State private var exportURL: URL?
     @State private var error: String?
 
@@ -17,6 +22,8 @@ struct SettingsView: View {
         let settings = store.settings
         NavigationStack {
             Form {
+                PlusSection(showingPaywall: $showingPlus, managing: $managingPlan)
+
                 Section("Money") {
                     LabeledContent("Currency", value: settings.currency)
                     Picker("Week starts on", selection: binding(\.firstWeekday)) {
@@ -44,7 +51,12 @@ struct SettingsView: View {
                 BackupSection()
 
                 Section {
-                    Button { export() } label: { Label("Export all entries (CSV)", systemImage: "square.and.arrow.up") }
+                    Button { if plus.isPlus { export() } else { paywall = .export } } label: {
+                        HStack {
+                            Label("Export all entries (CSV)", systemImage: "square.and.arrow.up")
+                            if !plus.isPlus { Spacer(); PlusBadge() }
+                        }
+                    }
                     if let exportURL {
                         ShareLink(item: exportURL) { Label("Share export", systemImage: "doc.text") }
                     }
@@ -68,6 +80,9 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .paywall($paywall)
+            .sheet(isPresented: $showingPlus) { PaywallView() }
+            .manageSubscriptionsSheet(isPresented: $managingPlan)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .confirmationDialog("Delete all data?", isPresented: $confirmErase, titleVisibility: .visible) {

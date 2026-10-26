@@ -11,6 +11,7 @@ import UserNotifications
 struct NokaelMoneyApp: App {
     private let container: ModelContainer
     @State private var store: LedgerStore
+    @State private var plus = PlusStore()
 
     init() {
         let args = CommandLine.arguments
@@ -34,6 +35,7 @@ struct NokaelMoneyApp: App {
         WindowGroup {
             RootView()
                 .environment(store)
+                .environment(plus)
                 .modelContainer(container)
         }
     }

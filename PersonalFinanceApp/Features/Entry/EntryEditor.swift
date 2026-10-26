@@ -12,6 +12,8 @@ import NokaelCore
 
 struct EntryEditor: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
+    @State private var paywall: PlusFeature?
     @Environment(\.dismiss) private var dismiss
 
     @State var kind: AddKind
@@ -61,7 +63,20 @@ struct EntryEditor: View {
                 }
 
                 if editing == nil && kind != .adjustment && AppleIntelligence.isReady {
-                    describeSection
+                    if plus.isPlus {
+                        describeSection
+                    } else {
+                        Section {
+                            Button { paywall = .appleIntelligence } label: {
+                                HStack {
+                                    AIBadge(text: "Describe it in a sentence")
+                                    Spacer()
+                                    PlusBadge()
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
 
                 Section {
@@ -116,6 +131,7 @@ struct EntryEditor: View {
                 }
             }
             .navigationTitle(editing == nil ? kind.title : "Edit \(kind.title.lowercased())")
+            .paywall($paywall)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -330,7 +346,7 @@ struct EntryEditor: View {
 
     /// When past entries don't say, ask the model which category fits
     private func suggestCategory() async {
-        guard editing == nil, !categoryTouched, kind == .expense || kind == .income, AppleIntelligence.isReady else { return }
+        guard editing == nil, !categoryTouched, kind == .expense || kind == .income, AppleIntelligence.isReady, plus.isPlus else { return }
         let text = memo.trimmingCharacters(in: .whitespaces)
         guard text.count >= 3, categoryId == nil || categorySuggested else { return }
         let needle = text.lowercased()

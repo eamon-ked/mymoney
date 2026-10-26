@@ -12,6 +12,8 @@ import NokaelCore
 
 struct BudgetView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
+    @State private var paywall: PlusFeature?
     @State private var month: String?
     @State private var selected: UUID?
     @State private var addingCategory = false
@@ -77,6 +79,7 @@ struct BudgetView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Budget")
+            .paywall($paywall)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 14) {
@@ -94,8 +97,13 @@ struct BudgetView: View {
                         .accessibilityLabel("New category")
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink { ReportsView() } label: { Image(systemName: "chart.bar.xaxis") }
-                        .accessibilityLabel("Reports")
+                    if plus.isPlus {
+                        NavigationLink { ReportsView() } label: { Image(systemName: "chart.bar.xaxis") }
+                            .accessibilityLabel("Reports")
+                    } else {
+                        Button { paywall = .reports } label: { Image(systemName: "chart.bar.xaxis") }
+                            .accessibilityLabel("Reports, needs Nokael Plus")
+                    }
                 }
                 GlobalAddButton()
             }

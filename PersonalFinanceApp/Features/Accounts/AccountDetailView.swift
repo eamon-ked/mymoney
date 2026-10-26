@@ -11,6 +11,8 @@ import NokaelCore
 
 struct AccountDetailView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
+    @State private var paywall: PlusFeature?
     let accountId: UUID
     @State private var reconciling = false
     @State private var importing = false
@@ -44,8 +46,11 @@ struct AccountDetailView: View {
             if account.kind.isLiability { DebtSection(debt: account, sheet: $debtSheet) }
 
             Section {
-                Button { importing = true } label: {
-                    Label("Import a statement (CSV)", systemImage: "square.and.arrow.down")
+                Button { if plus.isPlus { importing = true } else { paywall = .statementImport } } label: {
+                    HStack {
+                        Label("Import a statement (CSV)", systemImage: "square.and.arrow.down")
+                        if !plus.isPlus { Spacer(); PlusBadge() }
+                    }
                 }
                 .accessibilityIdentifier("importStatement")
                 Button { reconciling = true } label: {
@@ -83,11 +88,13 @@ struct AccountDetailView: View {
         .toolbar { GlobalAddButton() }
         .sheet(isPresented: $reconciling) { ReconcileSheet(account: account) }
         .sheet(isPresented: $importing) { ImportStatementView(accountId: account.id) }
+        .paywall($paywall)
         .sheet(item: $selected) { EntryDetailView(record: $0) }
         .sheet(item: $debtSheet) { sheet in
             switch sheet {
             case .terms: DebtTermsEditor(debt: account)
             case .pay: PayDebtSheet(debt: account)
+            case .plus: PaywallView(feature: .payoffPlanner)
             }
         }
     }

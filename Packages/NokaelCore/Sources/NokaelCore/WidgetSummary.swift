@@ -31,14 +31,18 @@ public struct WidgetSummary: Codable, Equatable, Sendable {
     public let bills: [Bill]
     public let billsTotal: String
     public let updated: Date
+    /// The widget is a Nokael Plus feature; optional so older files still read
+    public let isPlus: Bool?
 
-    public init(safeToSpend: String?, isNegative: Bool, through: Date, bills: [Bill], billsTotal: String, updated: Date) {
+    public init(safeToSpend: String?, isNegative: Bool, through: Date, bills: [Bill], billsTotal: String, updated: Date,
+                isPlus: Bool) {
         self.safeToSpend = safeToSpend
         self.isNegative = isNegative
         self.through = through
         self.bills = bills
         self.billsTotal = billsTotal
         self.updated = updated
+        self.isPlus = isPlus
     }
 
     public static let appGroup = "group.nokael.PersonalFinanceApp"

@@ -139,6 +139,32 @@ struct LedgerStoreTests {
         #expect(store.snapshot.billReminders(hour: 9, now: today).isEmpty)
     }
 
+    @Test("Importing a statement adds spending, transfers and bill payments once, however often it's run")
+    func importingAStatement() throws {
+        let current = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(10000), openingDate: today)
+        let card = try store.createAccount(name: "Card", kind: .creditCard, opening: Self.aed(-1000), openingDate: today)
+        let rent = PlannedItem(name: "Rent", direction: .outflow, amount: Self.aed(2800),
+                               schedule: Schedule(start: Self.date(2026, 10, 28), frequency: .monthly(every: 1)),
+                               accountId: current.id, categoryId: category("Rent or mortgage").id)
+        try store.savePlannedItem(rent)
+        let occ = try #require(store.snapshot.occurrences.first)
+        let rows = [
+            LedgerStore.ImportedRow(date: today, memo: "Carrefour", amount: Self.aed(-150),
+                                    target: .category(category("Groceries").id), key: UUID()),
+            LedgerStore.ImportedRow(date: today, memo: "Card payment", amount: Self.aed(-500),
+                                    target: .transfer(card.id), key: UUID()),
+            LedgerStore.ImportedRow(date: today, memo: "Rent", amount: Self.aed(-2800), target: .bill(occ.id), key: UUID()),
+        ]
+        try store.importRows(rows, into: current.id)
+        try store.importRows(rows, into: current.id)
+
+        let s = store.snapshot
+        #expect(s.balance(current.id) == Self.aed(10000 - 150 - 500 - 2800))
+        #expect(s.balance(card.id) == Self.aed(-500))
+        #expect(s.state(of: s.occurrences.first { $0.id == occ.id }!) == .paid)
+        #expect(s.entries().count == 3)
+    }
+
     @Test("BILL-05: editing a bill only changes future unpaid ones")
     func editingABill() throws {
         let account = try store.createAccount(name: "Current", kind: .bank, opening: Self.aed(9000), openingDate: today)

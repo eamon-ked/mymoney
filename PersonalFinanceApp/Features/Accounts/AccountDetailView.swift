@@ -13,6 +13,7 @@ struct AccountDetailView: View {
     @Environment(LedgerStore.self) private var store
     let accountId: UUID
     @State private var reconciling = false
+    @State private var importing = false
     @State private var selected: EntryRecord?
     @State private var debtSheet: DebtSheet?
     @State private var error: String?
@@ -43,11 +44,15 @@ struct AccountDetailView: View {
             if account.kind.isLiability { DebtSection(debt: account, sheet: $debtSheet) }
 
             Section {
+                Button { importing = true } label: {
+                    Label("Import a statement (CSV)", systemImage: "square.and.arrow.down")
+                }
+                .accessibilityIdentifier("importStatement")
                 Button { reconciling = true } label: {
                     Label("Check against a statement", systemImage: "checkmark.seal")
                 }
             } footer: {
-                Text("Enter your statement's balance. Any difference is shown before anything changes.")
+                Text("Import adds what's missing from your bank's statement file. Checking compares your balance with the statement's; any difference is shown before anything changes.")
             }
 
             Section("Entries") {
@@ -77,6 +82,7 @@ struct AccountDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { GlobalAddButton() }
         .sheet(isPresented: $reconciling) { ReconcileSheet(account: account) }
+        .sheet(isPresented: $importing) { ImportStatementView(accountId: account.id) }
         .sheet(item: $selected) { EntryDetailView(record: $0) }
         .sheet(item: $debtSheet) { sheet in
             switch sheet {

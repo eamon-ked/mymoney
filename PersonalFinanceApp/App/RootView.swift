@@ -48,7 +48,7 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|settings|add
+                // Screenshot helper: -screen forecast|reports|settings|add|import
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
@@ -57,6 +57,9 @@ struct RootView: View {
                     SettingsView()
                 } else if UserDefaults.standard.string(forKey: "screen") == "add" {
                     EntryEditor(kind: .expense)
+                } else if UserDefaults.standard.string(forKey: "screen") == "import",
+                          let account = store.snapshot.accounts.first(where: \.spendable) {
+                    ImportStatementView(accountId: account.id)
                 } else {
                     tabs
                 }

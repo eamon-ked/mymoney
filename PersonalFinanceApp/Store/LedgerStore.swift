@@ -204,6 +204,13 @@ final class LedgerStore {
     /// existing entry instead of creating a duplicate (double taps, retries).
     @discardableResult
     func post(_ entry: Entry, notes: String = "") throws -> UUID {
+        let id = try stage(entry, notes: notes)
+        try commit()
+        return id
+    }
+
+    /// Inserts without saving, so a batch can be committed (or rolled back) as one
+    private func stage(_ entry: Entry, notes: String = "") throws -> UUID {
         let key = entry.idempotencyKey
         if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first {
             return existing.id
@@ -215,8 +222,67 @@ final class LedgerStore {
            entry.kind == .expense {
             settings.lastUsedAccountId = funding
         }
-        try commit()
         return entry.id
+    }
+
+    // MARK: - Statement import
+
+    struct ImportedRow {
+        enum Target: Hashable {
+            case category(UUID)
+            /// Money moved to or from another of the person's accounts
+            case transfer(UUID)
+            /// Pays this bill (only for money out)
+            case bill(UUID)
+        }
+        let date: Date
+        let memo: String
+        /// Signed, from the imported account's point of view
+        let amount: Money
+        let target: Target
+        let key: UUID
+    }
+
+    /// Adds statement rows to one account. Category and transfer rows are saved
+    /// together, all or nothing; bill payments go through `pay` so debts split.
+    /// Returns how many rows were added.
+    @discardableResult
+    func importRows(_ rows: [ImportedRow], into accountId: UUID) throws -> Int {
+        guard let account = account(accountId) else { throw StoreError.notFound }
+        let bills = rows.filter { if case .bill = $0.target { return true } else { return false } }
+        do {
+            for row in rows {
+                let size = row.amount.magnitude
+                switch row.target {
+                case .category(let id):
+                    guard let category = self.account(id) else { throw StoreError.notFound }
+                    let entry = row.amount.isNegative
+                        ? try EntryFactory.expense(size, from: account.info, category: category.info, date: row.date, memo: row.memo, key: row.key)
+                        : try EntryFactory.income(size, to: account.info, category: category.info, date: row.date, memo: row.memo, key: row.key)
+                    _ = try stage(entry)
+                case .transfer(let id):
+                    guard let other = self.account(id) else { throw StoreError.notFound }
+                    let entry = row.amount.isNegative
+                        ? try EntryFactory.transfer(size, from: account.info, to: other.info, date: row.date, memo: row.memo, key: row.key)
+                        : try EntryFactory.transfer(size, from: other.info, to: account.info, date: row.date, memo: row.memo, key: row.key)
+                    _ = try stage(entry)
+                case .bill:
+                    continue
+                }
+            }
+        } catch {
+            context.rollback()
+            throw StoreError.from(error)
+        }
+        context.insert(AuditRecord(action: "statement.imported", subjectId: accountId,
+                                   summary: "Imported \(rows.count) statement rows into \(account.name)"))
+        try commit()
+        for row in bills {
+            guard case .bill(let occurrenceId) = row.target else { continue }
+            try pay(occurrenceId: occurrenceId, amount: row.amount.magnitude, accountId: accountId, categoryId: nil,
+                    date: row.date, key: row.key)
+        }
+        return rows.count
     }
 
     /// Edits keep history: the original is voided, a replacement posted, and both linked

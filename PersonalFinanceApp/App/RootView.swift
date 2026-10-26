@@ -49,7 +49,7 @@ struct RootView: View {
                 LockView(unlock: authenticate)
             } else {
                 #if DEBUG
-                // Screenshot helper: -screen forecast|reports|settings|add|import|paywall
+                // Screenshot helper: -screen forecast|reports|settings|add|import|paywall|ask
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
@@ -58,6 +58,10 @@ struct RootView: View {
                     SettingsView()
                 } else if UserDefaults.standard.string(forKey: "screen") == "add" {
                     EntryEditor(kind: .expense)
+                } else if UserDefaults.standard.string(forKey: "screen") == "ask" {
+                    #if canImport(FoundationModels)
+                    if #available(iOS 26.0, *) { AskMoneyView() }
+                    #endif
                 } else if UserDefaults.standard.string(forKey: "screen") == "paywall" {
                     PaywallView(feature: .statementImport)
                 } else if UserDefaults.standard.string(forKey: "screen") == "import",

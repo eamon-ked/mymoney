@@ -62,7 +62,7 @@ enum DemoData {
         try? store.saveReserve(Reserve(name: "Emergency fund", amount: aed(2000), accountId: current.id))
         try? store.saveReserve(Reserve(name: "Japan trip", amount: aed(6000), accountId: savings.id, target: aed(15000),
                                        targetDate: store.calendar.date(byAdding: .month, value: 7, to: day(0))))
-        try? store.updateSettings { $0.bufferMinor = 50000; $0.onboardingDone = true; $0.onboardingStep = 4 }
+        try? store.updateSettings { $0.bufferMinor = 50000; $0.onboardingDone = true; $0.onboardingStep = 4; $0.lastBackupAt = today }
     }
 }
 #endif

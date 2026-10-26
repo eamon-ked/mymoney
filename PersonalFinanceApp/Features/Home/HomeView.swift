@@ -79,9 +79,18 @@ struct HomeView: View {
 
     // MARK: - Apple Intelligence
 
+    /// DEBUG -screenshots: store screenshots leave out the live summary, which the simulator can't run
+    private static var screenshotMode: Bool {
+        #if DEBUG
+        CommandLine.arguments.contains("-screenshots")
+        #else
+        false
+        #endif
+    }
+
     @ViewBuilder private var insightSection: some View {
         #if canImport(FoundationModels)
-        if #available(iOS 26.0, *), AppleIntelligence.isReady, snapshot.setupComplete {
+        if #available(iOS 26.0, *), AppleIntelligence.isReady, snapshot.setupComplete, !Self.screenshotMode {
             if plus.isPlus {
                 Section { InsightCard { showingAsk = true } }
             } else {

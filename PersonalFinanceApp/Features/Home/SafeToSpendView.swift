@@ -25,6 +25,13 @@ struct SafeToSpendView: View {
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
+    /// Why Budget's "Not planned yet" is usually smaller than this
+    private var budgetDifference: String {
+        let owed = snapshot.owedInBudget.map { "\($0.amount.compact) still owed on \($0.name)" }
+        let extra = owed.isEmpty ? "" : " It also takes out " + owed.joined(separator: " and ") + ", which isn't due before payday so isn't held back here."
+        return "Not planned yet in Budget is a different number. It takes out everything you've planned in categories, like Groceries, which here still counts as money you can spend." + extra
+    }
+
     private var periodEnd: Date {
         let s = snapshot
         switch period {
@@ -155,6 +162,11 @@ struct SafeToSpendView: View {
                     LabeledContent(item.label, value: "−" + item.amount.compact)
                 }
             }
+        }
+
+        Section {
+        } footer: {
+            Text(budgetDifference)
         }
     }
 

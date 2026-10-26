@@ -59,6 +59,21 @@ struct PaydayTests {
         #expect(PaydayPlan.make(store.snapshot).alreadyReceived != nil)
     }
 
+    @Test func salaryFromAStatementSettlesTheExpectedPayday() throws {
+        let tomorrow = LedgerStoreTests.date(2026, 10, 26)
+        try store.savePlannedItem(PlannedItem(name: "Salary", direction: .inflow, amount: Self.aed(20000),
+                                              schedule: Schedule(start: tomorrow, frequency: .monthly(every: 1)),
+                                              accountId: bank.id, categoryId: category("Salary").id))
+        let row = LedgerStore.ImportedRow(date: today, memo: "SALARY", amount: Self.aed(20000),
+                                          target: .category(category("Salary").id), key: UUID())
+        _ = try store.importRows([row], into: bank.id)
+
+        #expect(PaydayPlan.dueSalary(store.snapshot) == nil)
+        #expect(PaydayPlan.make(store.snapshot).alreadyReceived != nil)
+        let entry = try #require(store.snapshot.entries().first { $0.kind == .income })
+        #expect(entry.occurrenceId != nil)
+    }
+
     @Test func aDifferentAmountSaidThisMonthWins() throws {
         try addSalary()
         let plan = PaydayPlan.make(store.snapshot, said: Self.aed(21500))

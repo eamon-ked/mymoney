@@ -238,3 +238,15 @@ struct FinanceSnapshot {
     /// Setup is complete enough for a reliable safe-to-spend
     var setupComplete: Bool { settings.onboardingDone && hasAccounts }
 }
+
+extension FinanceSnapshot {
+    /// What's still owed on cards and loans that are part of the budget: Budget takes it out
+    /// of what's left to plan, while safe-to-spend only holds back the payments due before payday
+    var owedInBudget: [(name: String, amount: Money)] {
+        accounts.filter { $0.onBudget && $0.kind.isLiability && !$0.archived }.compactMap { a in
+            let b = balance(a.id)
+            return b.isNegative ? (a.name, b.magnitude) : nil
+        }
+    }
+}
+

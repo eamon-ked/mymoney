@@ -187,7 +187,7 @@ struct FinanceDigest: Sendable {
         var out = """
         Today: \(day(today)). Currency: \(currency).
         Safe to spend (flexible spending through \(day(safeToSpendThrough)), after bills, savings and budget reservations): \(safeToSpend)
-        Cash & bank: \(cashAndBank). Total debt: \(totalDebt). Net worth: \(netWorth).
+        Cash & bank: \(cashAndBank). Total debt: \(totalDebt). Net worth (what they own minus what they owe; there is no net worth target): \(netWorth).
         Accounts:
         """
         for a in accounts { out += "\n- \(a.name) (\(a.kind)\(a.spendable ? ", spendable" : "")): \(a.balance)" }

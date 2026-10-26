@@ -39,7 +39,7 @@ struct BudgetView: View {
                                   caption: progress.planningFunds.isPositive
                                       ? (available.isNegative ? "Lower a category below to fix it"
                                          : available.isZero ? "Every dirham this month has a job"
-                                         : "Money with no job yet. Tap a category below to give it some")
+                                         : owedCaption ?? "Money with no job yet. Tap a category below to give it some")
                                       : "Add an account with money in it to start planning",
                                   tint: available.isNegative ? .red : Palette.budget,
                                   action: { explanation = availableExplanation(available) }) {
@@ -134,6 +134,14 @@ struct BudgetView: View {
         do { try store.copyPlan(from: previousMonth, to: currentMonth) } catch { self.error = StoreError.from(error).errorDescription }
     }
 
+    /// Says when card debt is already taken out, so this doesn't look like money missing
+    private var owedCaption: String? {
+        let owed = snapshot.owedInBudget
+        guard !owed.isEmpty else { return nil }
+        let names = owed.map { "\($0.amount.compact) owed on \($0.name)" }.joined(separator: ", ")
+        return "Money with no job yet, after \(names). Tap a category to plan it"
+    }
+
     private func availableExplanation(_ available: Money) -> Explanation {
         let budget = snapshot.budget
         let end = BudgetMonth.end(of: currentMonth, calendar: snapshot.calendar)?.addingTimeInterval(-1)
@@ -151,7 +159,8 @@ struct BudgetView: View {
         return Explanation(title: "Available to allocate", total: available,
                            definition: "Money in your budget accounts that doesn't have a plan yet. Planning money doesn't move it out of any account.",
                            sections: sections,
-                           notes: ["You don't have to plan every dirham.", "Spending from a category lowers what's left in it, not this number."])
+                           notes: ["You don't have to plan every dirham.", "Spending from a category lowers what's left in it, not this number.",
+                                   "Safe to spend on Home is a different number: it holds back only bills due before payday, and treats what's left in categories like Groceries as money you can spend. Budget also takes out everything still owed on cards in your budget, and everything you've planned."])
     }
 }
 

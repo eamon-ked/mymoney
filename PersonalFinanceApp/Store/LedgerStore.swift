@@ -68,6 +68,7 @@ final class LedgerStore {
         self.now = now
         ensureSettingsAndSystemAccounts()
         try? tidyLoanPayments()
+        try? linkExpectedIncome()
     }
 
     // MARK: - Reading
@@ -290,6 +291,7 @@ final class LedgerStore {
         context.insert(AuditRecord(action: "statement.imported", subjectId: accountId,
                                    summary: "Imported \(rows.count) statement rows into \(account.name)"))
         try commit()
+        try linkExpectedIncome()
         for row in bills {
             guard case .bill(let occurrenceId) = row.target else { continue }
             try pay(occurrenceId: occurrenceId, amount: row.amount.magnitude, accountId: accountId, categoryId: nil,
@@ -780,6 +782,40 @@ final class LedgerStore {
             try setAllocation(snapshot.budget.allocated(target.id, month: month) + take, categoryId: target.id, month: month)
         }
         try planInstalments(for: snapshot.monthKey, category: target)
+    }
+
+    /// Links income that arrived some other way (a statement import, a typed entry) to the expected
+    /// payment it settles, so a salary already in the bank isn't still waited for, or recorded twice.
+    /// Matches on the plan's income category, within 10 days of the due date. Safe to run on every launch.
+    func linkExpectedIncome() throws {
+        let items = fetch(PlannedItemRecord.self).filter { !$0.archived }.map(\.item).filter { $0.direction == .inflow }
+        guard !items.isEmpty else { return }
+        let occurrences = fetch(OccurrenceRecord.self)
+        let linked = Set(occurrences.flatMap { $0.occurrence.paidEntryIds })
+        var open = occurrences.filter { record in
+            let o = record.occurrence
+            return !o.skipped && o.paidEntryIds.isEmpty && items.contains { $0.id == o.itemId }
+        }
+        let window: TimeInterval = 10 * 86_400
+        let unlinked = fetch(EntryRecord.self).filter {
+            $0.status == .posted && $0.kind == .income && $0.occurrenceId == nil && !linked.contains($0.id)
+        }.sorted { $0.date < $1.date }
+        var changed = false
+        for record in unlinked {
+            let entry = record.entry
+            let candidates = open.filter { occ in
+                guard let item = items.first(where: { $0.id == occ.itemId }), let category = item.categoryId else { return false }
+                return entry.lines.contains { $0.accountId == category } && abs(occ.dueDate.timeIntervalSince(record.date)) <= window
+            }
+            guard let best = candidates.min(by: { abs($0.dueDate.timeIntervalSince(record.date)) < abs($1.dueDate.timeIntervalSince(record.date)) })
+            else { continue }
+            record.occurrenceId = best.id
+            record.updatedAt = now()
+            applyPayment(of: entry, to: best.id)
+            open.removeAll { $0.id == best.id }
+            changed = true
+        }
+        if changed { try commit() }
     }
 
     /// The parts of a recorded card or loan payment

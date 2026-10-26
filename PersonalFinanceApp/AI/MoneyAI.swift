@@ -145,7 +145,8 @@ enum MoneyAI {
             Summarise how this person's money is doing right now and suggest up to two useful next steps. \
             Be encouraging but honest; mention overspent categories or overdue bills only if the figures say so. \
             Planned amounts and upcoming bills are not money already spent. \
-            Loan payments are fixed instalments that also repay the loan; never suggest cutting them.
+            Loan payments are fixed instalments that also repay the loan; never suggest cutting them. \
+            Net worth is a plain figure, not compared with any plan; mention it only as it is.
 
             \(digest.overview)
 

@@ -73,6 +73,12 @@ struct FinanceDigest: Sendable {
     let months: [Month]
     let bills: [Bill]
     let goals: [String]
+    /// Salary and other expected income from Plan, with this period's status
+    let expectedIncome: [String]
+    /// Regular bills from Plan, how often and how much
+    let plannedBills: [String]
+    /// Cards and loans: owed, rate, monthly payment
+    let debts: [String]
 
     @MainActor
     init(_ snapshot: FinanceSnapshot) {
@@ -137,6 +143,36 @@ struct FinanceDigest: Sendable {
                  overdue: snapshot.state(of: occ) == .overdue, estimated: snapshot.item(for: occ)?.isEstimate ?? false)
         }
 
+        func next(_ item: PlannedItem) -> String {
+            let open = snapshot.occurrences.filter { $0.itemId == item.id && !$0.skipped && $0.remaining.isPositive }.min { $0.dueDate < $1.dueDate }
+            return open.map { "next expected \($0.dueDate.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))" } ?? "nothing pending"
+        }
+        let payday = PaydayPlan.make(snapshot)
+        expectedIncome = snapshot.items.filter { $0.direction == .inflow }.map { item in
+            var line = "\(item.name): \(item.amount.formatted), \(item.schedule.frequency.label.lowercased())"
+            if let account = snapshot.account(item.accountId) { line += ", paid into \(account.name)" }
+            line += ", \(next(item))"
+            if item.id == payday.item?.id, let received = payday.alreadyReceived {
+                line += "; this month's was received \(received.formatted(.dateTime.day().month(.abbreviated)))"
+            }
+            return line
+        }
+        plannedBills = snapshot.items.filter { $0.direction == .outflow }.map { item in
+            "\(item.name): \(item.amount.formatted)\(item.isEstimate ? " (estimate)" : ""), \(item.schedule.frequency.label.lowercased()), \(next(item))"
+        }
+        debts = snapshot.debts.map { debt in
+            var line = "\(debt.name) (\(AccountStyle.name(for: debt.kind))): owe \(snapshot.owed(debt.id).formatted)"
+            if let terms = debt.debtTerms { line += ", interest \(terms.rateText), monthly payment \(terms.monthlyPayment.formatted)" }
+            switch snapshot.payoff(for: debt) {
+            case .paidOff(_, let last, let interest, _)?:
+                line += ", paid off by \(last.formatted(.dateTime.month(.wide).year())) with \(interest.formatted) more interest"
+            case .never?:
+                line += ", the payment doesn't cover the interest so it never falls"
+            default: break
+            }
+            return line
+        }
+
         goals = snapshot.reserves.map { r in
             if let target = r.target { return "\(r.name): \(r.amount.formatted) saved of \(target.formatted)" }
             return "\(r.name): \(r.amount.formatted) set aside"
@@ -157,6 +193,10 @@ struct FinanceDigest: Sendable {
         for a in accounts { out += "\n- \(a.name) (\(a.kind)\(a.spendable ? ", spendable" : "")): \(a.balance)" }
         if accounts.isEmpty { out += "\n- none yet" }
         if !goals.isEmpty { out += "\nSavings goals and set-aside money:\n" + goals.map { "- \($0)" }.joined(separator: "\n") }
+        out += "\nExpected income (the person's salary and other regular income, from their plan):"
+        out += expectedIncome.isEmpty ? "\n- none set up" : "\n" + expectedIncome.map { "- \($0)" }.joined(separator: "\n")
+        if !plannedBills.isEmpty { out += "\nRegular bills:\n" + plannedBills.map { "- \($0)" }.joined(separator: "\n") }
+        if !debts.isEmpty { out += "\nCards and loans:\n" + debts.map { "- \($0)" }.joined(separator: "\n") }
         return out
     }
 

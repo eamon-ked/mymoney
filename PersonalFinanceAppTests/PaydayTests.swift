@@ -96,6 +96,14 @@ struct PaydayTests {
         #expect(saved.amount == Self.aed(18000))
     }
 
+    @Test func askCanSeeTheSalary() throws {
+        try addSalary()
+        let overview = FinanceDigest(store.snapshot).overview
+        let line = overview.split(separator: "\n").first { $0.hasPrefix("- Salary:") }.map(String.init) ?? ""
+        #expect(line.contains("20,000") && line.contains("paid into ENBD Current"), "\(overview)")
+        #expect(overview.contains("next expected"))
+    }
+
     @Test func recognisesSalaryWording() {
         #expect(PaydayPlan.mentionsSalary("I received my salary today"))
         #expect(PaydayPlan.mentionsSalary("got paid"))

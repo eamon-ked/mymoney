@@ -181,7 +181,8 @@ enum MoneyAI {
                 \(AppleIntelligence.baseInstructions) \
                 Answer questions about the person's money. Use the tools for budgets, transactions, past months and bills. \
                 When they ask how to do something in the app, or say they received or spent money, use howTo and give its steps \
-                with the exact button names. Keep answers to a few sentences unless asked for detail.
+                with the exact button names. Their salary, regular bills and loans are listed below: answer from them, never say you can't see them. \
+                Keep answers to a few sentences unless asked for detail.
 
                 \(digest.overview)
                 """)

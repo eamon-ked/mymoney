@@ -17,6 +17,7 @@ struct EntryDetailView: View {
     @State private var confirmDelete = false
     @State private var error: String?
     @State private var resplitting = false
+    @State private var openBill: Occurrence?
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -65,8 +66,15 @@ struct EntryDetailView: View {
 
                 if let occId = record.occurrenceId, let occ = snapshot.occurrences.first(where: { $0.id == occId }),
                    let item = snapshot.item(for: occ) {
-                    Section("Linked to") {
-                        LabeledContent(item.name, value: occ.dueDate.formatted(date: .abbreviated, time: .omitted))
+                    Section {
+                        Button { openBill = occ } label: {
+                            LabeledContent(item.name, value: occ.dueDate.formatted(date: .abbreviated, time: .omitted))
+                        }
+                        Button("Unlink from \(item.name)") { try? store.unlink(entryId: record.id) }
+                    } header: {
+                        Text("Pays this bill")
+                    } footer: {
+                        Text("Unlinking reopens the bill. This transaction and your balance stay as they are.")
                     }
                 }
 
@@ -97,6 +105,7 @@ struct EntryDetailView: View {
                     ToolbarItem(placement: .primaryAction) { Button("Edit") { editing = true } }
                 }
             }
+            .sheet(item: $openBill) { PayScheduledSheet(occurrence: $0) }
             .sheet(isPresented: $resplitting, onDismiss: { dismiss() }) {
                 if let parts = store.debtPaymentParts(record) { ResplitSheet(record: record, parts: parts) }
             }

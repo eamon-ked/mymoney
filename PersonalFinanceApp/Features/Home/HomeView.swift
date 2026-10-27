@@ -25,29 +25,15 @@ struct HomeView: View {
     @State private var showingHelp = false
     @State private var showingPayday = false
     @State private var fundingGoal: Reserve?
-    @AppStorage("showSiriTip") private var showSiriTip = true
 
     private var snapshot: FinanceSnapshot { store.snapshot }
+    private var suggestions: [BillSuggestion] { snapshot.billSuggestions }
 
     var body: some View {
         NavigationStack {
             List {
+                // What I can spend, what I have and owe, what needs me, how the month is going
                 Section { safeToSpendBanner.bannerRow() }
-
-                if snapshot.setupComplete {
-                    Section {
-                        QuickActions()
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                    }
-                    PaydayBanner { showingPayday = true }
-                }
-
-                insightSection
-
-                alertsSection
-
-                ReviewSection(selected: $reviewing)
 
                 Section {
                     HStack(spacing: 12) {
@@ -55,32 +41,26 @@ struct HomeView: View {
                                    detail: cashAccountCount,
                                    tint: Palette.accounts) { explanation = cashExplanation }
                         FigureCard(title: "Total debt", value: snapshot.totalDebt.compact,
-                                   detail: "\(snapshot.accounts.filter { $0.kind.isLiability && !snapshot.balance($0.id).isZero }.count) cards & loans",
+                                   detail: "owed on \(snapshot.debtAccounts.filter { !snapshot.balance($0.id).isZero }.count) cards & loans",
                                    tint: snapshot.totalDebt.isPositive ? .red : .gray) { explanation = debtExplanation }
                     }
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 }
 
-                comingUpSection
+                ForEach(suggestions) { BillLinkCard(suggestion: $0, snapshot: snapshot) }
+
+                alertsSection
+
+                ReviewSection(selected: $reviewing)
+
+                if snapshot.setupComplete { PaydayBanner { showingPayday = true } }
+
                 budgetHealthSection
+                comingUpSection
                 reservesSection
 
-                if !Self.screenshotMode {
-                    Section {
-                        Button { showingHelp = true } label: {
-                            Label("Not sure how to do something? Ask the guide", systemImage: "questionmark.circle")
-                        }
-                    }
-                }
-
-                if snapshot.setupComplete && !Self.screenshotMode {
-                    Section {
-                        SiriTipView(intent: LogSpendingIntent(), isVisible: $showSiriTip)
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                    }
-                }
+                insightSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Your money")
@@ -158,55 +138,76 @@ struct HomeView: View {
         let through = result.periodEnd.formatted(.dateTime.day().month(.abbreviated))
         let amount: String
         let caption: String
+        var alert: String?
         let tint: Color
         if let value = result.amount, snapshot.setupComplete {
+            // Never less than zero, but a shortfall is said out loud, not hidden behind the zero
             amount = value.isNegative ? Money.zero(store.currency).compact : value.compact
+            if value.isNegative { alert = "Short by \(value.magnitude.formatted)" }
             caption = value.isNegative
-                ? "Your commitments through \(through) are \(value.magnitude.compact) more than your spendable money"
-                : "For flexible spending through \(through)"
+                ? "Bills and your buffer through \(through) need more than the money in your spending accounts"
+                : "For flexible spending through \(through), after bills and money set aside"
             tint = value.isNegative ? .orange : Palette.home
         } else {
             amount = "—"
             caption = "Finish setup to calculate. Add an account with its balance."
             tint = .gray
         }
-        return SummaryBanner(title: "Safe to spend", amount: amount, caption: caption, tint: tint,
+        return SummaryBanner(title: "Safe to spend", amount: amount, caption: caption, alert: alert, tint: tint,
                              action: { showingSafeToSpend = true }) {
-            if let value = result.amount, snapshot.setupComplete {
+            if result.amount != nil, snapshot.setupComplete {
                 StatusLine(result: result)
-                BannerFigures(figures: [("Spendable", result.spendableTotal.compact),
-                                        ("Set aside", (result.obligationsTotal + result.reservesTotal + result.categoryReservationsTotal + result.buffer).compact),
-                                        ("Left", value.compact)])
+                BannerFigures(figures: [("In spending accounts", result.spendableTotal.compact),
+                                        ("Held back", (result.obligationsTotal + result.reservesTotal + result.categoryReservationsTotal + result.buffer).compact)])
+                if let asOf = balancesAsOf { Text(asOf).font(.footnote).opacity(0.9) }
             }
         }
         .accessibilityIdentifier("safeToSpend")
     }
 
+    /// When the spending accounts were last brought up to date
+    private var balancesAsOf: String? {
+        let dates = snapshot.accounts.filter(\.spendable).compactMap { snapshot.lastConfirmed[$0.id] }
+        guard let newest = dates.max() else { return nil }
+        if snapshot.calendar.isDate(newest, inSameDayAs: snapshot.today) { return "Balances as of today" }
+        return "Balances as of \(newest.formatted(.dateTime.day().month(.abbreviated)))"
+    }
+
     // MARK: - Alerts
 
     @ViewBuilder private var alertsSection: some View {
-        let overdue = snapshot.upcomingBills().filter { snapshot.state(of: $0) == .overdue }
+        let suggested = Set(suggestions.map(\.occurrence.id))
+        let bills = snapshot.upcomingBills(days: 1).filter { !suggested.contains($0.id) }
+        let overdue = bills.filter { snapshot.state(of: $0) == .overdue }
+        let dueToday = bills.filter { [.dueToday, .partiallyPaid].contains(snapshot.state(of: $0)) }
         let stale = snapshot.accounts.filter { a in
             guard a.kind.defaultSpendable || a.spendable else { return false }
             guard let d = snapshot.lastConfirmed[a.id] else { return true }
             return (snapshot.calendar.dateComponents([.day], from: d, to: snapshot.today).day ?? 0) > snapshot.settings.staleAfterDays
         }
         let overspent = snapshot.expenseCategories.filter { snapshot.budget.line($0.id, month: snapshot.monthKey).isOverspent }
+        let unplanned = snapshot.setupComplete && !snapshot.expenseCategories.isEmpty
+            ? snapshot.budget.availableToAllocate(month: snapshot.monthKey) : .zero(store.currency)
         let backupDue = needsBackup
-        if !overdue.isEmpty || !stale.isEmpty || !overspent.isEmpty || backupDue {
+        if !overdue.isEmpty || !dueToday.isEmpty || !stale.isEmpty || !overspent.isEmpty || !unplanned.isZero || backupDue {
             Section("Needs attention") {
-                ForEach(overdue) { occ in
-                    Button { paying = occ } label: {
-                        AlertRow(symbol: "exclamationmark.circle.fill", color: .red,
-                                 text: "\(snapshot.item(for: occ)?.name ?? "A bill") was due \(occ.dueDate.formatted(.dateTime.day().month(.abbreviated)))",
-                                 action: "Mark paid")
-                    }.buttonStyle(.plain)
+                ForEach(overdue + dueToday) { occ in
+                    Button { paying = occ } label: { billAlert(occ) }.buttonStyle(.plain)
                 }
                 ForEach(overspent, id: \.id) { c in
                     Button { selectTab(.budget) } label: {
                         AlertRow(symbol: "chart.pie.fill", color: .orange,
                                  text: "\(c.name) is over by \(snapshot.budget.line(c.id, month: snapshot.monthKey).remaining.magnitude.compact)",
                                  action: "Cover it")
+                    }.buttonStyle(.plain)
+                }
+                if !unplanned.isZero {
+                    Button { selectTab(.budget) } label: {
+                        AlertRow(symbol: "chart.pie", color: unplanned.isNegative ? .red : Palette.budget,
+                                 text: unplanned.isNegative
+                                    ? "This month's budget plans \(unplanned.magnitude.compact) more than you have"
+                                    : "\(unplanned.compact) in your budget has no job yet. It's not extra cash.",
+                                 action: "Plan it")
                     }.buttonStyle(.plain)
                 }
                 ForEach(stale, id: \.id) { a in
@@ -227,6 +228,22 @@ struct HomeView: View {
         }
     }
 
+    /// "Rent · AED 2,500 · Due today · Payment not recorded"
+    private func billAlert(_ occ: Occurrence) -> some View {
+        let name = snapshot.item(for: occ)?.name ?? "A bill"
+        let state = snapshot.state(of: occ)
+        let when: String = switch state {
+        case .overdue: "Was due \(occ.dueDate.formatted(.dateTime.day().month(.abbreviated)))"
+        case .partiallyPaid: "Part paid, \(occ.remaining.compact) left"
+        default: "Due today"
+        }
+        return AlertRow(symbol: state == .overdue ? "exclamationmark.circle.fill" : "calendar.badge.exclamationmark",
+                        color: state == .overdue ? .red : .orange,
+                        text: "\(name) · \(occ.remaining.compact)",
+                        detail: state == .partiallyPaid ? when : "\(when) · Payment not recorded",
+                        action: "Record payment")
+    }
+
     /// Once there's real data, remind until a backup is saved, then monthly
     private var needsBackup: Bool {
         guard snapshot.entries().count >= 5 else { return false }
@@ -237,7 +254,7 @@ struct HomeView: View {
     // MARK: - Coming up
 
     @ViewBuilder private var comingUpSection: some View {
-        let bills = snapshot.upcomingBills(days: 14).filter { snapshot.state(of: $0) != .overdue }.prefix(4)
+        let bills = snapshot.upcomingBills(days: 14).filter { ![.overdue, .dueToday, .partiallyPaid].contains(snapshot.state(of: $0)) }.prefix(3)
         Section {
             if bills.isEmpty {
                 Button { selectTab(.plan) } label: {
@@ -269,7 +286,7 @@ struct HomeView: View {
             HStack {
                 Text("Coming up")
                 Spacer()
-                Button("View plan") { selectTab(.plan) }.font(.caption)
+                Button("View plan") { selectTab(.plan) }.font(.subheadline)
             }
         }
     }
@@ -330,25 +347,23 @@ struct HomeView: View {
     }
 
     private var cashAccountCount: String {
-        let n = snapshot.accounts.filter { $0.kind.isAsset && $0.kind != .investment }.count
+        let n = snapshot.cashAccounts.count
         return n == 1 ? "1 account" : "\(n) accounts"
     }
 
     // MARK: - Explanations
 
     private var cashExplanation: Explanation {
-        let items = snapshot.accounts.filter { $0.kind.isAsset && $0.kind != .investment }
-            .map { BreakdownItem(label: $0.name, amount: snapshot.balance($0.id)) }
+        let items = snapshot.cashAccounts.map { BreakdownItem(label: $0.name, amount: snapshot.balance($0.id)) }
         return Explanation(title: "Cash & bank", total: snapshot.cashAndBank,
-                           definition: "The recorded balances of your cash, bank and savings accounts. Investments and debts aren't included.",
+                           definition: "The recorded balances of your cash, bank and savings accounts: all the money you have, before bills. Safe to spend starts from the spending accounts among them. Investments, debts and accounts left out of net worth aren't included.",
                            sections: [("Accounts", items, "")])
     }
 
     private var debtExplanation: Explanation {
-        let items = snapshot.accounts.filter { $0.kind.isLiability }
-            .map { BreakdownItem(label: $0.name, amount: snapshot.balance($0.id).negated) }
+        let items = snapshot.debtAccounts.map { BreakdownItem(label: $0.name, amount: snapshot.balance($0.id).negated) }
         return Explanation(title: "Total debt", total: snapshot.totalDebt,
-                           definition: "What you currently owe on cards and loans. Future interest isn't included.",
+                           definition: "What you currently owe on cards and loans, in full. Only each month's payment is held back from Safe to spend. Future interest isn't included.",
                            sections: [("Owed", items, "")])
     }
 }
@@ -363,9 +378,9 @@ struct FigureCard: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.caption.weight(.semibold)).foregroundStyle(tint)
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(tint)
                 Text(value).font(.title3.bold()).monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
@@ -381,16 +396,75 @@ struct AlertRow: View {
     let symbol: String
     let color: Color
     let text: String
+    var detail: String? = nil
     let action: String
 
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
             Image(systemName: symbol).foregroundStyle(color)
-            Text(text).font(.subheadline)
-            Spacer()
-            Text(action).font(.caption.weight(.semibold)).foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(text)
+                if let detail { Text(detail).font(.subheadline).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 8)
+            Text(action).font(.subheadline.weight(.semibold)).foregroundStyle(.tint)
+                .multilineTextAlignment(.trailing)
         }
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// "Is this your Rent payment?" A payment already recorded that looks like an
+/// unpaid bill. Linking only marks the bill paid; it never records money again.
+struct BillLinkCard: View {
+    @Environment(LedgerStore.self) private var store
+    let suggestion: BillSuggestion
+    let snapshot: FinanceSnapshot
+    @State private var error: String?
+
+    var body: some View {
+        let s = suggestion
+        let from = snapshot.account(s.payment.fromAccountId)?.name ?? "your account"
+        let when = s.entry.date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
+        let what = s.entry.kind == .expense ? "An expense" : "A payment"
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(s.item.name).font(.headline)
+                        Text("Bill due \(s.occurrence.dueDate.formatted(.dateTime.day().month(.abbreviated)))")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(s.occurrence.remaining.formatted).font(.headline).monospacedDigit()
+                }
+                Text("\(what) of \(s.payment.amount.formatted) (\"\(s.entry.memo)\") was recorded from \(from) on \(when). Your \(s.item.name) bill still shows unpaid.")
+                    .font(.subheadline)
+                Text(s.isPartial
+                     ? "Linking counts it as part of \(s.item.name), leaving \((s.occurrence.remaining - s.payment.amount).formatted) to pay. It won't record another expense or change your balance."
+                     : "Linking marks the bill paid. It won't record another expense or change your balance.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                FieldError(message: error)
+                HStack {
+                    Button("Link to \(s.item.name)") {
+                        do { try store.match(occurrenceId: s.occurrence.id, entryId: s.entry.id) }
+                        catch { self.error = error.localizedDescription }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Not this bill") {
+                        try? store.dismissBillMatch(entryId: s.entry.id, occurrenceId: s.occurrence.id)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .padding(.vertical, 4)
+        } header: {
+            Text("Is this your \(s.item.name) payment?")
+        }
     }
 }
 

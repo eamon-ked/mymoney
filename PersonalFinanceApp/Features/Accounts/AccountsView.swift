@@ -40,10 +40,10 @@ struct AccountsView: View {
                 Section {
                     let worth = snapshot.netWorth
                     SummaryBanner(title: "Net worth", amount: worth.total.compact,
-                                  caption: worth.total.isNegative ? "You owe more than you own right now" : "What you own minus what you owe",
+                                  caption: netWorthCaption(worth),
                                   tint: worth.total.isNegative ? .red : Palette.accounts,
                                   action: { explanation = netWorthExplanation(worth) }) {
-                        BannerFigures(figures: [("Own", worth.assets.compact), ("Owe", worth.liabilities.compact)])
+                        BannerFigures(figures: [("You own", worth.assets.compact), ("You owe", worth.liabilities.compact)])
                     }
                     .bannerRow()
                 }
@@ -67,7 +67,11 @@ struct AccountsView: View {
                             HStack {
                                 Text(section.rawValue)
                                 Spacer()
-                                Text(accounts.map { snapshot.balance($0.id) }.sum(store.currency).compact).monospacedDigit()
+                                let total = accounts.map { snapshot.balance($0.id) }.sum(store.currency)
+                                // Debt is an amount owed, never a minus sign
+                                Text(section.contains(.creditCard) || section.contains(.loan)
+                                     ? "\(total.negated.compact) owed" : total.compact)
+                                    .monospacedDigit()
                             }
                         } footer: {
                             if section == .cash {
@@ -116,6 +120,16 @@ struct AccountsView: View {
         }
     }
 
+    /// Net worth with context: a big loan makes it negative, and that's said plainly
+    private func netWorthCaption(_ worth: NetWorth) -> String {
+        guard worth.total.isNegative else { return "What you own minus what you owe" }
+        let biggest = snapshot.debtAccounts.max { snapshot.balance($0.id).negated < snapshot.balance($1.id).negated }
+        if let biggest, snapshot.balance(biggest.id).negated.minorUnits * 2 > worth.liabilities.minorUnits {
+            return "You owe more than you own, mostly on \(biggest.name). That's usual while paying off a large loan."
+        }
+        return "You owe more than you own right now"
+    }
+
     private func netWorthExplanation(_ worth: NetWorth) -> Explanation {
         let included = snapshot.accounts.filter { $0.includeInNetWorth }
         let owned = included.filter { $0.kind.isAsset }.map { BreakdownItem(label: $0.name, amount: snapshot.balance($0.id)) }
@@ -136,7 +150,11 @@ struct AccountRow: View {
     var body: some View {
         ListRow(title: account.name, caption: caption, symbol: account.icon.isEmpty ? AccountStyle.icon(for: account.kind) : account.icon,
                 color: Color(hex: account.colorHex)) {
-            AmountPill(snapshot.balance(account.id))
+            if account.kind.isLiability {
+                AmountPill(owed: snapshot.balance(account.id))
+            } else {
+                AmountPill(snapshot.balance(account.id))
+            }
         }
     }
 

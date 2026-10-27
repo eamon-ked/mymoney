@@ -69,6 +69,10 @@ struct SafeToSpendView: View {
                         if let amount = result.amount {
                             Text(amount.isNegative ? Money.zero(store.currency).formatted : amount.formatted)
                                 .font(.largeTitle.bold()).monospacedDigit()
+                            if amount.isNegative {
+                                Label("Short by \(amount.magnitude.formatted)", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.headline).foregroundStyle(.red)
+                            }
                             Text("Safe to spend through \(result.periodEnd.formatted(date: .long, time: .omitted))")
                                 .foregroundStyle(.secondary)
                             statusBadges(result)
@@ -134,7 +138,7 @@ struct SafeToSpendView: View {
                 } label: {
                     VStack(alignment: .leading) {
                         Text(item.label)
-                        if let d = item.detail { Text(d).font(.caption).foregroundStyle(.orange) }
+                        if let d = item.detail { Text(d).font(.footnote).foregroundStyle(.orange) }
                     }
                 }
             }
@@ -157,14 +161,37 @@ struct SafeToSpendView: View {
         }
 
         if !result.categoryReservations.isEmpty {
-            Section("Budget kept for essentials · −\(result.categoryReservationsTotal.compact)") {
+            Section {
                 ForEach(result.categoryReservations) { item in
                     LabeledContent(item.label, value: "−" + item.amount.compact)
                 }
+            } header: {
+                Text("Budget kept for essentials · −\(result.categoryReservationsTotal.compact)")
+            } footer: {
+                Text("What's left to spend in categories you keep out of safe to spend. Money planned for a bill is only held back once, as the bill above.")
             }
         }
 
         Section {
+            LabeledContent("Spendable money", value: result.spendableTotal.formatted)
+            LabeledContent("Bills & commitments", value: "−" + result.obligationsTotal.formatted)
+            LabeledContent("Protected savings", value: "−" + result.reservesTotal.formatted)
+            if !result.categoryReservations.isEmpty {
+                LabeledContent("Budget kept for essentials", value: "−" + result.categoryReservationsTotal.formatted)
+            }
+            LabeledContent("Safety buffer", value: "−" + result.buffer.formatted)
+            if let amount = result.amount {
+                LabeledContent {
+                    Text(Money.max(amount, .zero(store.currency)).formatted).bold()
+                } label: { Text("Safe to spend").bold() }
+                if amount.isNegative {
+                    LabeledContent { Text(amount.magnitude.formatted).bold().foregroundStyle(.red) } label: {
+                        Text("Short by").bold().foregroundStyle(.red)
+                    }
+                }
+            }
+        } header: {
+            Text("Adding it up")
         } footer: {
             Text(budgetDifference)
         }

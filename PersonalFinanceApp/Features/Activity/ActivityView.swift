@@ -165,12 +165,20 @@ struct EntryRow: View {
                     StatusBadge(text: "Deleted")
                 } else if record.needsReview {
                     StatusBadge(text: "New", color: .orange)
+                } else if let bill = paidBill {
+                    StatusBadge(text: bill.direction == .inflow ? "Received" : "Bill paid", color: .green)
                 } else if record.cleared == .reconciled {
                     Image(systemName: "checkmark.seal.fill").font(.caption2).foregroundStyle(.secondary)
                         .accessibilityLabel("Reconciled")
                 }
             }
         }
+    }
+
+    /// The bill this pays, so a payment and its bill are visibly the same thing
+    private var paidBill: PlannedItem? {
+        guard let id = record.occurrenceId, let occ = snapshot.occurrences.first(where: { $0.id == id }) else { return nil }
+        return snapshot.item(for: occ)
     }
 
     /// A card or loan payment has no category, so it takes the debt's look
@@ -212,6 +220,10 @@ struct EntryRow: View {
         }
         if let category, record.memo != category.name { parts.append(category.name) }
         parts.append(contentsOf: sheet.map(\.name))
+        // Which bill it paid, when the description doesn't already say
+        if record.kind == .expense, let bill = paidBill, !record.memo.localizedCaseInsensitiveContains(bill.name) {
+            parts.append("\(bill.name) bill")
+        }
         if record.kind == .adjustment || record.kind == .reconciliation { parts.append("Correction") }
         return parts.joined(separator: " · ")
     }

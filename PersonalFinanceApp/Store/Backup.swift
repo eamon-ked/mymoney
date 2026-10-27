@@ -152,11 +152,13 @@ struct EntryDTO: Codable {
     var lines: [LineDTO]
     var createdAt: Date
     var updatedAt: Date
+    var dismissedOccurrenceIds: [UUID]?
 
     init(_ r: EntryRecord) {
         id = r.id; kindRaw = r.kindRaw; date = r.date; statusRaw = r.statusRaw; clearedRaw = r.clearedRaw
         memo = r.memo; notes = r.notes; idempotencyKey = r.idempotencyKey; occurrenceId = r.occurrenceId
         replacesId = r.replacesId; createdAt = r.createdAt; updatedAt = r.updatedAt
+        dismissedOccurrenceIds = r.dismissedOccurrenceIds.isEmpty ? nil : r.dismissedOccurrenceIds
         lines = r.lines.map { LineDTO(accountId: $0.accountId, minorUnits: $0.minorUnits, currency: $0.currency) }
     }
 
@@ -240,17 +242,20 @@ struct OccurrenceDTO: Codable {
     var paidEntryIds: [UUID]
     var skipped: Bool
     var updatedAt: Date
+    var settledEstimateMinor: Int64?
 
     init(_ r: OccurrenceRecord) {
         id = r.id; itemId = r.itemId; dueDate = r.dueDate; expectedMinor = r.expectedMinor; paidMinor = r.paidMinor
         currency = r.currency; isEstimate = r.isEstimate; paidEntryIds = r.paidEntryIds; skipped = r.skipped; updatedAt = r.updatedAt
+        settledEstimateMinor = r.settledEstimateMinor
     }
 
     func record() -> OccurrenceRecord {
         let r = OccurrenceRecord(Occurrence(id: id, itemId: itemId, dueDate: dueDate,
                                             expected: Money(minorUnits: expectedMinor, currency: currency), isEstimate: isEstimate,
                                             paid: Money(minorUnits: paidMinor, currency: currency), paidEntryIds: paidEntryIds,
-                                            skipped: skipped))
+                                            skipped: skipped,
+                                            settledEstimate: settledEstimateMinor.map { Money(minorUnits: $0, currency: currency) }))
         r.updatedAt = updatedAt
         return r
     }
@@ -410,6 +415,7 @@ extension LedgerStore {
             record.clearedRaw = e.clearedRaw
             record.createdAt = e.createdAt
             record.updatedAt = e.updatedAt
+            record.dismissedOccurrenceIds = e.dismissedOccurrenceIds ?? []
             context.insert(record)
             for l in e.lines {
                 let line = LineRecord(Line(accountId: l.accountId, amount: Money(minorUnits: l.minorUnits, currency: l.currency)))

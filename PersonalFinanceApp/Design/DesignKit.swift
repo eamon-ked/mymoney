@@ -89,6 +89,8 @@ struct SummaryBanner<Footer: View>: View {
     let title: String
     let amount: String
     var caption: String? = nil
+    /// Said loudly under the amount, e.g. "Short by AED 103.33"
+    var alert: String? = nil
     var tint: Color
     var action: (() -> Void)? = nil
     @ViewBuilder var footer: () -> Footer
@@ -114,6 +116,12 @@ struct SummaryBanner<Footer: View>: View {
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
                 .contentTransition(.numericText())
+            if let alert {
+                Label(alert, systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Capsule().fill(.white.opacity(0.22)))
+            }
             if let caption {
                 Text(caption)
                     .font(.footnote)
@@ -123,7 +131,7 @@ struct SummaryBanner<Footer: View>: View {
             footer()
             if action != nil {
                 Label("How is this worked out?", systemImage: "info.circle")
-                    .font(.caption.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .padding(.top, 2)
                     .opacity(0.9)
             }
@@ -138,8 +146,8 @@ struct SummaryBanner<Footer: View>: View {
 }
 
 extension SummaryBanner where Footer == EmptyView {
-    init(title: String, amount: String, caption: String? = nil, tint: Color, action: (() -> Void)? = nil) {
-        self.init(title: title, amount: amount, caption: caption, tint: tint, action: action, footer: { EmptyView() })
+    init(title: String, amount: String, caption: String? = nil, alert: String? = nil, tint: Color, action: (() -> Void)? = nil) {
+        self.init(title: title, amount: amount, caption: caption, alert: alert, tint: tint, action: action, footer: { EmptyView() })
     }
 }
 
@@ -152,7 +160,7 @@ struct BannerFigures: View {
             ForEach(figures, id: \.label) { f in
                 VStack(spacing: 2) {
                     Text(f.value).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                    Text(f.label).font(.caption2).lineLimit(1).minimumScaleFactor(0.8).opacity(0.85)
+                    Text(f.label).font(.footnote).lineLimit(1).minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -200,7 +208,7 @@ struct ListRow<Trailing: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).lineLimit(2)
                 if let caption, !caption.isEmpty {
-                    Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(caption).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
                 }
             }
             Spacer(minLength: 8)
@@ -221,6 +229,12 @@ struct AmountPill: View {
     init(_ money: Money, style: PillStyle? = nil) {
         self.text = money.compact
         self.style = style ?? (money.isNegative ? .negative : .neutral)
+    }
+
+    /// A card or loan balance: what's owed, as a positive amount and in words, never a minus sign
+    init(owed balance: Money) {
+        self.text = balance.isNegative ? "\(balance.magnitude.compact) owed" : balance.compact
+        self.style = balance.isNegative ? .warning : .neutral
     }
 
     init(text: String, style: PillStyle = .neutral) {
@@ -266,7 +280,7 @@ struct StatusBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(.caption.weight(.semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

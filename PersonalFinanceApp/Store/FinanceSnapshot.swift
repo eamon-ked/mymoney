@@ -117,13 +117,19 @@ struct FinanceSnapshot {
 
     var netWorth: NetWorth { ledger.netWorth() }
 
-    var cashAndBank: Money {
-        accounts.filter { $0.kind.isAsset && $0.kind != .investment }.map { balance($0.id) }.sum(currency)
+    /// Cash, bank and savings accounts counted in net worth: the same accounts as "Own" on Accounts, less investments
+    var cashAccounts: [LedgerAccountRecord] {
+        accounts.filter { $0.kind.isAsset && $0.kind != .investment && $0.includeInNetWorth }
     }
 
-    var totalDebt: Money {
-        accounts.filter { $0.kind.isLiability }.map { balance($0.id).negated }.sum(currency)
+    var cashAndBank: Money { cashAccounts.map { balance($0.id) }.sum(currency) }
+
+    var debtAccounts: [LedgerAccountRecord] {
+        accounts.filter { $0.kind.isLiability && $0.includeInNetWorth }
     }
+
+    /// Everything owed on cards and loans, as a positive amount
+    var totalDebt: Money { debtAccounts.map { balance($0.id).negated }.sum(currency) }
 
     /// When each account's balance was last confirmed: reconciled, or its newest entry
     var lastConfirmed: [UUID: Date] {
@@ -266,6 +272,34 @@ struct FinanceSnapshot {
         }
     }
 
+    /// Payments already recorded that look like an unpaid bill but aren't linked to it.
+    /// Each bill is suggested once, for its best match; nothing is ever linked without asking.
+    var billSuggestions: [BillSuggestion] {
+        guard let since = calendar.date(byAdding: .day, value: -35, to: today) else { return [] }
+        let infos = Dictionary(accountRecords.map { ($0.id, $0.info) }, uniquingKeysWith: { a, _ in a })
+        var best: [UUID: (BillSuggestion, Int)] = [:]
+        for record in entryRecords where record.status == .posted && record.occurrenceId == nil && record.date >= since {
+            guard let payment = BillPayment(record.entry, accounts: infos) else { continue }
+            let dismissed = Set(record.dismissedOccurrenceIds)
+            guard let match = BillMatcher.candidates(for: payment, occurrences: occurrences, items: items, calendar: calendar)
+                .first(where: { !dismissed.contains($0.occurrenceId) }),
+                  let occ = occurrences.first(where: { $0.id == match.occurrenceId }),
+                  let item = item(for: occ) else { continue }
+            if let current = best[occ.id], current.1 >= match.score { continue }
+            best[occ.id] = (BillSuggestion(entry: record, payment: payment, occurrence: occ, item: item, isPartial: match.isPartial),
+                            match.score)
+        }
+        return best.values.map(\.0).sorted { $0.occurrence.dueDate < $1.occurrence.dueDate }
+    }
+
+    /// Bills a new payment could be, best first, for the "This pays …" option when saving
+    func billCandidates(for payment: BillPayment) -> [(occurrence: Occurrence, item: PlannedItem, isPartial: Bool)] {
+        BillMatcher.candidates(for: payment, occurrences: occurrences, items: items, calendar: calendar).compactMap { m in
+            guard let occ = occurrences.first(where: { $0.id == m.occurrenceId }), let item = item(for: occ) else { return nil }
+            return (occ, item, m.isPartial)
+        }
+    }
+
     func progress(of goal: Reserve) -> GoalProgress? {
         guard let target = goal.target else { return nil }
         return GoalCalculator.progress(saved: goal.amount, target: target, targetDate: goal.targetDate, today: today, calendar: calendar)
@@ -288,3 +322,13 @@ extension FinanceSnapshot {
     }
 }
 
+/// A recorded payment that looks like an unpaid bill
+struct BillSuggestion: Identifiable {
+    let entry: EntryRecord
+    let payment: BillPayment
+    let occurrence: Occurrence
+    let item: PlannedItem
+    let isPartial: Bool
+
+    var id: UUID { occurrence.id }
+}

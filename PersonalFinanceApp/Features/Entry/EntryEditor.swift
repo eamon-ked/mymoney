@@ -38,6 +38,8 @@ struct EntryEditor: View {
     @State private var error: String?
     @State private var amountError: String?
     @State private var saving = false
+    /// "This pays Rent": off until the person ticks it
+    @State private var paysBill = false
     @State private var didLoad = false
     @State private var categoryTouched = false
     // Apple Intelligence: a sentence read into the fields, and category guesses
@@ -136,14 +138,13 @@ struct EntryEditor: View {
                 if kind != .adjustment {
                     Section {
                         DisclosureGroup("More options", isExpanded: $showMore) {
-                            DatePicker("Date", selection: $date, displayedComponents: .date)
                             TextField("Notes", text: $notes, axis: .vertical).lineLimit(1...4)
                             if editing == nil && kind != .transfer {
                                 Toggle("Repeats", isOn: $repeats)
                                 if repeats {
                                     FrequencyPicker(frequency: $frequency)
                                     Text("Future ones are added to Plan as expected, not as money already \(kind == .income ? "received" : "spent").")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(.footnote).foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -177,6 +178,7 @@ struct EntryEditor: View {
             .onChange(of: memo) { _, text in suggestFromHistory(text) }
             .onChange(of: kind) { _, _ in
                 categoryId = nil
+                paysBill = false
                 error = nil
                 if let draft = pendingDraft { pendingDraft = nil; fill(from: draft) }
             }
@@ -190,26 +192,27 @@ struct EntryEditor: View {
 
     @ViewBuilder private var expenseFields: some View {
         Section("Spent on") {
-            CategoryChips(categories: snapshot.expenseCategories, selection: $categoryId, touched: $categoryTouched)
-            TextField("Description (e.g. Carrefour)", text: $memo)
-                .accessibilityIdentifier("memoField")
+            CategoryGrid(categories: snapshot.expenseCategories, usage: categoryUsage, selection: $categoryId, touched: $categoryTouched)
             if categorySuggested && !categoryTouched { AIBadge(text: "Category suggested by Apple Intelligence") }
         }
         Section {
             AccountPicker(title: "Paid from", accounts: spendingAccounts, selection: $accountId)
-            if !showMore { LabeledContent("Date", value: dateLabel) }
+            DatePicker("Date", selection: $date, displayedComponents: .date)
+            TextField("Description (e.g. Carrefour)", text: $memo)
+                .accessibilityIdentifier("memoField")
         }
+        billSection
     }
 
     @ViewBuilder private var incomeFields: some View {
         Section("Received as") {
-            CategoryChips(categories: snapshot.incomeCategories, selection: $categoryId, touched: $categoryTouched)
-            TextField("Description (e.g. October salary)", text: $memo)
+            CategoryGrid(categories: snapshot.incomeCategories, usage: categoryUsage, selection: $categoryId, touched: $categoryTouched)
             if categorySuggested && !categoryTouched { AIBadge(text: "Category suggested by Apple Intelligence") }
         }
         Section {
             AccountPicker(title: "Paid into", accounts: spendingAccounts, selection: $accountId)
-            if !showMore { LabeledContent("Date", value: dateLabel) }
+            DatePicker("Date", selection: $date, displayedComponents: .date)
+            TextField("Description (e.g. October salary)", text: $memo)
         }
     }
 
@@ -217,11 +220,60 @@ struct EntryEditor: View {
         Section {
             AccountPicker(title: "From", accounts: spendingAccounts, selection: $accountId)
             AccountPicker(title: "To", accounts: spendingAccounts.filter { $0.id != accountId }, selection: $toAccountId)
+            DatePicker("Date", selection: $date, displayedComponents: .date)
             TextField("Description (optional)", text: $memo)
-            if !showMore { LabeledContent("Date", value: dateLabel) }
         } footer: {
-            Text("Moves money between your own accounts. It isn't income or spending.")
+            Text(snapshot.account(toAccountId)?.kind.isLiability == true
+                 ? "Pays down what you owe. It isn't spending: the purchases were counted when you made them."
+                 : "Moves money between your own accounts. It isn't income or spending.")
         }
+        billSection
+    }
+
+    /// The unpaid bill this money could be, from what's filled in so far
+    private var billCandidate: (occurrence: Occurrence, item: PlannedItem, isPartial: Bool)? {
+        guard kind == .expense || kind == .transfer, editing?.occurrenceId == nil,
+              let amount, amount.isPositive, let accountId else { return nil }
+        let to = snapshot.account(toAccountId)
+        if kind == .transfer && to?.kind.isLiability != true { return nil }
+        let payment = BillPayment(date: date, amount: amount, fromAccountId: accountId,
+                                  categoryId: kind == .expense ? categoryId : nil,
+                                  debtId: kind == .transfer ? to?.id : nil, memo: memo)
+        let dismissed = Set(editing?.dismissedOccurrenceIds ?? [])
+        return snapshot.billCandidates(for: payment).first { !dismissed.contains($0.occurrence.id) }
+    }
+
+    /// Asks, never assumes: linking marks the bill paid so it isn't held back or counted twice
+    @ViewBuilder private var billSection: some View {
+        if let bill = billCandidate {
+            Section {
+                Toggle(isOn: $paysBill) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(bill.isPartial ? "Part of \(bill.item.name)" : "This pays \(bill.item.name)")
+                        Text("\(bill.occurrence.remaining.formatted) due \(bill.occurrence.dueDate.formatted(.dateTime.day().month(.abbreviated)))")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("paysBill")
+            } footer: {
+                Text(paysBill
+                     ? (bill.isPartial
+                        ? "\(bill.item.name) will show part paid, with \(((bill.occurrence.remaining - (amount ?? bill.occurrence.remaining))).formatted) left."
+                        : "\(bill.item.name) will show paid, and won't be held back from Safe to spend again.")
+                     : "Turn this on if it's the bill, so it isn't counted twice.")
+            }
+        }
+    }
+
+    /// How often each category was used lately, for putting the usual ones first
+    private var categoryUsage: [UUID: Int] {
+        var counts: [UUID: Int] = [:]
+        for record in snapshot.entryRecords.prefix(200) where record.status == .posted {
+            for line in record.lines where snapshot.account(line.accountId)?.kind.isCategory == true {
+                counts[line.accountId, default: 0] += 1
+            }
+        }
+        return counts
     }
 
     @ViewBuilder private var adjustmentFields: some View {
@@ -260,10 +312,6 @@ struct EntryEditor: View {
         } header: {
             AIBadge(text: "Describe it")
         }
-    }
-
-    private var dateLabel: String {
-        Calendar.current.isDateInToday(date) ? "Today" : date.formatted(date: .abbreviated, time: .omitted)
     }
 
     // MARK: - Loading and suggestions
@@ -421,18 +469,21 @@ struct EntryEditor: View {
         amountError = nil
         guard let amount else { amountError = "Enter an amount."; return }
         if kind != .adjustment && !amount.isPositive { amountError = "Enter an amount greater than zero."; return }
+        guard !saving else { return }
         saving = true
-        defer { saving = false }
         do {
-            let entry = try buildEntry(amount)
+            var entry = try buildEntry(amount)
+            if paysBill, let bill = billCandidate { entry.occurrenceId = bill.occurrence.id }
             if let editing {
                 try store.replace(editing.id, with: entry, notes: notes)
             } else {
                 try store.post(entry, notes: notes)
                 if repeats { try saveRepeat(amount) }
             }
+            // Stays disabled: the sheet is closing and the key already saved it once
             dismiss()
         } catch {
+            saving = false
             self.error = StoreError.from(error).errorDescription
         }
     }
@@ -509,46 +560,90 @@ struct AccountPicker: View {
     }
 }
 
-/// Large tappable category choices, with the full list behind "More"
-struct CategoryChips: View {
+/// The usual categories as large buttons that wrap, with every category behind "All categories"
+struct CategoryGrid: View {
     let categories: [LedgerAccountRecord]
+    var usage: [UUID: Int] = [:]
     @Binding var selection: UUID?
     @Binding var touched: Bool
+
+    private static let shown = 8
+
+    /// Most used first; the chosen one is always visible
+    private var visible: [LedgerAccountRecord] {
+        let ranked = categories.enumerated()
+            .sorted { (usage[$0.element.id] ?? 0, -$0.offset) > (usage[$1.element.id] ?? 0, -$1.offset) }
+            .map(\.element)
+        var top = Array(ranked.prefix(Self.shown))
+        if let selection, !top.contains(where: { $0.id == selection }), let chosen = categories.first(where: { $0.id == selection }) {
+            top[top.count - 1] = chosen
+        }
+        return top
+    }
 
     var body: some View {
         if categories.isEmpty {
             Text("No categories yet. Add some in Budget.").foregroundStyle(.secondary)
         } else {
-            ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(categories, id: \.id) { c in
-                        let selected = selection == c.id
-                        Button {
-                            selection = c.id
-                            touched = true
-                        } label: {
-                            Label(c.name, systemImage: c.icon.isEmpty ? "tag.fill" : c.icon)
-                                .font(.subheadline.weight(.medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Capsule().fill(selected ? Color(hex: c.colorHex) : Color.gray.opacity(0.15)))
-                                .foregroundStyle(selected ? .white : .primary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                        .accessibilityIdentifier("category-\(c.name)")
-                        .id(c.id)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8)], spacing: 8) {
+                ForEach(visible, id: \.id) { c in
+                    let selected = selection == c.id
+                    Button {
+                        selection = c.id
+                        touched = true
+                    } label: {
+                        Label(c.name, systemImage: c.icon.isEmpty ? "tag.fill" : c.icon)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(selected ? Color(hex: c.colorHex) : Color.gray.opacity(0.15)))
+                            .foregroundStyle(selected ? .white : .primary)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier("category-\(c.name)")
                 }
-                .padding(.vertical, 4)
             }
-            // A category picked for the person (history or Apple Intelligence) scrolls into view
-            .onChange(of: selection) { _, id in
-                if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } }
-            }
+            .padding(.vertical, 4)
+            if categories.count > Self.shown {
+                NavigationLink {
+                    CategoryList(categories: categories, selection: $selection, touched: $touched)
+                } label: {
+                    Text("All categories (\(categories.count))")
+                }
             }
         }
+    }
+}
+
+/// Every category, searchable
+struct CategoryList: View {
+    let categories: [LedgerAccountRecord]
+    @Binding var selection: UUID?
+    @Binding var touched: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
+
+    var body: some View {
+        let shown = search.isEmpty ? categories : categories.filter { $0.name.localizedCaseInsensitiveContains(search) }
+        List(shown, id: \.id) { c in
+            Button {
+                selection = c.id
+                touched = true
+                dismiss()
+            } label: {
+                HStack {
+                    ListRow(title: c.name, symbol: c.icon.isEmpty ? "tag.fill" : c.icon, color: Color(hex: c.colorHex)) { EmptyView() }
+                    if selection == c.id { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .searchable(text: $search)
+        .navigationTitle("Category")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

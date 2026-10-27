@@ -71,7 +71,10 @@ enum CaptureService {
             ? try EntryFactory.income(capture.amount, to: account.info, category: category.info, date: capture.date, memo: memo, key: key)
             : try EntryFactory.expense(capture.amount, from: account.info, category: category.info, date: capture.date, memo: memo, key: key)
         // Siri entries the person spelled out in full don't need a second look
-        let review = capture.source != .siri || choices.accountId == nil || choices.categoryId == nil
+        // One that looks like an unpaid bill is never linked by itself: it waits for the person to say
+        let infos = Dictionary(snapshot.accountRecords.map { ($0.id, $0.info) }, uniquingKeysWith: { a, _ in a })
+        let looksLikeBill = BillPayment(entry, accounts: infos).map { !snapshot.billCandidates(for: $0).isEmpty } ?? false
+        let review = looksLikeBill || capture.source != .siri || choices.accountId == nil || choices.categoryId == nil
         let id = try store.postCaptured(entry, source: capture.source, cardHint: capture.cardHint, needsReview: review)
         return .saved(id)
     }

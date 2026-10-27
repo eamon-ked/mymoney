@@ -284,9 +284,21 @@ struct PayDebtSheet: View {
     @State private var interestText = ""
     @State private var feesText = ""
     @State private var error: String?
+    /// Opened from an account or Add: whether this settles the monthly bill. Off until the person says so.
+    @State private var countsAsBill = false
 
     private var snapshot: FinanceSnapshot { store.snapshot }
     private var owed: Money { snapshot.owed(debt.id) }
+
+    /// This card's or loan's unpaid monthly bill closest to today, when the sheet wasn't opened from one
+    private var suggestedBill: Occurrence? {
+        guard occurrence == nil, let item = snapshot.paymentItem(for: debt.id) else { return nil }
+        let s = snapshot
+        return s.occurrences
+            .filter { $0.itemId == item.id && !$0.skipped && $0.remaining.isPositive }
+            .filter { abs(s.calendar.dateComponents([.day], from: $0.dueDate, to: s.today).day ?? 999) <= 25 }
+            .min { abs($0.dueDate.timeIntervalSince(s.today)) < abs($1.dueDate.timeIntervalSince(s.today)) }
+    }
     private var amount: Money? { MoneyFormat.parse(amountText, currency: store.currency) }
 
     /// The split as it will be recorded
@@ -344,6 +356,14 @@ struct PayDebtSheet: View {
                          : "The estimate is one month of interest at \(debt.debtTerms?.rateText ?? "the rate"). Your lender's figure can differ a little; use your statement's amounts to match it exactly.")
                 }
 
+                if let bill = suggestedBill {
+                    Section {
+                        Toggle("Counts as the \(bill.dueDate.formatted(.dateTime.month(.wide))) payment", isOn: $countsAsBill)
+                    } footer: {
+                        Text("\(bill.remaining.formatted) was due \(bill.dueDate.formatted(.dateTime.day().month(.abbreviated))). Turn this on if this payment is it, so the bill shows paid and isn't held back from Safe to spend again.")
+                    }
+                }
+
                 if occurrence != nil {
                     Section {
                         Button("Skip this one") {
@@ -394,7 +414,7 @@ struct PayDebtSheet: View {
         guard split.overpaid.isZero else { error = "That's more than you owe. Lower the payment."; return }
         do {
             try store.payDebt(debt.id, from: fundingId, amount: amount, interest: split.interest, fees: split.fees,
-                              date: date, key: key, occurrenceId: occurrence?.id)
+                              date: date, key: key, occurrenceId: occurrence?.id ?? (countsAsBill ? suggestedBill?.id : nil))
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
     }

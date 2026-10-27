@@ -113,6 +113,9 @@ final class EntryRecord {
     var cardHint: String? = nil
     /// Saved automatically and not yet looked at
     var needsReview: Bool = false
+    /// Bills the person said this isn't a payment for, so they aren't suggested again.
+    /// An edit makes a new entry, which is looked at afresh.
+    var dismissedOccurrenceIds: [UUID] = []
 
     init(from entry: Entry, notes: String = "", replacesId: UUID? = nil) {
         self.id = entry.id
@@ -267,6 +270,8 @@ final class OccurrenceRecord {
     var paidEntryIds: [UUID]
     var skipped: Bool
     var updatedAt: Date
+    /// The estimate a payment settled, so voiding it can put the estimate back
+    var settledEstimateMinor: Int64? = nil
 
     init(_ o: Occurrence) {
         self.id = o.id
@@ -279,6 +284,7 @@ final class OccurrenceRecord {
         self.paidEntryIds = o.paidEntryIds
         self.skipped = o.skipped
         self.updatedAt = Date()
+        self.settledEstimateMinor = o.settledEstimate?.minorUnits
     }
 
     func update(from o: Occurrence) {
@@ -288,13 +294,15 @@ final class OccurrenceRecord {
         isEstimate = o.isEstimate
         paidEntryIds = o.paidEntryIds
         skipped = o.skipped
+        settledEstimateMinor = o.settledEstimate?.minorUnits
         updatedAt = Date()
     }
 
     var occurrence: Occurrence {
         Occurrence(id: id, itemId: itemId, dueDate: dueDate, expected: Money(minorUnits: expectedMinor, currency: currency),
                    isEstimate: isEstimate, paid: Money(minorUnits: paidMinor, currency: currency),
-                   paidEntryIds: paidEntryIds, skipped: skipped)
+                   paidEntryIds: paidEntryIds, skipped: skipped,
+                   settledEstimate: settledEstimateMinor.map { Money(minorUnits: $0, currency: currency) })
     }
 }
 

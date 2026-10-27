@@ -83,7 +83,7 @@ struct PlanView: View {
                     HStack {
                         Text("Your bills")
                         Spacer()
-                        Button("Add a bill") { editingItem = .new(.outflow) }.font(.caption)
+                        Button("Add a bill") { editingItem = .new(.outflow) }.font(.subheadline)
                     }
                 } footer: {
                     if !snapshot.items.filter({ $0.direction == .outflow }).isEmpty {
@@ -105,7 +105,7 @@ struct PlanView: View {
                         Text("Expected income")
                         Spacer()
                         if !snapshot.items.filter({ $0.direction == .inflow }).isEmpty {
-                            Button("Add") { editingItem = .new(.inflow) }.font(.caption)
+                            Button("Add") { editingItem = .new(.inflow) }.font(.subheadline)
                         }
                     }
                 } footer: {
@@ -212,7 +212,7 @@ struct PlanView: View {
             HStack {
                 Text("Savings")
                 Spacer()
-                if !snapshot.goals.isEmpty { Button("Add") { newGoal() }.font(.caption) }
+                if !snapshot.goals.isEmpty { Button("Add") { newGoal() }.font(.subheadline) }
             }
         } footer: {
             Text("Saved money stays in its account and is kept out of safe-to-spend, so you can't spend it by accident.")
@@ -418,46 +418,103 @@ struct PayOccurrenceSheet: View {
     @State private var date = Date()
     @State private var error: String?
     @State private var editing: PlannedItemSheet?
+    @State private var viewing: EntryRecord?
+    @State private var unlinking: EntryRecord?
 
     var body: some View {
         let snapshot = store.snapshot
-        let item = snapshot.item(for: occurrence)
+        // Follow the bill as payments are linked and unlinked while the sheet is open
+        let live = snapshot.occurrences.first { $0.id == occurrence.id } ?? occurrence
+        let item = snapshot.item(for: live)
         let inflow = item?.direction == .inflow
+        let payments = live.paidEntryIds.compactMap { id in snapshot.entryRecords.first { $0.id == id } }
+        let candidates = matchCandidates(snapshot, live: live, inflow: inflow)
+        let strong = candidates.filter { isStrongMatch($0, snapshot: snapshot, live: live) }
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Due", value: occurrence.dueDate.formatted(date: .long, time: .omitted))
-                    LabeledContent(occurrence.isEstimate ? "Estimated" : "Expected", value: occurrence.expected.formatted)
-                    if occurrence.paid.isPositive { LabeledContent("Already paid", value: occurrence.paid.formatted) }
-                }
-                Section(inflow ? "Mark as received" : "Mark as paid") {
-                    HStack {
-                        Text(store.currency).foregroundStyle(.secondary)
-                        TextField("Amount", text: $amountText).keyboardType(.decimalPad)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(live.remaining.isZero && live.paid.isPositive ? live.paid.formatted : live.remaining.formatted)
+                            .font(.largeTitle.bold()).monospacedDigit()
+                        Label(statusText(live, inflow: inflow), systemImage: statusSymbol(live))
+                            .font(.headline).foregroundStyle(statusColor(live))
                     }
-                    AccountPicker(title: inflow ? "Into" : "From", accounts: snapshot.accounts, selection: $accountId)
-                    Picker("Category", selection: $categoryId) {
-                        Text("Choose…").tag(nil as UUID?)
-                        ForEach(inflow ? snapshot.incomeCategories : snapshot.expenseCategories, id: \.id) {
-                            Text($0.name).tag($0.id as UUID?)
-                        }
+                    .padding(.vertical, 4)
+                    LabeledContent(inflow ? "Expected" : "Due", value: live.dueDate.formatted(date: .long, time: .omitted))
+                    LabeledContent(live.isEstimate ? "Estimated" : "Amount", value: live.expected.formatted)
+                    if let account = snapshot.account(item?.accountId) {
+                        LabeledContent(inflow ? "Into" : "From", value: account.name)
                     }
-                    DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
-                    Button(inflow ? "Record income" : "Record payment", action: pay)
-                        .bold()
                 }
 
-                let candidates = matchCandidates(snapshot, inflow: inflow)
-                if !candidates.isEmpty {
+                if !payments.isEmpty {
                     Section {
-                        ForEach(candidates, id: \.id) { record in
-                            Button { match(record) } label: { EntryRow(record: record, snapshot: snapshot) }
+                        ForEach(payments, id: \.id) { record in
+                            Button { viewing = record } label: { EntryRow(record: record, snapshot: snapshot) }
                                 .buttonStyle(.plain)
+                                .swipeActions { Button("Unlink") { unlinking = record }.tint(.orange) }
                         }
                     } header: {
-                        Text("Already recorded it?")
+                        Text(payments.count == 1 ? "Payment" : "Payments")
                     } footer: {
-                        Text("Tap the matching transaction to link it instead of recording it twice.")
+                        Text("Swipe a payment to unlink it if it wasn't for this bill. The transaction stays in Activity and your balance doesn't change; the bill reopens.")
+                    }
+                }
+
+                if live.skipped {
+                    Section {
+                        Button("Undo skip") { try? store.unskip(occurrenceId: live.id) }
+                    } footer: {
+                        Text("Skipped bills aren't held back from Safe to spend or counted in Budget.")
+                    }
+                } else if live.remaining.isPositive {
+                    if !strong.isEmpty {
+                        Section {
+                            ForEach(strong, id: \.id) { record in
+                                Button { match(record) } label: { EntryRow(record: record, snapshot: snapshot) }
+                                    .buttonStyle(.plain)
+                            }
+                        } header: {
+                            Text("Is this it?")
+                        } footer: {
+                            Text("Already recorded. Tap it to link it to this bill; nothing is recorded twice and your balance doesn't change.")
+                        }
+                    }
+
+                    Section {
+                        HStack {
+                            Text(store.currency).foregroundStyle(.secondary)
+                            TextField("Amount", text: $amountText).keyboardType(.decimalPad)
+                        }
+                        AccountPicker(title: inflow ? "Into" : "From", accounts: snapshot.accounts, selection: $accountId)
+                        Picker("Category", selection: $categoryId) {
+                            Text("Choose…").tag(nil as UUID?)
+                            ForEach(inflow ? snapshot.incomeCategories : snapshot.expenseCategories, id: \.id) {
+                                Text($0.name).tag($0.id as UUID?)
+                            }
+                        }
+                        DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
+                        Button(inflow ? "Record income" : "Record payment", action: pay)
+                            .bold()
+                    } header: {
+                        Text(strong.isEmpty ? (inflow ? "Record income" : "Record payment") : "Or record a new payment")
+                    } footer: {
+                        Text(inflow ? "Adds the money to the account and marks this as received."
+                             : "Records one payment from the account and marks this bill paid. Pay less than the full amount and the rest stays due.")
+                    }
+
+                    let others = candidates.filter { c in !strong.contains { $0.id == c.id } }
+                    if !others.isEmpty {
+                        Section {
+                            ForEach(others, id: \.id) { record in
+                                Button { match(record) } label: { EntryRow(record: record, snapshot: snapshot) }
+                                    .buttonStyle(.plain)
+                            }
+                        } header: {
+                            Text("Already recorded it?")
+                        } footer: {
+                            Text("Tap the matching transaction to link it instead of recording it twice.")
+                        }
                     }
                 }
 
@@ -465,20 +522,29 @@ struct PayOccurrenceSheet: View {
                     if let item {
                         Button(inflow ? "Change when it's expected" : "Change when it's due") { editing = .edit(item) }
                     }
-                    Button("Skip this one") {
-                        try? store.skip(occurrenceId: occurrence.id)
-                        dismiss()
+                    if !live.skipped && live.paid.isZero {
+                        // Stays open on Skipped, so it can be undone straight away
+                        Button("Skip this one") { try? store.skip(occurrenceId: live.id) }
                     }
                 }
                 if let error { Section { FieldError(message: error) } }
             }
             .navigationTitle(item?.name ?? "Scheduled")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .sheet(item: $editing, onDismiss: {
                 // Moved to another day: this one no longer exists as shown
                 if !store.snapshot.occurrences.contains(where: { $0.id == occurrence.id && $0.dueDate == occurrence.dueDate }) { dismiss() }
             }) { PlannedItemEditor(sheet: $0) }
+            .sheet(item: $viewing) { EntryDetailView(record: $0) }
+            .confirmationDialog("Unlink this payment?", isPresented: Binding(get: { unlinking != nil }, set: { if !$0 { unlinking = nil } }),
+                                titleVisibility: .visible, presenting: unlinking) { record in
+                Button("Unlink", role: .destructive) {
+                    do { try store.unlink(entryId: record.id) } catch { self.error = StoreError.from(error).errorDescription }
+                }
+            } message: { _ in
+                Text("The bill reopens. The transaction stays in Activity and your balance doesn't change.")
+            }
             .onAppear {
                 amountText = MoneyFormat.editable(occurrence.remaining)
                 accountId = item?.accountId ?? snapshot.accounts.first { $0.spendable }?.id
@@ -488,10 +554,51 @@ struct PayOccurrenceSheet: View {
         }
     }
 
+    /// One canonical state, worked out from the amount and the payments linked to it
+    private func statusText(_ o: Occurrence, inflow: Bool) -> String {
+        let state = store.snapshot.state(of: o)
+        switch state {
+        case .skipped: return "Skipped"
+        case .paid: return inflow ? "Received" : "Paid"
+        case .partiallyPaid: return "Part \(inflow ? "received" : "paid"): \(o.paid.formatted) of \(o.expected.formatted), \(o.remaining.formatted) left"
+        case .overdue: return inflow ? "Not received yet · was expected \(o.dueDate.formatted(.dateTime.day().month(.abbreviated)))"
+                                     : "Not paid yet · overdue"
+        case .dueToday: return inflow ? "Expected today" : "Due today · payment not recorded"
+        case .scheduled: return inflow ? "Not received yet" : "Not paid yet"
+        }
+    }
+
+    private func statusSymbol(_ o: Occurrence) -> String {
+        switch store.snapshot.state(of: o) {
+        case .paid: return "checkmark.circle.fill"
+        case .skipped: return "arrow.uturn.forward.circle"
+        case .partiallyPaid: return "circle.lefthalf.filled"
+        case .overdue: return "exclamationmark.circle.fill"
+        default: return "circle"
+        }
+    }
+
+    private func statusColor(_ o: Occurrence) -> Color {
+        switch store.snapshot.state(of: o) {
+        case .paid: return .green
+        case .overdue: return .red
+        case .dueToday, .partiallyPaid: return .orange
+        default: return .secondary
+        }
+    }
+
+    /// A recorded payment the bill matcher thinks is this bill
+    private func isStrongMatch(_ record: EntryRecord, snapshot: FinanceSnapshot, live: Occurrence) -> Bool {
+        guard !record.dismissedOccurrenceIds.contains(live.id) else { return false }
+        let infos = Dictionary(snapshot.accountRecords.map { ($0.id, $0.info) }, uniquingKeysWith: { a, _ in a })
+        guard let payment = BillPayment(record.entry, accounts: infos) else { return false }
+        return snapshot.billCandidates(for: payment).contains { $0.occurrence.id == live.id }
+    }
+
     /// Recent unlinked entries in the same direction, closest amount first
-    private func matchCandidates(_ snapshot: FinanceSnapshot, inflow: Bool) -> [EntryRecord] {
-        let window = snapshot.calendar.date(byAdding: .day, value: -20, to: occurrence.dueDate) ?? occurrence.dueDate
-        let target = occurrence.remaining.minorUnits
+    private func matchCandidates(_ snapshot: FinanceSnapshot, live: Occurrence, inflow: Bool) -> [EntryRecord] {
+        let window = snapshot.calendar.date(byAdding: .day, value: -20, to: live.dueDate) ?? live.dueDate
+        let target = live.remaining.minorUnits
         return snapshot.entries()
             .filter { $0.occurrenceId == nil && $0.date >= window && $0.kind == (inflow ? .income : .expense) }
             .sorted { abs(amount($0) - target) < abs(amount($1) - target) }
@@ -515,7 +622,7 @@ struct PayOccurrenceSheet: View {
     private func match(_ record: EntryRecord) {
         do {
             try store.match(occurrenceId: occurrence.id, entryId: record.id)
-            dismiss()
+            if store.snapshot.occurrences.first(where: { $0.id == occurrence.id })?.remaining.isZero ?? true { dismiss() }
         } catch { self.error = StoreError.from(error).errorDescription }
     }
 }

@@ -30,6 +30,12 @@ final class AppServices {
         store = LedgerStore(context: container.mainContext)
         #if DEBUG
         if args.contains("-demoData") { DemoData.load(into: store) }
+        // Test helper: -restoreBackup <path to a backup .json>, to see real data in the simulator
+        if let path = UserDefaults.standard.string(forKey: "restoreBackup"),
+           let data = FileManager.default.contents(atPath: path),
+           let backup = try? LedgerStore.readBackup(data) {
+            _ = try? store.restore(backup)
+        }
         #endif
     }
 }

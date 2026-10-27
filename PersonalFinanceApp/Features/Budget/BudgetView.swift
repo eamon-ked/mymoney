@@ -49,7 +49,7 @@ struct BudgetView: View {
                         VStack(spacing: 4) {
                             ProgressBar(value: progress.fraction, tint: .white)
                             Text("\(Int((progress.fraction * 100).rounded()))% of this month's money planned")
-                                .font(.caption2).foregroundStyle(.white.opacity(0.85))
+                                .font(.footnote).foregroundStyle(.white)
                         }
                         .padding(.horizontal, 24).padding(.top, 6)
                     }
@@ -208,8 +208,8 @@ struct BudgetView: View {
         let saved = snapshot.reserves.filter { snapshot.account($0.accountId)?.onBudget == true && !$0.amount.isZero }
             .map { BreakdownItem(label: $0.name, amount: $0.amount) }
         if !saved.isEmpty { sections.append(("Saved in goals", saved, "−")) }
-        return Explanation(title: "Available to allocate", total: available,
-                           definition: "Money in your budget accounts that doesn't have a plan yet. Planning money doesn't move it out of any account.",
+        return Explanation(title: "Not planned yet", total: available,
+                           definition: "Money in your budget accounts that doesn't have a job yet. It's not extra cash: it's part of the money you already have, and Safe to spend on Home is what you can actually spend. Planning money doesn't move it out of any account.",
                            sections: sections,
                            notes: ["Bills due this month are planned in their category automatically, and count until they're paid.",
                                    "You don't have to plan every dirham.", "Spending from a category lowers what's left in it, not this number.",
@@ -484,11 +484,13 @@ struct CategoryEditor: View {
     @State private var icon = "tag.fill"
     @State private var colorHex = "#3A7BD5"
     @State private var error: String?
+    @State private var showMore = false
 
     private let groups = ["Essentials", "Lifestyle", "Savings", "Other"]
     private let icons = ["tag.fill", "cart.fill", "house.fill", "car.fill", "bolt.fill", "fork.knife", "film.fill",
                          "bag.fill", "heart.fill", "airplane", "gift.fill", "graduationcap.fill", "pawprint.fill", "dumbbell.fill"]
     private let colors = ["#3A7BD5", "#2BA84A", "#F2A33A", "#E4572E", "#AF52DE", "#FF2D55", "#0E9AA7", "#8E8E93"]
+    private let colorNames = ["Blue", "Green", "Amber", "Red", "Purple", "Pink", "Teal", "Grey"]
 
     var body: some View {
         NavigationStack {
@@ -505,40 +507,53 @@ struct CategoryEditor: View {
                 if !isIncome {
                     Section {
                         Picker("Group", selection: $group) { ForEach(groups, id: \.self) { Text($0) } }
-                        Picker("At month end", selection: $policy) {
-                            ForEach(RolloverPolicy.allCases, id: \.self) { Text($0.label).tag($0) }
-                        }
-                        Toggle("Keep unspent money out of safe-to-spend", isOn: $reserve)
-                    } footer: {
-                        Text("Roll over: what's left stays here next month, and overspending carries until you cover it. Start fresh: leftovers go back to Available to allocate.")
                     }
                 }
-                Section("Look") {
-                    ScrollView(.horizontal, showsIndicators: false) {
+                Section("Icon") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 8)], spacing: 8) {
+                        ForEach(icons, id: \.self) { s in
+                            Button { icon = s } label: {
+                                IconBadge(symbol: s, color: icon == s ? Color(hex: colorHex) : .gray.opacity(0.4), size: 40)
+                                    .frame(minWidth: 44, minHeight: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(s.replacingOccurrences(of: ".fill", with: "").replacingOccurrences(of: ".", with: " "))
+                            .accessibilityAddTraits(icon == s ? .isSelected : [])
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                Section {
+                    DisclosureGroup("More options", isExpanded: $showMore) {
+                        if !isIncome {
+                            Picker("At month end", selection: $policy) {
+                                ForEach(RolloverPolicy.allCases, id: \.self) { Text($0.label).tag($0) }
+                            }
+                            Toggle("Keep unspent money out of safe-to-spend", isOn: $reserve)
+                            Text("Roll over: what's left stays here next month, and overspending carries until you cover it. Start fresh: leftovers go back to Not planned yet.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
                         HStack {
-                            ForEach(icons, id: \.self) { s in
-                                Button { icon = s } label: {
-                                    IconBadge(symbol: s, color: icon == s ? Color(hex: colorHex) : .gray.opacity(0.4), size: 36)
-                                }.buttonStyle(.plain)
+                            ForEach(Array(zip(colors, colorNames)), id: \.0) { c, label in
+                                Button { colorHex = c } label: {
+                                    Circle().fill(Color(hex: c)).frame(width: 30, height: 30)
+                                        .overlay(Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white)
+                                            .opacity(colorHex == c ? 1 : 0))
+                                        .frame(minWidth: 36, minHeight: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(label)
+                                .accessibilityAddTraits(colorHex == c ? .isSelected : [])
                             }
                         }
-                    }
-                    HStack {
-                        ForEach(colors, id: \.self) { c in
-                            Circle().fill(Color(hex: c)).frame(width: 28, height: 28)
-                                .overlay(Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white).opacity(colorHex == c ? 1 : 0))
-                                .onTapGesture { colorHex = c }
+                        if let editing {
+                            Button(editing.archived ? "Restore" : "Archive category", role: .destructive) {
+                                try? store.updateAccount(editing) { $0.archived.toggle() }
+                                dismiss()
+                            }
+                            Text("Archiving hides it from the budget and quick add. Past spending keeps its category.")
+                                .font(.footnote).foregroundStyle(.secondary)
                         }
-                    }
-                }
-                if let editing {
-                    Section {
-                        Button(editing.archived ? "Restore" : "Archive category", role: .destructive) {
-                            try? store.updateAccount(editing) { $0.archived.toggle() }
-                            dismiss()
-                        }
-                    } footer: {
-                        Text("Archiving hides it from the budget and quick add. Past spending keeps its category.")
                     }
                 }
                 if let error { Section { FieldError(message: error) } }

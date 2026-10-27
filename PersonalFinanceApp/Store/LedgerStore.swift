@@ -548,6 +548,11 @@ final class LedgerStore {
         guard let occ = fetch(OccurrenceRecord.self, #Predicate { $0.id == occurrenceId }).first,
               let item = plannedItem(occ.itemId),
               let account = account(accountId) else { throw StoreError.notFound }
+        // A retry of the same save returns the payment already made
+        if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first, existing.status == .posted {
+            return existing.id
+        }
+        try checkNotOverpaying(occ.occurrence, item: item, by: amount)
         if let debtId = item.debtId, item.direction == .outflow {
             guard let debt = self.account(debtId) else { throw StoreError.notFound }
             let split = DebtCalculator.split(payment: amount, owed: snapshot.balance(debtId).negated,
@@ -577,6 +582,10 @@ final class LedgerStore {
     /// Links an entry that is already posted (e.g. from the bank) to an occurrence
     func match(occurrenceId: UUID, entryId: UUID) throws {
         guard let record = entryRecord(entryId), record.status == .posted else { throw StoreError.notFound }
+        guard record.occurrenceId != occurrenceId else { return }
+        guard let occ = fetch(OccurrenceRecord.self, #Predicate { $0.id == occurrenceId }).first,
+              let item = plannedItem(occ.itemId) else { throw StoreError.notFound }
+        try checkNotOverpaying(occ.occurrence, item: item, by: paymentAmount(of: record.entry, direction: item.direction))
         if let previous = record.occurrenceId { removePayment(of: record.entry, from: previous) }
         record.occurrenceId = occurrenceId
         record.updatedAt = now()
@@ -584,12 +593,50 @@ final class LedgerStore {
         try commit()
     }
 
+    /// Takes a payment off its bill. The entry stays exactly as it was; the bill reopens.
+    func unlink(entryId: UUID) throws {
+        guard let record = entryRecord(entryId), let occ = record.occurrenceId else { throw StoreError.notFound }
+        if record.status == .posted { removePayment(of: record.entry, from: occ) }
+        record.occurrenceId = nil
+        // Unlinked on purpose: don't suggest the same bill straight back
+        record.dismissedOccurrenceIds.append(occ)
+        record.updatedAt = now()
+        try commit()
+    }
+
+    /// "Not a bill": this entry won't be suggested for that bill again
+    func dismissBillMatch(entryId: UUID, occurrenceId: UUID) throws {
+        guard let record = entryRecord(entryId) else { throw StoreError.notFound }
+        guard !record.dismissedOccurrenceIds.contains(occurrenceId) else { return }
+        record.dismissedOccurrenceIds.append(occurrenceId)
+        try commit()
+    }
+
     func skip(occurrenceId: UUID) throws {
+        try setSkipped(true, occurrenceId: occurrenceId)
+    }
+
+    func unskip(occurrenceId: UUID) throws {
+        try setSkipped(false, occurrenceId: occurrenceId)
+    }
+
+    private func setSkipped(_ skipped: Bool, occurrenceId: UUID) throws {
         guard let occ = fetch(OccurrenceRecord.self, #Predicate { $0.id == occurrenceId }).first else { throw StoreError.notFound }
         var o = occ.occurrence
-        o.skipped = true
+        o.skipped = skipped
         occ.update(from: o)
         try commit()
+    }
+
+    /// Money out can't settle more than is left on a bill. Estimates settle at
+    /// whatever was really paid, income can arrive larger than expected, and
+    /// paying more than a card or loan's monthly amount is an extra repayment.
+    private func checkNotOverpaying(_ occ: Occurrence, item: PlannedItem, by amount: Money) throws {
+        guard item.direction == .outflow, item.debtId == nil, !occ.isEstimate, amount > occ.remaining else { return }
+        if occ.remaining.isZero {
+            throw StoreError.invalid("\(item.name) is already paid. Unlink the earlier payment first if it was wrong.")
+        }
+        throw StoreError.invalid("That's more than the \(occ.remaining.formatted) left on \(item.name).")
     }
 
     /// Keeps occurrences generated through the horizon; call on launch and when a month starts

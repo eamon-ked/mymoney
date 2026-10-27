@@ -184,10 +184,10 @@ struct SafeToSpendIntent: AppIntent {
 // MARK: - From automations (Plus)
 
 struct LogApplePayIntent: AppIntent {
-    static let title: LocalizedStringResource = "Log Apple Pay Purchase"
+    static let title: LocalizedStringResource = "Log Card Purchase"
     static let description = IntentDescription("""
         Use in a Shortcuts automation: Automation › Transaction, then pass in the Card, Merchant and Amount. \
-        Each Apple Pay purchase is saved for you to review.
+        Each tap-to-pay purchase from Wallet is saved for you to review.
         """)
     static let isDiscoverable = true
 
@@ -286,8 +286,8 @@ struct NokaelShortcuts: AppShortcutsProvider {
             "I got paid in \(.applicationName)",
         ], shortTitle: "Add Income", systemImageName: "arrow.down.circle.fill")
         AppShortcut(intent: LogApplePayIntent(), phrases: [
-            "Log Apple Pay purchase in \(.applicationName)",
-        ], shortTitle: "Log Apple Pay", systemImageName: "wallet.pass.fill")
+            "Log a card purchase in \(.applicationName)",
+        ], shortTitle: "Log Card Purchase", systemImageName: "wallet.pass.fill")
         AppShortcut(intent: LogBankMessageIntent(), phrases: [
             "Read bank message in \(.applicationName)",
         ], shortTitle: "Read Bank Message", systemImageName: "message.fill")

@@ -68,9 +68,30 @@ public struct Allocation: Hashable, Codable, Sendable {
     }
 }
 
+/// A bill's due date in a month, counted as planned for its category whether or not it's paid yet
+public struct BudgetBill: Hashable, Sendable {
+    public var categoryId: UUID
+    public var month: String
+    /// What the bill is for: the larger of expected and paid
+    public var amount: Money
+    /// What's still to pay
+    public var unpaid: Money
+
+    public init(categoryId: UUID, month: String, amount: Money, unpaid: Money) {
+        self.categoryId = categoryId
+        self.month = month
+        self.amount = amount
+        self.unpaid = unpaid
+    }
+}
+
 public struct CategoryLine: Equatable, Sendable {
-    /// Planned for this month
+    /// Planned for this month by hand
     public let allocated: Money
+    /// Planned automatically so this month's bills are covered, on top of what was planned by hand
+    public let fromBills: Money
+    /// Bills due this month that aren't paid yet: planned, but not yet spent
+    public let unpaidBills: Money
     /// Net spending this month, positive
     public let spent: Money
     /// Brought forward from earlier months (rollover policy only)
@@ -79,6 +100,10 @@ public struct CategoryLine: Equatable, Sendable {
     public let remaining: Money
 
     public var isOverspent: Bool { remaining.isNegative }
+    /// Everything planned: by hand, carried in, and for bills
+    public var planned: Money { allocated + carriedIn + fromBills }
+    /// What's left of what was planned by hand. Safe to spend holds bills back as bills instead.
+    public var withoutBills: Money { remaining - fromBills }
 }
 
 public enum BudgetError: Error, Equatable, Sendable {
@@ -99,14 +124,17 @@ public struct Budget: Sendable {
     /// Money saved towards goals (and other set-asides) inside budget accounts.
     /// It already has a job, so it isn't available to plan again.
     public let saved: Money
+    /// Bills due each month. A category is always planned at least enough to cover them.
+    public let bills: [BudgetBill]
 
     public init(ledger: Ledger, categories: [BudgetCategory], allocations: [Allocation], calendar: Calendar,
-                saved: Money? = nil) {
+                saved: Money? = nil, bills: [BudgetBill] = []) {
         self.ledger = ledger
         self.categories = categories
         self.allocations = allocations
         self.calendar = calendar
         self.saved = saved ?? .zero(ledger.currency)
+        self.bills = bills
     }
 
     private var currency: String { ledger.currency }
@@ -140,19 +168,32 @@ public struct Budget: Sendable {
     }
 
     public func line(_ categoryId: UUID, month: String) -> CategoryLine {
-        let allocatedNow = allocated(categoryId, month: month)
-        let spentNow = spent(categoryId, month: month)
+        let categoryBills = bills.filter { $0.categoryId == categoryId }
         let policy = categories.first { $0.id == categoryId }?.policy ?? .rollover
         var carried = Money.zero(currency)
         if policy == .rollover {
+            // In order, since what a month's bills add depends on what was carried into it
             let earlierMonths = Set(allocations.filter { $0.categoryId == categoryId && $0.month < month }.map(\.month))
                 .union(spendingMonths(categoryId).filter { $0 < month })
-            for m in earlierMonths {
-                carried += allocated(categoryId, month: m) - spent(categoryId, month: m)
+                .union(categoryBills.map(\.month).filter { $0 < month })
+            for m in earlierMonths.sorted() {
+                let base = carried + allocated(categoryId, month: m)
+                carried = base + billTopUp(categoryBills, month: m, base: base) - spent(categoryId, month: m)
             }
         }
-        return CategoryLine(allocated: allocatedNow, spent: spentNow, carriedIn: carried,
-                            remaining: carried + allocatedNow - spentNow)
+        let allocatedNow = allocated(categoryId, month: month)
+        let spentNow = spent(categoryId, month: month)
+        let base = carried + allocatedNow
+        let topUp = billTopUp(categoryBills, month: month, base: base)
+        return CategoryLine(allocated: allocatedNow, fromBills: topUp,
+                            unpaidBills: categoryBills.filter { $0.month == month }.map(\.unpaid).sum(currency),
+                            spent: spentNow, carriedIn: carried, remaining: base + topUp - spentNow)
+    }
+
+    /// What a month's bills need beyond what's already planned for the category
+    private func billTopUp(_ categoryBills: [BudgetBill], month: String, base: Money) -> Money {
+        let due = categoryBills.filter { $0.month == month }.map(\.amount).sum(currency)
+        return Money.max(due - Money.max(base, .zero(currency)), .zero(currency))
     }
 
     /// Money not yet given a job, as of the month on screen. Negative means more
@@ -168,9 +209,11 @@ public struct Budget: Sendable {
     /// Total allocated this month, and the share of this month's planning funds it represents
     public func allocationProgress(month: String) -> (allocated: Money, planningFunds: Money, fraction: Double) {
         let allocatedNow = allocations.filter { $0.month == month }.map(\.amount).sum(currency)
-        // Saved money counts as planned: it has a job
-        let funds = allocatedNow + saved + availableToAllocate(month: month)
-        let fraction = funds.isPositive ? Double((allocatedNow + saved).minorUnits) / Double(funds.minorUnits) : 0
+        // Saved money and bills count as planned: they have a job
+        let forBills = categories.map { line($0.id, month: month).fromBills }.sum(currency)
+        let planned = allocatedNow + forBills + saved
+        let funds = planned + availableToAllocate(month: month)
+        let fraction = funds.isPositive ? Double(planned.minorUnits) / Double(funds.minorUnits) : 0
         return (allocatedNow, funds, min(max(fraction, 0), 1))
     }
 

@@ -103,14 +103,14 @@ struct FinanceDigest: Sendable {
         let month = snapshot.monthKey
         let lines = snapshot.expenseCategories.map { ($0, snapshot.budget.line($0.id, month: month)) }
         categories = lines.map { c, line in
-            let planned = line.allocated + line.carriedIn
+            let planned = line.planned
             return Category(name: c.name, group: c.group, planned: planned.formatted,
                             spent: line.spent.formatted, spentMinor: line.spent.minorUnits, remaining: line.remaining.formatted,
                             overBy: line.remaining.magnitude.formatted, overspent: line.isOverspent, used: !planned.isZero || !line.spent.isZero)
         }
         .sorted { $0.spentMinor > $1.spentMinor }
         spentThisMonth = lines.map { $0.1.spent }.sum(snapshot.currency).formatted
-        plannedThisMonth = lines.map { $0.1.allocated + $0.1.carriedIn }.sum(snapshot.currency).formatted
+        plannedThisMonth = lines.map { $0.1.planned }.sum(snapshot.currency).formatted
         incomeCategoryNames = snapshot.incomeCategories.map(\.name)
 
         transactions = snapshot.entries().prefix(400).map { record in

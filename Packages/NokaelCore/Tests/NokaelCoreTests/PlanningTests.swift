@@ -83,6 +83,39 @@ struct BudgetTests {
         try EntryFactory.openingBalance(Fixture.aed(amount), for: account ?? f.current, equity: f.equity, date: Fixture.date(2026, 10, 1))
     }
 
+    @Test("Bills count as planned in their category, before and after they're paid")
+    func billsArePlanned() throws {
+        func withRent(_ entries: [Entry], paid: Decimal) -> Budget {
+            let b = budget(entries, [])
+            return Budget(ledger: b.ledger, categories: b.categories, allocations: [], calendar: cal,
+                          bills: [BudgetBill(categoryId: f.rent.id, month: oct, amount: Fixture.aed(2800), unpaid: Fixture.aed(2800 - paid)),
+                                  BudgetBill(categoryId: f.rent.id, month: nov, amount: Fixture.aed(2800), unpaid: Fixture.aed(2800))])
+        }
+        // Not paid yet: planned, not yet spent, and out of what's left to plan
+        let unpaid = withRent([try opening(12000)], paid: 0).line(f.rent.id, month: oct)
+        #expect(unpaid.planned == Fixture.aed(2800))
+        #expect(unpaid.unpaidBills == Fixture.aed(2800))
+        #expect(unpaid.remaining == Fixture.aed(2800))
+        #expect(unpaid.withoutBills.isZero)
+        #expect(withRent([try opening(12000)], paid: 0).availableToAllocate(month: oct) == Fixture.aed(9200))
+
+        // Paid: spent, nothing left, and nothing carried into November
+        let paidEntries = [try opening(12000),
+                           try EntryFactory.expense(Fixture.aed(2800), from: f.current, category: f.rent, date: Fixture.date(2026, 10, 1))]
+        let paid = withRent(paidEntries, paid: 2800)
+        #expect(paid.line(f.rent.id, month: oct).remaining.isZero)
+        #expect(paid.availableToAllocate(month: oct) == Fixture.aed(9200))
+        #expect(paid.line(f.rent.id, month: nov).carriedIn.isZero)
+        #expect(paid.line(f.rent.id, month: nov).remaining == Fixture.aed(2800))
+
+        // Planning it by hand doesn't count it twice
+        let byHand = Budget(ledger: paid.ledger, categories: paid.categories,
+                            allocations: [Allocation(categoryId: f.rent.id, month: oct, amount: Fixture.aed(2800))], calendar: cal,
+                            bills: paid.bills)
+        #expect(byHand.line(f.rent.id, month: oct).fromBills.isZero)
+        #expect(byHand.availableToAllocate(month: oct) == Fixture.aed(9200))
+    }
+
     @Test("BUD-01: allocating creates no account transaction")
     func allocatingIsAPlan() throws {
         let b = budget([try opening(12000)], [Allocation(categoryId: f.groceries.id, month: oct, amount: Fixture.aed(2000))])

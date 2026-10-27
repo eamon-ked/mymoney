@@ -43,17 +43,33 @@ struct FinanceSnapshot {
             .map { BudgetCategory(id: $0.id, name: $0.name, group: $0.group, policy: $0.policy) }
         let reserves = store.fetch(ReserveRecord.self).filter { !$0.archived }.map(\.reserve)
         let budgetAccounts = Set(accounts.filter { $0.kind.isBalanceSheet && $0.onBudget }.map(\.id))
-        self.budget = Budget(ledger: ledger, categories: categories,
-                             allocations: store.fetch(AllocationRecord.self).map(\.allocation), calendar: store.calendar,
-                             saved: reserves.filter { budgetAccounts.contains($0.accountId) }.map(\.amount).sum(settings.currency))
-
         let itemRecords = store.fetch(PlannedItemRecord.self).filter { !$0.archived }
         self.itemRecords = Dictionary(itemRecords.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         self.items = itemRecords.map(\.item)
         let itemIds = Set(itemRecords.map(\.id))
-        self.occurrences = store.fetch(OccurrenceRecord.self).map(\.occurrence)
+        let occurrences = store.fetch(OccurrenceRecord.self).map(\.occurrence)
             .filter { itemIds.contains($0.itemId) }
             .sorted { $0.dueDate < $1.dueDate }
+        self.occurrences = occurrences
+
+        // Bills count as planned in their category. A loan's goes to Loan payments; a card's
+        // payment covers purchases already counted, so it isn't planned again.
+        let loanPayments = accounts.first { $0.kind == .expense && $0.name == "Loan payments" }?.id
+        let kinds = Dictionary(accounts.map { ($0.id, $0.kind) }, uniquingKeysWith: { a, _ in a })
+        let billItems = Dictionary(itemRecords.map(\.item).filter { $0.direction == .outflow }.map { ($0.id, $0) },
+                                   uniquingKeysWith: { a, _ in a })
+        let bills = occurrences.compactMap { occ -> BudgetBill? in
+            guard let item = billItems[occ.itemId], !occ.skipped else { return nil }
+            let loan = item.debtId.flatMap { kinds[$0] } == .loan
+            if item.debtId != nil && !loan { return nil }
+            guard let category = item.categoryId ?? (loan ? loanPayments : nil) else { return nil }
+            return BudgetBill(categoryId: category, month: BudgetMonth.key(for: occ.dueDate, calendar: store.calendar),
+                              amount: Money.max(occ.expected, occ.paid), unpaid: occ.remaining)
+        }
+        self.budget = Budget(ledger: ledger, categories: categories,
+                             allocations: store.fetch(AllocationRecord.self).map(\.allocation), calendar: store.calendar,
+                             saved: reserves.filter { budgetAccounts.contains($0.accountId) }.map(\.amount).sum(settings.currency),
+                             bills: bills)
         self.reserves = reserves
     }
 
@@ -140,7 +156,7 @@ struct FinanceSnapshot {
 
     var categoryReservations: [CategoryReservation] {
         accountRecords.filter { $0.kind == .expense && !$0.archived && $0.reserveInSafeToSpend }.map {
-            CategoryReservation(categoryId: $0.id, name: $0.name, remaining: budget.line($0.id, month: monthKey).remaining)
+            CategoryReservation(categoryId: $0.id, name: $0.name, remaining: budget.line($0.id, month: monthKey).withoutBills)
         }
     }
 

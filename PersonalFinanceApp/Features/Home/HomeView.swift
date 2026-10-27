@@ -284,7 +284,7 @@ struct HomeView: View {
                 Button { selectTab(.budget) } label: { Label("Plan this month's spending", systemImage: "chart.pie") }
             } else {
                 let lines = categories.map { snapshot.budget.line($0.id, month: month) }
-                let planned = lines.map { $0.allocated + $0.carriedIn }.sum(store.currency)
+                let planned = lines.map(\.planned).sum(store.currency)
                 let spent = lines.map(\.spent).sum(store.currency)
                 let over = categories.filter { snapshot.budget.line($0.id, month: month).isOverspent }.count
                 VStack(alignment: .leading, spacing: 8) {

@@ -211,7 +211,8 @@ struct BudgetView: View {
         return Explanation(title: "Available to allocate", total: available,
                            definition: "Money in your budget accounts that doesn't have a plan yet. Planning money doesn't move it out of any account.",
                            sections: sections,
-                           notes: ["You don't have to plan every dirham.", "Spending from a category lowers what's left in it, not this number.",
+                           notes: ["Bills due this month are planned in their category automatically, and count until they're paid.",
+                                   "You don't have to plan every dirham.", "Spending from a category lowers what's left in it, not this number.",
                                    "Safe to spend on Home is a different number: it holds back only bills due before payday, and treats what's left in categories like Groceries as money you can spend. Budget also takes out everything still owed on cards in your budget, and everything you've planned."])
     }
 }
@@ -224,7 +225,7 @@ struct BudgetRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            let planned = line.allocated + line.carriedIn
+            let planned = line.planned
             ListRow(title: category.name, caption: caption(planned: planned),
                     symbol: category.icon, color: Color(hex: category.colorHex)) {
                 AmountPill(text: pill(planned: planned),
@@ -241,6 +242,12 @@ struct BudgetRow: View {
     }
 
     private func caption(planned: Money) -> String {
+        // Bills are planned automatically; until they're paid they show as not yet spent
+        if line.unpaidBills.isPositive {
+            return line.spent.isPositive
+                ? "\(line.spent.compact) spent of \(planned.compact) · \(line.unpaidBills.compact) for bills not yet spent"
+                : "\(line.unpaidBills.compact) for bills, not yet spent"
+        }
         if planned.isPositive { return "\(line.spent.compact) spent of \(planned.compact)" }
         return line.spent.isPositive ? "\(line.spent.compact) spent, nothing planned" : "Not planned this month"
     }
@@ -286,11 +293,17 @@ struct CategoryDetailView: View {
                                 .onSubmit(saveAllocation)
                                 .accessibilityIdentifier("allocationField")
                         }
+                        if line.fromBills.isPositive {
+                            LabeledContent("Added for bills", value: line.fromBills.compact)
+                        }
                         if !line.carriedIn.isZero {
                             LabeledContent(line.carriedIn.isNegative ? "Overspent last month" : "Carried from last month",
                                            value: line.carriedIn.signed)
                         }
                         LabeledContent("Spent", value: line.spent.compact)
+                        if line.unpaidBills.isPositive {
+                            LabeledContent("Bills not yet spent", value: line.unpaidBills.compact)
+                        }
                         LabeledContent {
                             Text(line.remaining.compact).bold().foregroundStyle(line.isOverspent ? .red : .primary)
                         } label: {
@@ -300,7 +313,9 @@ struct CategoryDetailView: View {
                     } footer: {
                         Text(line.isOverspent
                              ? "Overspent by \(line.remaining.magnitude.compact). Move money in from another category to cover it."
-                             : "Planning doesn't move money out of your accounts. It only sets how much you mean to spend.")
+                             : line.fromBills.isPositive
+                                ? "This month's bills are planned here automatically, so they're counted before they're paid. Planning doesn't move money out of your accounts."
+                                : "Planning doesn't move money out of your accounts. It only sets how much you mean to spend.")
                     }
 
                     Section("This month's spending") {

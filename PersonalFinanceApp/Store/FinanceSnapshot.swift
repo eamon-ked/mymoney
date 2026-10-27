@@ -238,6 +238,18 @@ struct FinanceSnapshot {
         return balance(accountId) - claimed
     }
 
+    /// Unpaid bills paid from an account, due up to and including payday (or month end if no payday is
+    /// known): the same bills Safe to spend holds back. Bills with no account count against spendable ones.
+    func unpaidBills(from accountId: UUID) -> [(occurrence: Occurrence, item: PlannedItem)] {
+        let spendable = account(accountId)?.spendable == true
+        let through = nextIncomeDate.map(endOfDay) ?? defaultPeriodEnd
+        return occurrences.compactMap { occ in
+            guard let item = item(for: occ), item.direction == .outflow, !occ.skipped, !occ.remaining.isZero,
+                  occ.dueDate <= through, item.accountId == accountId || (item.accountId == nil && spendable) else { return nil }
+            return (occ, item)
+        }
+    }
+
     func progress(of goal: Reserve) -> GoalProgress? {
         guard let target = goal.target else { return nil }
         return GoalCalculator.progress(saved: goal.amount, target: target, targetDate: goal.targetDate, today: today, calendar: calendar)

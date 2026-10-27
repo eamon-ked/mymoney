@@ -167,12 +167,20 @@ struct GoalMoneySheet: View {
                     }
                 } footer: {
                     if adding && !moveMoney {
+                        let bills = snapshot.unpaidBills(from: goal.accountId)
+                        let billsTotal = bills.map(\.occurrence.remaining).sum(store.currency)
+                        let afterBills = Money.max(free - billsTotal, .zero(store.currency))
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("\(home?.name ?? "The account") has \(Money.max(free, .zero(store.currency)).compact) not yet set aside.")
-                            // Bills before payday need some of that money too
-                            if let entered = MoneyFormat.parse(amountText, currency: store.currency),
-                               let safe = snapshot.safeToSpend().amount, entered > safe {
-                                Text("That's more than your safe to spend (\(Money.max(safe, .zero(store.currency)).compact)). Bills due before payday could come up short.")
+                            if billsTotal.isPositive {
+                                Text("\(afterBills.compact) is free to save. \(home?.name ?? "The account") has \(Money.max(free, .zero(store.currency)).compact), but \(billsTotal.compact) of it is for bills not paid yet:")
+                                ForEach(bills, id: \.occurrence.id) { bill in
+                                    Text("• \(bill.item.name), \(bill.occurrence.remaining.compact), due \(bill.occurrence.dueDate.formatted(.dateTime.day().month()))")
+                                }
+                            } else {
+                                Text("\(home?.name ?? "The account") has \(Money.max(free, .zero(store.currency)).compact) not yet set aside, and no bills waiting on it before payday.")
+                            }
+                            if let entered = MoneyFormat.parse(amountText, currency: store.currency), entered > afterBills {
+                                Text("That's more than is free after bills (\(afterBills.compact)). Those bills could come up short.")
                                     .foregroundStyle(.orange)
                             }
                         }

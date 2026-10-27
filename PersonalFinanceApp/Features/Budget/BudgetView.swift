@@ -18,6 +18,9 @@ struct BudgetView: View {
     @State private var month: String?
     @State private var selected: UUID?
     @State private var addingCategory = false
+    @State private var fundingGoal: Reserve?
+    @State private var editingReserve: Reserve?
+    @State private var addingGoal = false
     @State private var explanation: Explanation?
     @State private var error: String?
 
@@ -90,6 +93,8 @@ struct BudgetView: View {
                     }
                 }
 
+                if !snapshot.expenseCategories.isEmpty { savingsSection }
+
                 if let error { Section { FieldError(message: error) } }
             }
             .listStyle(.insetGrouped)
@@ -128,7 +133,40 @@ struct BudgetView: View {
                 CategoryDetailView(categoryId: item.id, month: currentMonth)
             }
             .sheet(isPresented: $addingCategory) { CategoryEditor() }
+            .sheet(item: $fundingGoal) { GoalMoneySheet(goal: $0, adding: true) }
+            .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }
+            .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
+        }
+    }
+
+    /// Goals and set-asides kept in budget accounts. Their money already has a job,
+    /// so it's out of "Not planned yet" just as it's out of Safe to spend.
+    @ViewBuilder private var savingsSection: some View {
+        let held = snapshot.reserves.filter { snapshot.account($0.accountId)?.onBudget == true }
+        Section {
+            if snapshot.goals.isEmpty {
+                Button { addingGoal = true } label: { Label("Start a savings goal", systemImage: "target") }
+            }
+            ForEach(held) { r in
+                if let progress = snapshot.progress(of: r) {
+                    Button { fundingGoal = r } label: { GoalRow(goal: r, progress: progress) }
+                        .buttonStyle(.plain)
+                } else {
+                    Button { editingReserve = r } label: {
+                        ListRow(title: r.name, caption: "Set aside in \(snapshot.account(r.accountId)?.name ?? "an account")",
+                                symbol: "lock.fill", color: Palette.plan) { AmountPill(r.amount) }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        } header: {
+            HStack {
+                Text("Savings"); Spacer()
+                if snapshot.budget.saved.isPositive { Text("\(snapshot.budget.saved.compact) saved").monospacedDigit() }
+            }
+        } footer: {
+            Text("Tap a goal to add money to it. Saved money stays in its account but isn't counted as Not planned yet or Safe to spend.")
         }
     }
 
@@ -167,6 +205,9 @@ struct BudgetView: View {
         var sections: [(String, [BreakdownItem], String)] = [("Money in budget accounts", held, ""),
                                                              ("Already planned in categories", setAside, "−")]
         if !future.isZero { sections.append(("Planned for later months", [BreakdownItem(label: "Future months", amount: future)], "−")) }
+        let saved = snapshot.reserves.filter { snapshot.account($0.accountId)?.onBudget == true && !$0.amount.isZero }
+            .map { BreakdownItem(label: $0.name, amount: $0.amount) }
+        if !saved.isEmpty { sections.append(("Saved in goals", saved, "−")) }
         return Explanation(title: "Available to allocate", total: available,
                            definition: "Money in your budget accounts that doesn't have a plan yet. Planning money doesn't move it out of any account.",
                            sections: sections,

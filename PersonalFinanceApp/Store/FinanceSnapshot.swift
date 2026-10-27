@@ -41,8 +41,11 @@ struct FinanceSnapshot {
 
         let categories = accounts.filter { $0.kind == .expense && !$0.archived }
             .map { BudgetCategory(id: $0.id, name: $0.name, group: $0.group, policy: $0.policy) }
+        let reserves = store.fetch(ReserveRecord.self).filter { !$0.archived }.map(\.reserve)
+        let budgetAccounts = Set(accounts.filter { $0.kind.isBalanceSheet && $0.onBudget }.map(\.id))
         self.budget = Budget(ledger: ledger, categories: categories,
-                             allocations: store.fetch(AllocationRecord.self).map(\.allocation), calendar: store.calendar)
+                             allocations: store.fetch(AllocationRecord.self).map(\.allocation), calendar: store.calendar,
+                             saved: reserves.filter { budgetAccounts.contains($0.accountId) }.map(\.amount).sum(settings.currency))
 
         let itemRecords = store.fetch(PlannedItemRecord.self).filter { !$0.archived }
         self.itemRecords = Dictionary(itemRecords.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -51,7 +54,7 @@ struct FinanceSnapshot {
         self.occurrences = store.fetch(OccurrenceRecord.self).map(\.occurrence)
             .filter { itemIds.contains($0.itemId) }
             .sorted { $0.dueDate < $1.dueDate }
-        self.reserves = store.fetch(ReserveRecord.self).filter { !$0.archived }.map(\.reserve)
+        self.reserves = reserves
     }
 
     // MARK: - Lookups

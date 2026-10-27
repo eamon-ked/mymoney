@@ -24,6 +24,7 @@ struct HomeView: View {
     @State private var reviewing: EntryRecord?
     @State private var showingHelp = false
     @State private var showingPayday = false
+    @State private var fundingGoal: Reserve?
     @AppStorage("showSiriTip") private var showSiriTip = true
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -106,6 +107,7 @@ struct HomeView: View {
             .sheet(item: $reviewing) { EntryDetailView(record: $0) }
             .sheet(isPresented: $showingHelp) { GuideView() }
             .sheet(isPresented: $showingPayday) { PaydaySheet() }
+            .sheet(item: $fundingGoal) { GoalMoneySheet(goal: $0, adding: true) }
             .paywall($paywall)
             .sheet(isPresented: $showingAsk) {
                 #if canImport(FoundationModels)
@@ -305,15 +307,24 @@ struct HomeView: View {
     }
 
     @ViewBuilder private var reservesSection: some View {
-        // An empty goal says nothing here; Plan is where it gets started
-        let held = snapshot.reserves.filter { $0.amount.isPositive }
-        if !held.isEmpty {
-            Section("Set aside") {
-                ForEach(held) { r in
-                    ListRow(title: r.name, caption: snapshot.account(r.accountId)?.name, symbol: "lock.fill", color: Palette.plan) {
-                        AmountPill(r.amount)
+        // Goals show progress and what to save, even at zero; a plain set-aside only once it holds money
+        let shown = snapshot.reserves.filter { $0.isGoal || $0.amount.isPositive }
+        if !shown.isEmpty {
+            Section {
+                ForEach(shown) { r in
+                    if let progress = snapshot.progress(of: r) {
+                        Button { fundingGoal = r } label: { GoalRow(goal: r, progress: progress) }
+                            .buttonStyle(.plain)
+                    } else {
+                        ListRow(title: r.name, caption: snapshot.account(r.accountId)?.name, symbol: "lock.fill", color: Palette.plan) {
+                            AmountPill(r.amount)
+                        }
                     }
                 }
+            } header: {
+                Text("Savings")
+            } footer: {
+                if !snapshot.goals.isEmpty { Text("Tap a goal to add money to it.") }
             }
         }
     }

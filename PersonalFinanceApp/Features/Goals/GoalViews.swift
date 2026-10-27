@@ -167,7 +167,15 @@ struct GoalMoneySheet: View {
                     }
                 } footer: {
                     if adding && !moveMoney {
-                        Text("\(home?.name ?? "The account") has \(Money.max(free, .zero(store.currency)).compact) not yet set aside.")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("\(home?.name ?? "The account") has \(Money.max(free, .zero(store.currency)).compact) not yet set aside.")
+                            // Bills before payday need some of that money too
+                            if let entered = MoneyFormat.parse(amountText, currency: store.currency),
+                               let safe = snapshot.safeToSpend().amount, entered > safe {
+                                Text("That's more than your safe to spend (\(Money.max(safe, .zero(store.currency)).compact)). Bills due before payday could come up short.")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
                     } else if !adding {
                         Text("\(goal.amount.compact) saved. What you take out stays in \(home?.name ?? "the account") and becomes spendable.")
                     }

@@ -96,12 +96,17 @@ public struct Budget: Sendable {
     public let categories: [BudgetCategory]
     public let allocations: [Allocation]
     public let calendar: Calendar
+    /// Money saved towards goals (and other set-asides) inside budget accounts.
+    /// It already has a job, so it isn't available to plan again.
+    public let saved: Money
 
-    public init(ledger: Ledger, categories: [BudgetCategory], allocations: [Allocation], calendar: Calendar) {
+    public init(ledger: Ledger, categories: [BudgetCategory], allocations: [Allocation], calendar: Calendar,
+                saved: Money? = nil) {
         self.ledger = ledger
         self.categories = categories
         self.allocations = allocations
         self.calendar = calendar
+        self.saved = saved ?? .zero(ledger.currency)
     }
 
     private var currency: String { ledger.currency }
@@ -157,14 +162,15 @@ public struct Budget: Sendable {
         let held = budgetAccountIds.map { ledger.balance(of: $0, asOf: end.addingTimeInterval(-0.001)) }.sum(currency)
         let setAside = categories.map { line($0.id, month: month).remaining }.sum(currency)
         let future = allocations.filter { $0.month > month }.map(\.amount).sum(currency)
-        return held - setAside - future
+        return held - setAside - future - saved
     }
 
     /// Total allocated this month, and the share of this month's planning funds it represents
     public func allocationProgress(month: String) -> (allocated: Money, planningFunds: Money, fraction: Double) {
         let allocatedNow = allocations.filter { $0.month == month }.map(\.amount).sum(currency)
-        let funds = allocatedNow + availableToAllocate(month: month)
-        let fraction = funds.isPositive ? Double(allocatedNow.minorUnits) / Double(funds.minorUnits) : 0
+        // Saved money counts as planned: it has a job
+        let funds = allocatedNow + saved + availableToAllocate(month: month)
+        let fraction = funds.isPositive ? Double((allocatedNow + saved).minorUnits) / Double(funds.minorUnits) : 0
         return (allocatedNow, funds, min(max(fraction, 0), 1))
     }
 

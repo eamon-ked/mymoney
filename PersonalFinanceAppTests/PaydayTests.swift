@@ -101,6 +101,17 @@ struct PaydayTests {
         #expect(due.min().map { store.calendar.isDate($0, inSameDayAs: LedgerStoreTests.date(2026, 11, 1)) } == true)
     }
 
+    @Test func savingIntoAGoalLowersBudgetAndSafeToSpendAlike() throws {
+        let goal = Reserve(name: "Emergency fund", amount: Self.aed(0), accountId: bank.id, target: Self.aed(5000))
+        try store.saveReserve(goal)
+        let month = store.snapshot.monthKey
+        let budgetBefore = store.snapshot.budget.availableToAllocate(month: month)
+        let stsBefore = try #require(store.snapshot.safeToSpend().amount)
+        try store.addToGoal(goal.id, amount: Self.aed(300), from: nil, date: today, key: UUID())
+        #expect(store.snapshot.budget.availableToAllocate(month: month) == budgetBefore - Self.aed(300))
+        #expect(store.snapshot.safeToSpend().amount == stsBefore - Self.aed(300))
+    }
+
     @Test func aDifferentAmountSaidThisMonthWins() throws {
         try addSalary()
         let plan = PaydayPlan.make(store.snapshot, said: Self.aed(21500))

@@ -93,7 +93,7 @@ struct CaptureSetupView: View {
             SetupSteps(steps: [
                 "Open Shortcuts, tap Automation, then +.",
                 "Choose Transaction. Select all your cards and choose Run Immediately.",
-                "Tap New Blank Automation and add “Log Apple Pay Purchase” from Nokael Money.",
+                "Tap New Blank Automation and add “Log Card Purchase” from Nokael Money.",
                 "Set Amount, Merchant and Card to the matching Shortcut Input values, then tap Done.",
             ])
             Button { openURL(URL(string: "shortcuts://")!) } label: {

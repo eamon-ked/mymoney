@@ -268,7 +268,7 @@ public struct Ledger: Sendable {
         var liabilities = Money.zero(currency)
         var items: [BreakdownItem] = []
         for account in accounts.values.sorted(by: { $0.name < $1.name })
-        where account.kind.isBalanceSheet && account.includeInNetWorth {
+        where account.kind.isBalanceSheet && account.includeInNetWorth && !account.archived {
             let b = balance(of: account.id, asOf: asOf)
             if account.kind.isAsset { assets += b } else { liabilities += b.negated }
             if !b.isZero { items.append(BreakdownItem(label: account.name, amount: b, sourceIds: [account.id])) }

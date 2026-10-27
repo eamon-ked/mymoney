@@ -124,9 +124,11 @@ public struct Occurrence: Hashable, Codable, Sendable, Identifiable {
     public var paid: Money
     public var paidEntryIds: [UUID]
     public var skipped: Bool
+    /// The estimate a payment settled, kept so voiding that payment can put it back
+    public var settledEstimate: Money?
 
     public init(id: UUID = UUID(), itemId: UUID, dueDate: Date, expected: Money, isEstimate: Bool = false,
-                paid: Money? = nil, paidEntryIds: [UUID] = [], skipped: Bool = false) {
+                paid: Money? = nil, paidEntryIds: [UUID] = [], skipped: Bool = false, settledEstimate: Money? = nil) {
         self.id = id
         self.itemId = itemId
         self.dueDate = dueDate
@@ -135,6 +137,7 @@ public struct Occurrence: Hashable, Codable, Sendable, Identifiable {
         self.paid = paid ?? .zero(expected.currency)
         self.paidEntryIds = paidEntryIds
         self.skipped = skipped
+        self.settledEstimate = settledEstimate
     }
 
     public var remaining: Money { Money.max(expected - paid, .zero(expected.currency)) }
@@ -159,13 +162,27 @@ public struct Occurrence: Hashable, Codable, Sendable, Identifiable {
         paidEntryIds.append(entryId)
         paid += amount
         // A confirmed payment settles an estimate at the real amount
-        if isEstimate { expected = Money.max(expected, paid); isEstimate = false }
+        if isEstimate {
+            settledEstimate = expected
+            isEstimate = false
+        }
+        if settledEstimate != nil { expected = paid }
     }
 
+    /// Takes a payment back off. The state always follows from what's still
+    /// linked: with no payments left, a settled estimate becomes an estimate again.
     public mutating func removePayment(entryId: UUID, amount: Money) {
         guard let i = paidEntryIds.firstIndex(of: entryId) else { return }
         paidEntryIds.remove(at: i)
         paid -= amount
+        guard let estimate = settledEstimate else { return }
+        if paidEntryIds.isEmpty {
+            expected = estimate
+            isEstimate = true
+            settledEstimate = nil
+        } else {
+            expected = paid
+        }
     }
 }
 

@@ -87,6 +87,11 @@ struct PaydayTests {
         #expect(sts.periodEnd < payday)
         #expect(sts.obligations.contains { $0.label == "Rent" && $0.detail == "Due on payday" })
         #expect(sts.amount == Self.aed(1100 - 800) - store.snapshot.settings.buffer)
+
+        // The breakdown on its automatic period, with the buffer being edited, tells the same story
+        let preview = store.snapshot.safeToSpend(buffer: store.snapshot.settings.buffer)
+        #expect(preview.amount == sts.amount)
+        #expect(preview.obligationsTotal == sts.obligationsTotal)
     }
 
     @Test func movingRentsDueDateMovesTheUnpaidOnes() throws {

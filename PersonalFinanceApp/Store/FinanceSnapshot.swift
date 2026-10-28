@@ -166,7 +166,9 @@ struct FinanceSnapshot {
         }
     }
 
-    var safeToSpendCalculator: SafeToSpendCalculator {
+    /// The one way safe-to-spend is worked out, so Home, its breakdown, Siri and the widget always agree.
+    /// `buffer` previews a buffer that hasn't been saved yet.
+    func safeToSpendCalculator(buffer: Money? = nil) -> SafeToSpendCalculator {
         // A debt's bill already holds back its instalment, so the budget line it's paid from isn't held back twice
         let interest = accountRecords.first { $0.kind == .expense && $0.name == "Interest & fees" }?.id
         let loanPayments = accountRecords.first { $0.kind == .expense && $0.name == "Loan payments" }?.id
@@ -178,16 +180,17 @@ struct FinanceSnapshot {
             return item
         }
         return SafeToSpendCalculator(ledger: ledger, items: billed, occurrences: occurrences, reserves: reserves,
-                              categoryReservations: categoryReservations, buffer: settings.buffer,
+                              categoryReservations: categoryReservations, buffer: buffer ?? settings.buffer,
                               lastConfirmed: lastConfirmed, staleAfterDays: settings.staleAfterDays, calendar: calendar)
     }
 
-    func safeToSpend(through end: Date? = nil) -> SafeToSpend {
+    func safeToSpend(through end: Date? = nil, buffer: Money? = nil) -> SafeToSpend {
+        let calculator = safeToSpendCalculator(buffer: buffer)
         // Bills due on payday are held back too: the salary may land after them
         guard end == nil, let payday = nextIncomeDate else {
-            return safeToSpendCalculator.calculate(today: today, periodEnd: end ?? defaultPeriodEnd)
+            return calculator.calculate(today: today, periodEnd: end ?? defaultPeriodEnd)
         }
-        return safeToSpendCalculator.calculate(today: today, periodEnd: defaultPeriodEnd, billsThrough: endOfDay(payday))
+        return calculator.calculate(today: today, periodEnd: defaultPeriodEnd, billsThrough: endOfDay(payday))
     }
 
     // MARK: - Plan

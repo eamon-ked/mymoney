@@ -49,11 +49,9 @@ struct SafeToSpendView: View {
 
     var body: some View {
         NavigationStack {
-            let calc = SafeToSpendCalculator(ledger: snapshot.ledger, items: snapshot.items, occurrences: snapshot.occurrences,
-                                             reserves: snapshot.reserves, categoryReservations: snapshot.categoryReservations,
-                                             buffer: previewBuffer, lastConfirmed: snapshot.lastConfirmed,
-                                             staleAfterDays: snapshot.settings.staleAfterDays, calendar: snapshot.calendar)
-            let result = calc.calculate(today: snapshot.today, periodEnd: periodEnd)
+            // Same calculation as Home; only the period and an unsaved buffer can differ
+            let calc = snapshot.safeToSpendCalculator(buffer: previewBuffer)
+            let result = snapshot.safeToSpend(through: period == .automatic ? nil : periodEnd, buffer: previewBuffer)
             List {
                 Section {
                     Picker("Through", selection: $period) {

@@ -106,6 +106,14 @@ struct CaptureSetupView: View {
                         Button("Forget", role: .destructive) { try? store.unlinkCard(link.hint) }
                     }
             }
+            if let last = store.lastCardPurchase {
+                LabeledContent("Last card purchase", value: last.date.formatted(.relative(presentation: .named)))
+                Text(last.summary).font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                Label("No card purchase has reached Nokael Money yet. If you've paid with your iPhone or Watch since setting this up, open the automation and check it's on, set to Run Immediately, and has your cards selected.",
+                      systemImage: "exclamationmark.circle")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
         } header: {
             Text("Apple Pay")
         } footer: {

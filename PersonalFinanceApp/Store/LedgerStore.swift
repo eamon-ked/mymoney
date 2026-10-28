@@ -379,9 +379,19 @@ final class LedgerStore {
         try? commit()
     }
 
-    var lastBankMessage: AuditRecord? {
+    /// Notes that a Wallet tap reached the app and what became of it (never the shop or amount),
+    /// so the person can see their Transaction automation is running
+    func noteCardPurchase(card: String?, outcome: String) {
+        let on = card.flatMap { $0.isEmpty ? nil : $0 } ?? "an unnamed card"
+        context.insert(AuditRecord(action: "applepay.read", subjectId: UUID(), summary: "On \(on): \(outcome)"))
+        try? commit()
+    }
+
+    var lastBankMessage: AuditRecord? { lastAudit("sms.read") }
+    var lastCardPurchase: AuditRecord? { lastAudit("applepay.read") }
+
+    private func lastAudit(_ action: String) -> AuditRecord? {
         _ = revision
-        let action = "sms.read"
         var descriptor = FetchDescriptor<AuditRecord>(predicate: #Predicate { $0.action == action },
                                                       sortBy: [SortDescriptor(\.date, order: .reverse)])
         descriptor.fetchLimit = 1

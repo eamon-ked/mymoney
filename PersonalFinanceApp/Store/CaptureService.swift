@@ -30,6 +30,16 @@ enum CaptureService {
             case .skipped(let reason): return reason
             }
         }
+
+        /// How it reads in Settings after "From ADCB:" or "On ENBD Visa:"
+        var logLine: String {
+            switch self {
+            case .saved: return "saved"
+            case .merged: return "already recorded"
+            case .needsPlus: return "not saved, needs Nokael Plus"
+            case .skipped(let reason): return "not saved. \(reason)"
+            }
+        }
     }
 
     /// What the person already told us, e.g. through Siri

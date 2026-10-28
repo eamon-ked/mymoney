@@ -70,6 +70,15 @@ struct CaptureServiceTests {
         #expect(store.snapshot.balance(account.id) == Self.aed(4955))
     }
 
+    @Test func theLastCardPurchaseSaysWhatHappened() async throws {
+        #expect(store.lastCardPurchase == nil)
+        let outcome = try await CaptureService.record(applePay(45, "Carrefour"), in: store, isPlus: false)
+        store.noteCardPurchase(card: "ENBD Visa", outcome: outcome.logLine)
+        #expect(store.lastCardPurchase?.summary == "On ENBD Visa: not saved, needs Nokael Plus")
+        #expect(store.lastBankMessage == nil)
+        #expect(CaptureService.Outcome.skipped("There was no amount to save.").logLine == "not saved. There was no amount to save.")
+    }
+
     @Test func aLinkedCardGoesToItsAccount() async throws {
         try store.linkCard("enbd visa ", to: card.id)
         let outcome = try await CaptureService.record(applePay(18, "Starbucks"), in: store, isPlus: true)

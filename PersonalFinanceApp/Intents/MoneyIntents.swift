@@ -214,7 +214,14 @@ struct LogApplePayIntent: AppIntent {
         let capture = Capture(source: .applePay, direction: money.isNegative ? .received : .spent, amount: money.magnitude,
                               merchant: merchant ?? "", cardHint: card, date: services.store.now(),
                               text: [card ?? "", merchant ?? "", "\(amount.amount)"].joined(separator: "|"))
-        let outcome = try await CaptureService.record(capture, in: services.store, isPlus: services.plus.isPlus)
+        let outcome: CaptureService.Outcome
+        do {
+            outcome = try await CaptureService.record(capture, in: services.store, isPlus: services.plus.isPlus)
+        } catch {
+            services.store.noteCardPurchase(card: card, outcome: "couldn't be saved")
+            throw error
+        }
+        services.store.noteCardPurchase(card: card, outcome: outcome.logLine)
         WidgetSync.update(services.store.snapshot, isPlus: services.plus.isPlus)
         return .result(dialog: IntentDialog(stringLiteral: outcome.message))
     }
@@ -260,7 +267,7 @@ struct LogBankMessageIntent: AppIntent {
             store.noteBankMessage(from: sender, outcome: "couldn't be saved")
             throw error
         }
-        store.noteBankMessage(from: sender, outcome: outcome == .needsPlus ? "not saved, needs Nokael Plus" : outcome.message.lowercased())
+        store.noteBankMessage(from: sender, outcome: outcome.logLine)
         WidgetSync.update(store.snapshot, isPlus: services.plus.isPlus)
         return .result(dialog: IntentDialog(stringLiteral: outcome.message))
     }

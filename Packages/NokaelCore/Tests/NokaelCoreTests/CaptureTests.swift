@@ -32,6 +32,80 @@ struct CaptureTests {
         }
     }
 
+    /// Banks end many alerts with "never share your OTP"; that line mustn't hide the purchase
+    @Test func readsAlertsThatEndWithASafetyWarning() throws {
+        let cases: [(String, Decimal, String, String?)] = [
+            ("Your Cr.Card XXX1234 was used for AED45.00 on 27/10/2026 10:15:22 at CARREFOUR,DUBAI-AE. Avl Cr.limit is AED 9,000.00. Never share your card details or OTP with anyone.",
+             45, "Carrefour", "1234"),
+            ("Your Debit Card XXX5678 was used for AED45.00 at CARREFOUR. Do not share your OTP, PIN or card details with anyone.",
+             45, "Carrefour", "5678"),
+            ("AED80.00 was spent on your card ending 9999 at LULU. Your available balance is AED300.00. Beware of fraud, we never ask for your OTP.",
+             80, "Lulu", "9999"),
+        ]
+        for (text, amount, merchant, card) in cases {
+            let c = try #require(read(text), "\(text)")
+            #expect(c.amount == aed(amount) && c.direction == .spent, "\(text)")
+            #expect(c.merchant == merchant, "\(c.merchant) for \(text)")
+            #expect(c.cardHint == card, "\(text)")
+        }
+    }
+
+    // MARK: - Around the world
+
+    func read(_ text: String, home: String) -> Capture? { AlertParser.read(text, homeCurrency: home, date: now) }
+
+    @Test func readsAlertsFromOtherCountriesAndLanguages() throws {
+        let cases: [(text: String, home: String, amount: Money, merchant: String, direction: Capture.Direction)] = [
+            ("Achat de 1.234,56 € chez CARREFOUR avec votre carte ****1234. Ne partagez jamais votre code.", "EUR",
+             Money(1234.56, currency: "EUR"), "Carrefour", .spent),
+            ("Compra por 45,00 EUR en MERCADONA con tarjeta *5678. No compartas tu código con nadie.", "EUR",
+             Money(45, currency: "EUR"), "Mercadona", .spent),
+            ("Kartenzahlung 12,50 EUR bei REWE MARKT am 27.10.", "EUR", Money(12.5, currency: "EUR"), "Rewe Markt", .spent),
+            ("Compra de R$ 89,90 em PADARIA REAL no cartão final 4321", "BRL", Money(89.9, currency: "BRL"), "Padaria Real", .spent),
+            ("You spent $18.40 at TIM HORTONS with your card ending 1111", "CAD", Money(18.4, currency: "CAD"), "Tim Hortons", .spent),
+            ("Card purchase of £7.20 at PRET A MANGER", "GBP", Money(7.2, currency: "GBP"), "Pret A Manger", .spent),
+            ("¥1,200 used at LAWSON with card ending 2222", "JPY", Money(1200, currency: "JPY"), "Lawson", .spent),
+            ("Köp 249 kr på ICA med kort *3333", "SEK", Money(249, currency: "SEK"), "", .spent),
+            ("R 350.00 paid at CHECKERS from card ...4444", "ZAR", Money(350, currency: "ZAR"), "Checkers", .spent),
+            ("تم شراء بمبلغ ٤٥٫٠٠ درهم لدى كارفور ببطاقتك المنتهية 1234. لا تشارك رمز التحقق مع أحد", "AED",
+             Money(45, currency: "AED"), "كارفور", .spent),
+            ("Virement reçu de 2 500,00 EUR de ACME SAS. Solde 3 100,00 EUR", "EUR", Money(2500, currency: "EUR"), "", .received),
+            ("Purchase of KWD 1.250 at SULTAN CENTER", "KWD", Money(1.25, currency: "KWD"), "Sultan Center", .spent),
+        ]
+        for c in cases {
+            if c.text.hasPrefix("Köp") {
+                // Swedish wording isn't in the lists; no verb and no "at", so Apple Intelligence handles it
+                #expect(read(c.text, home: c.home) == nil)
+                continue
+            }
+            let got = try #require(read(c.text, home: c.home), "\(c.text)")
+            #expect(got.amount == c.amount, "\(got.amount) for \(c.text)")
+            #expect(got.direction == c.direction, "\(c.text)")
+            if !c.merchant.isEmpty { #expect(got.merchant == c.merchant, "\(got.merchant) for \(c.text)") }
+        }
+    }
+
+    @Test func theAutomationKeywordFitsTheCountry() {
+        #expect(BankSenders.keyword(region: "AE") == "AED")
+        #expect(BankSenders.keyword(region: "DE") == "EUR")
+        #expect(BankSenders.keyword(region: "JP") == "JPY")
+        #expect(BankSenders.keyword(region: "GB") == "£")
+    }
+
+    @Test func turnsAwayCodesAndDeclinesInOtherLanguages() {
+        #expect(read("Votre code de vérification est 482913. Ne le partagez pas.", home: "EUR") == nil)
+        #expect(read("Compra de 30,00 EUR en ZARA rechazada por saldo insuficiente", home: "EUR") == nil)
+        #expect(read("Zahlung über 20,00 EUR bei AMAZON abgelehnt", home: "EUR") == nil)
+        #expect(read("رمز التحقق الخاص بك هو 4829 لعملية شراء بمبلغ 45 درهم", home: "AED") == nil)
+        // A shop name containing "otp" is still a purchase
+        #expect(read("Purchase of AED 3,999.00 at LAPTOP WORLD with card ending 1234", home: "AED")?.amount == aed(3999))
+    }
+
+    @Test func aLongAccountNumberIsNeitherTheShopNorMissed() throws {
+        let c = try #require(read("AED 250.00 withdrawn from acc XXX123456 on 27 Oct 2026. Avl Bal AED 1,000.00"))
+        #expect(c.amount == aed(250) && c.merchant.isEmpty && c.cardHint == "3456")
+    }
+
     @Test func readsMoneyComingIn() throws {
         let salary = try #require(read("Your a/c XXXX1122 has been credited with AED 20,000.00 from ACME LLC SALARY on 25/10. Avl bal AED 21,500.00"))
         #expect(salary.direction == .received)

@@ -161,15 +161,21 @@ struct CaptureSetupView: View {
         }
 
         Section {
-            Button {
-                openURL(Self.bankAlertShortcut)
-            } label: {
-                Label("Add the bank alerts automation", systemImage: "bolt.badge.automatic.fill")
-            }
-            .accessibilityIdentifier("addBankAutomation")
-            Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs whenever a message mentions AED.")
-                .font(.subheadline).foregroundStyle(.secondary)
-            DisclosureGroup("Set it up by hand instead") {
+            // The ready-made shortcut listens for "AED"; everywhere else it's set up by hand with the local keyword
+            if BankSenders.keyword(region: region) == Self.bankAlertShortcutKeyword {
+                Button {
+                    openURL(Self.bankAlertShortcut)
+                } label: {
+                    Label("Add the bank alerts automation", systemImage: "bolt.badge.automatic.fill")
+                }
+                .accessibilityIdentifier("addBankAutomation")
+                Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs whenever a message mentions \(Self.bankAlertShortcutKeyword).")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                DisclosureGroup("Set it up by hand instead") {
+                    SetupSteps(steps: manualSteps)
+                }
+            } else {
+                Text("Set up the automation in Shortcuts:").font(.subheadline.weight(.semibold))
                 SetupSteps(steps: manualSteps)
             }
             if let last = store.lastBankMessage {
@@ -188,6 +194,7 @@ struct CaptureSetupView: View {
     }
 
     /// A shared shortcut carrying the Message trigger and the Read Bank Message action
+    static let bankAlertShortcutKeyword = "AED"
     static let bankAlertShortcut = URL(string: "https://www.icloud.com/shortcuts/fed66c38583b44b5a58eb557cda7d879")!
 
     private var manualSteps: [String] {

@@ -56,6 +56,20 @@ struct CaptureServiceTests {
         #expect(store.snapshot.entries().filter { $0.kind == .expense }.count == 1)
     }
 
+    @Test func aBankSMSArrivingAgainAfterItsEntryWasDeletedIsSavedAgain() async throws {
+        let message = "Purchase of AED 45.00 at MAF CARREFOUR CITY with card ending 1234"
+        let sms = try #require(await CaptureService.read(message: message, homeCurrency: "AED", date: now))
+        guard case .saved(let first) = try await CaptureService.record(sms, in: store, isPlus: true) else {
+            Issue.record("not saved"); return
+        }
+        try store.void(first)
+        let outcome = try await CaptureService.record(sms, in: store, isPlus: true)
+        guard case .saved(let second) = outcome else { Issue.record("expected save, got \(outcome)"); return }
+        #expect(second != first)
+        #expect(store.snapshot.entries().map(\.id).contains(second))
+        #expect(store.snapshot.balance(account.id) == Self.aed(4955))
+    }
+
     @Test func aLinkedCardGoesToItsAccount() async throws {
         try store.linkCard("enbd visa ", to: card.id)
         let outcome = try await CaptureService.record(applePay(18, "Starbucks"), in: store, isPlus: true)

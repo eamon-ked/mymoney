@@ -118,8 +118,11 @@ enum MoneyAI {
         let out = try await session.respond(to: text, generating: AlertOutput.self, options: GenerationOptions(sampling: .greedy)).content
         guard out.isTransaction, out.amount > 0 else { return nil }
         let code = out.currency.uppercased().count == 3 ? out.currency.uppercased() : homeCurrency
-        let money = Money(Decimal(string: String(format: "%.2f", out.amount)) ?? 0, currency: code)
-        let digitsInText = text.filter { $0.isNumber }
+        // Rounded to the currency's own decimals (KWD has three, JPY none)
+        let scale = Currency.scale(of: code)
+        let exact = String(format: "%.\(scale)f", out.amount)
+        let money = Money(Decimal(string: exact) ?? 0, currency: code)
+        let digitsInText = AlertParser.westernDigits(text).filter(\.isASCII).filter(\.isNumber)
         let amountDigits = String(format: "%.2f", out.amount).filter(\.isNumber)
         let whole = String(Int(out.amount))
         guard digitsInText.contains(amountDigits.hasSuffix("00") ? whole : amountDigits) else { return nil }

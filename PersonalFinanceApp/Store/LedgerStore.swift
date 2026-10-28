@@ -354,7 +354,11 @@ final class LedgerStore {
     @discardableResult
     func postCaptured(_ entry: Entry, source: Capture.Source, cardHint: String?, needsReview: Bool) throws -> UUID {
         let key = entry.idempotencyKey
-        if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first { return existing.id }
+        if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first {
+            guard existing.status == .void else { return existing.id }
+            // Deleted, then the same alert arrived again: save it, don't report the deleted one as saved
+            existing.idempotencyKey = UUID()
+        }
         do { try EntryFactory.validate(entry) } catch { throw StoreError.from(error) }
         let record = insert(entry, notes: "")
         record.sourceRaw = source.rawValue

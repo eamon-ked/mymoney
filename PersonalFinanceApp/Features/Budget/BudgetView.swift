@@ -178,12 +178,7 @@ struct BudgetView: View {
 
     private var previousMonth: String { BudgetMonth.adding(-1, to: currentMonth, calendar: snapshot.calendar) }
 
-    private var groups: [(name: String, categories: [LedgerAccountRecord])] {
-        let order = ["Essentials", "Lifestyle", "Savings", "Other"]
-        let grouped = Dictionary(grouping: snapshot.expenseCategories) { $0.group.isEmpty ? "Other" : $0.group }
-        return grouped.keys.sorted { (order.firstIndex(of: $0) ?? 99, $0) < (order.firstIndex(of: $1) ?? 99, $1) }
-            .map { ($0, grouped[$0] ?? []) }
-    }
+    private var groups: [(name: String, categories: [LedgerAccountRecord])] { snapshot.expenseCategoryGroups }
 
     private func copyLastMonth() {
         do { try store.copyPlan(from: previousMonth, to: currentMonth) } catch { self.error = StoreError.from(error).errorDescription }
@@ -698,7 +693,7 @@ struct CategoryEditor: View {
     @State private var error: String?
     @State private var showMore = false
 
-    private let groups = ["Essentials", "Bills", "Lifestyle", "Savings", "Other"]
+    private let groups = FinanceSnapshot.categoryGroupChoices
     private let icons = ["tag.fill", "cart.fill", "house.fill", "car.fill", "bolt.fill", "fork.knife", "film.fill",
                          "bag.fill", "heart.fill", "airplane", "gift.fill", "graduationcap.fill", "pawprint.fill", "dumbbell.fill", "building.columns.fill"]
     private let colors = ["#3A7BD5", "#2BA84A", "#F2A33A", "#E4572E", "#AF52DE", "#FF2D55", "#0E9AA7", "#8E8E93"]
@@ -814,24 +809,9 @@ struct CategoryEditor: View {
 
     private func save() {
         do {
-            if let editing {
-                guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { error = "Give the category a name."; return }
-                try store.updateAccount(editing) {
-                    $0.name = name.trimmingCharacters(in: .whitespaces)
-                    $0.group = group
-                    $0.policy = policy
-                    $0.reserveInSafeToSpend = reserve
-                    $0.icon = icon
-                    $0.colorHex = colorHex
-                }
-            } else {
-                let record = try store.createCategory(name: name, kind: isIncome ? .income : .expense, group: group,
-                                                      icon: icon, colorHex: colorHex)
-                if !isIncome {
-                    try store.updateAccount(record) { $0.policy = policy; $0.reserveInSafeToSpend = reserve }
-                }
-                onCreated(record.id)
-            }
+            let record = try store.saveCategory(editing, name: name, isIncome: isIncome, group: group, policy: policy,
+                                                reserve: reserve, icon: icon, colorHex: colorHex)
+            if editing == nil { onCreated(record.id) }
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
     }

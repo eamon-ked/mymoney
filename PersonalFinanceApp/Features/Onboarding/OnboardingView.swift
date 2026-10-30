@@ -202,9 +202,8 @@ private struct FirstAccountStep: View {
         guard let entered else { error = "Enter the balance as a number."; return }
         let wasEmpty = store.snapshot.accounts.isEmpty
         do {
-            try store.createAccount(name: name, kind: kind, opening: kind.isLiability ? entered.magnitude.negated : entered,
-                                    openingDate: balanceDate, institution: institution.isEmpty ? nil : institution,
-                                    colorHex: AccountColors.next(for: kind))
+            try store.addAccount(name: name, kind: kind, balance: entered, openingDate: balanceDate,
+                                 institution: institution.isEmpty ? nil : institution, colorHex: AccountColors.next(for: kind))
             name = ""; institution = ""; balanceText = ""
             if wasEmpty { next() }
         } catch { self.error = StoreError.from(error).errorDescription }
@@ -244,18 +243,12 @@ private struct IncomeStep: View {
     }
 
     private func save() {
-        guard let amount = MoneyFormat.parse(amountText, currency: store.currency), amount.isPositive else {
+        guard let amount = MoneyFormat.parse(amountText, currency: store.currency) else {
             error = "Enter your usual pay, or skip."
             return
         }
-        let snapshot = store.snapshot
-        let item = PlannedItem(name: "Salary", direction: .inflow, amount: amount,
-                               schedule: Schedule(start: store.calendar.startOfDay(for: nextDate).addingTimeInterval(12 * 3600), frequency: frequency),
-                               accountId: snapshot.accounts.first { $0.spendable }?.id,
-                               categoryId: snapshot.incomeCategories.first?.id)
         do {
-            try store.savePlannedItem(item)
-            try store.updateSettings { $0.payFrequencyData = try? JSONEncoder().encode(frequency) }
+            try store.setUpSalary(amount, every: frequency, nextPayday: nextDate)
             next()
         } catch { self.error = StoreError.from(error).errorDescription }
     }

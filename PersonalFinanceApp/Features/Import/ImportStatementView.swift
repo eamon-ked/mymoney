@@ -10,39 +10,32 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
-import CryptoKit
 import NokaelCore
 
+/// The import screen; reading, matching and adding are in StatementReview
 struct ImportStatementView: View {
     @Environment(LedgerStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let accountId: UUID
 
-    @State private var fileText: String?
-    @State private var fileName = ""
-    @State private var choosingFile = false
-    @State private var flipSigns = false
-    @State private var rows: [StatementRow] = []
-    @State private var matched: [Int: UUID] = [:]
-    @State private var targets: [Int: LedgerStore.ImportedRow.Target] = [:]
-    @State private var skipped: Set<Int> = []
-    @State private var error: String?
-    @State private var added: Int?
-    /// Rows still being given a suggested category
-    @State private var suggesting = 0
-    @State private var suggestTask: Task<Void, Never>?
+    var body: some View {
+        ImportStatementScreen(review: StatementReview(accountId: accountId, store: store))
+    }
+}
 
-    private var snapshot: FinanceSnapshot { store.snapshot }
-    private var account: LedgerAccountRecord? { snapshot.account(accountId) }
-    private var inbox: [StatementRow] { rows.filter { matched[$0.id] == nil } }
-    private var ready: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] != nil } }
-    private var unsorted: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] == nil } }
-    private var allSelected: Bool { inbox.allSatisfy { !skipped.contains($0.id) } }
+private struct ImportStatementScreen: View {
+    @Environment(LedgerStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var review: StatementReview
+    @State private var choosingFile = false
+
+    init(review: StatementReview) {
+        _review = State(initialValue: review)
+    }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let added {
+                if let added = review.added {
                     ContentUnavailableView {
                         Label(added == 0 ? "Nothing new to add" : "Added \(added) \(added == 1 ? "entry" : "entries")",
                               systemImage: "checkmark.circle")
@@ -51,24 +44,24 @@ struct ImportStatementView: View {
                     } actions: {
                         Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
                     }
-                } else if fileText == nil {
+                } else if review.fileText == nil {
                     intro
                 } else {
-                    review
+                    rowsList
                 }
             }
             .navigationTitle("Import statement")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(added == nil ? "Cancel" : "Close") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button(review.added == nil ? "Cancel" : "Close") { dismiss() } }
             }
             #if DEBUG
-            .onAppear { if fileText == nil { debugLoad() } }
+            .onAppear { if review.fileText == nil { debugLoad() } }
             #endif
             .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.commaSeparatedText, .plainText, .text]) { result in
                 switch result {
-                case .success(let url): load(url)
-                case .failure: error = "Couldn't open that file."
+                case .success(let url): review.load(url)
+                case .failure: review.error = "Couldn't open that file."
                 }
             }
         }
@@ -81,7 +74,7 @@ struct ImportStatementView: View {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
                     Image(systemName: "doc.text.magnifyingglass").font(.largeTitle).foregroundStyle(Palette.home)
-                    Text("Bring in \(account?.name ?? "this account")'s statement").font(.title3.bold())
+                    Text("Bring in \(review.account?.name ?? "this account")'s statement").font(.title3.bold())
                     Text("Download a statement from your bank's website or app as a CSV file, then choose it here. Rows you've already recorded are recognised and left alone.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
@@ -91,63 +84,61 @@ struct ImportStatementView: View {
             } footer: {
                 Text("The file needs a header row with a date, a description and either an amount or separate money in and money out columns. It stays on this iPhone.")
             }
-            if let error { Section { FieldError(message: error) } }
+            if let error = review.error { Section { FieldError(message: error) } }
         }
     }
 
-    @ViewBuilder private var review: some View {
+    @ViewBuilder private var rowsList: some View {
         List {
             Section {
-                LabeledContent("File", value: fileName)
-                LabeledContent("Rows", value: "\(rows.count)")
-                LabeledContent("Already recorded", value: "\(matched.count)")
-                Toggle("Purchases show as positive numbers", isOn: $flipSigns)
+                LabeledContent("File", value: review.fileName)
+                LabeledContent("Rows", value: "\(review.rows.count)")
+                LabeledContent("Already recorded", value: "\(review.matched.count)")
+                Toggle("Purchases show as positive numbers", isOn: $review.flipSigns)
             } footer: {
                 Text("Card statements often list purchases without a minus sign. Turn this on if money out appears as money in below.")
             }
 
-            if let error { Section { FieldError(message: error) } }
+            if let error = review.error { Section { FieldError(message: error) } }
 
-            if suggesting > 0 {
+            if review.suggesting > 0 {
                 Section {
                     HStack(spacing: 10) {
                         ProgressView()
-                        Text("Suggesting categories… \(suggesting) to go").foregroundStyle(.secondary)
+                        Text("Suggesting categories… \(review.suggesting) to go").foregroundStyle(.secondary)
                     }
                 }
-            } else if !unsorted.isEmpty { sortTheRest }
+            } else if !review.unsorted.isEmpty { sortTheRest }
 
             Section {
-                if inbox.isEmpty {
+                if review.inbox.isEmpty {
                     Text("Everything in this file is already recorded.").foregroundStyle(.secondary)
                 }
-                ForEach(inbox) { row in
-                    InboxRow(row: row, target: binding(row), skipped: skipBinding(row), options: options(for: row),
-                             label: label(for: targets[row.id]))
+                ForEach(review.inbox) { row in
+                    InboxRow(row: row, target: binding(row), skipped: skipBinding(row), options: review.options(for: row),
+                             label: review.label(for: row))
                 }
             } header: {
                 HStack {
-                    Text("To add · \(inbox.count)")
+                    Text("To add · \(review.inbox.count)")
                     Spacer()
-                    if !inbox.isEmpty {
-                        Button(allSelected ? "Untick all" : "Tick all") {
-                            skipped = allSelected ? Set(inbox.map(\.id)) : []
-                        }
+                    if !review.inbox.isEmpty {
+                        Button(review.allSelected ? "Untick all" : "Tick all") { review.toggleAll() }
                         .font(.subheadline.weight(.semibold))
                         .textCase(nil)
                         .accessibilityIdentifier("importSelectAll")
                     }
                 }
             } footer: {
-                if !inbox.isEmpty {
+                if !review.inbox.isEmpty {
                     Text("Categories are suggested for you; tap one to change it. Untick a row to leave it out.")
                 }
             }
 
-            if !matched.isEmpty {
-                Section("Already recorded · \(matched.count)") {
+            if !review.matched.isEmpty {
+                Section("Already recorded · \(review.matched.count)") {
                     DisclosureGroup("Show") {
-                        ForEach(rows.filter { matched[$0.id] != nil }) { row in
+                        ForEach(review.rows.filter { review.matched[$0.id] != nil }) { row in
                             ListRow(title: row.description, caption: row.date.formatted(date: .abbreviated, time: .omitted),
                                     symbol: "checkmark.circle.fill", color: .green) {
                                 Text(row.amount.signed).font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
@@ -157,25 +148,24 @@ struct ImportStatementView: View {
                 }
             }
         }
-        .onChange(of: flipSigns) { _, _ in parse() }
-        .safeAreaInset(edge: .bottom) { if !inbox.isEmpty { addBar } }
+        .safeAreaInset(edge: .bottom) { if !review.inbox.isEmpty { addBar } }
     }
 
     /// One choice for every ticked row that has none yet
     private var sortTheRest: some View {
-        let out = unsorted.filter(\.amount.isNegative)
-        let into = unsorted.filter { !$0.amount.isNegative }
+        let out = review.unsorted.filter(\.amount.isNegative)
+        let into = review.unsorted.filter { !$0.amount.isNegative }
         return Section {
             if !out.isEmpty {
                 bulkMenu("Put \(out.count) money-out \(out.count == 1 ? "row" : "rows") in…",
-                         categories: snapshot.expenseCategories, rows: out)
+                         categories: store.snapshot.expenseCategories, rows: out)
             }
             if !into.isEmpty {
                 bulkMenu("Put \(into.count) money-in \(into.count == 1 ? "row" : "rows") in…",
-                         categories: snapshot.incomeCategories, rows: into)
+                         categories: store.snapshot.incomeCategories, rows: into)
             }
         } header: {
-            Text("\(unsorted.count) still need a category")
+            Text("\(review.unsorted.count) still need a category")
         } footer: {
             Text("Sorts all of them at once. You can still change any single row below.")
         }
@@ -184,7 +174,7 @@ struct ImportStatementView: View {
     private func bulkMenu(_ title: String, categories: [LedgerAccountRecord], rows: [StatementRow]) -> some View {
         Menu {
             ForEach(categories, id: \.id) { c in
-                Button { for row in rows { targets[row.id] = .category(c.id) } } label: { Label(c.name, systemImage: c.icon) }
+                Button { review.put(rows, in: c.id) } label: { Label(c.name, systemImage: c.icon) }
             }
         } label: {
             Label(title, systemImage: "square.stack.3d.down.right")
@@ -193,223 +183,32 @@ struct ImportStatementView: View {
 
     private var addBar: some View {
         VStack(spacing: 6) {
-            Text(summary).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Button(action: add) {
-                Text(ready.isEmpty ? "Choose a category to add" : "Add \(ready.count) \(ready.count == 1 ? "entry" : "entries")")
+            Text(review.summary).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button(action: review.add) {
+                Text(review.ready.isEmpty ? "Choose a category to add" : "Add \(review.ready.count) \(review.ready.count == 1 ? "entry" : "entries")")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(ready.isEmpty)
+            .disabled(review.ready.isEmpty)
             .accessibilityIdentifier("addImported")
         }
         .padding(.horizontal).padding(.top, 10).padding(.bottom, 6)
         .background(.bar)
     }
 
-    private var summary: String {
-        let left = inbox.count - ready.count - unsorted.count
-        var parts = ["\(ready.count) ready"]
-        if !unsorted.isEmpty { parts.append("\(unsorted.count) need a category") }
-        if left > 0 { parts.append("\(left) left out") }
-        return parts.joined(separator: " · ")
-    }
-
     #if DEBUG
     /// Screenshot helper: -importSample /path/to/statement.csv
     func debugLoad() {
-        if let path = UserDefaults.standard.string(forKey: "importSample") { load(URL(fileURLWithPath: path)) }
+        if let path = UserDefaults.standard.string(forKey: "importSample") { review.load(URL(fileURLWithPath: path)) }
     }
     #endif
 
-    // MARK: - Reading
-
-    private func load(_ url: URL) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            error = "Couldn't read that file."
-            return
-        }
-        fileName = url.lastPathComponent
-        fileText = text
-        // Card statements usually list purchases as positive numbers
-        if account?.kind.isLiability == true,
-           let raw = try? StatementImport.read(text, currency: store.currency, calendar: store.calendar) {
-            flipSigns = raw.filter(\.amount.isPositive).count > raw.count / 2
-        }
-        parse()
-    }
-
-    private func parse() {
-        guard let fileText else { return }
-        do {
-            rows = try StatementImport.read(fileText, currency: store.currency, flipSigns: flipSigns, calendar: store.calendar)
-            error = nil
-        } catch {
-            rows = []
-            matched = [:]
-            self.error = (error as? LocalizedError)?.errorDescription ?? "Couldn't read that file."
-            self.fileText = nil
-            return
-        }
-        let recorded = snapshot.entries(touching: accountId).filter { $0.kind != .openingBalance }.map { record in
-            RecordedMovement(entryId: record.id, date: record.date,
-                             amount: record.lines.filter { $0.accountId == accountId }
-                                .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency))
-        }
-        matched = StatementImport.match(rows, with: recorded, calendar: store.calendar)
-        suggest()
-    }
-
-    /// A bill it pays, else a transfer naming another account, else the category used last time for that shop
-    private func suggest() {
-        let history: [(memo: String, categoryId: UUID)] = snapshot.entries().compactMap { record in
-            guard let c = record.lines.lazy.compactMap({ snapshot.account($0.accountId) }).first(where: { $0.kind.isCategory })
-            else { return nil }
-            return (record.memo, c.id)
-        }
-        let others = snapshot.accounts.filter { $0.id != accountId }.map { (id: $0.id, name: $0.name) }
-        let loans = snapshot.accounts.filter { $0.kind == .loan && !$0.archived }.map { (id: $0.id, name: $0.name) }
-        var next: [Int: LedgerStore.ImportedRow.Target] = [:]
-        var billsTaken: Set<UUID> = []
-        for row in inbox {
-            if let occ = StatementImport.bill(for: row, occurrences: snapshot.occurrences, items: snapshot.items,
-                                              accountId: accountId, calendar: store.calendar),
-               !billsTaken.contains(occ.id) {
-                billsTaken.insert(occ.id)
-                next[row.id] = .bill(occ.id)
-            } else if row.amount.isNegative, let id = StatementImport.loan(for: row.description, loans: loans) {
-                next[row.id] = .transfer(id)
-            } else if let id = StatementImport.account(for: row.description, accounts: others) {
-                next[row.id] = .transfer(id)
-            } else if let id = StatementImport.category(for: row.description, history: history),
-                      let c = snapshot.account(id), c.kind == (row.amount.isNegative ? .expense : .income), !c.archived {
-                next[row.id] = .category(id)
-            }
-        }
-        targets = next
-        suggestRest()
-    }
-
-    /// Everything else: well-known shops, then Apple Intelligence, then "Other",
-    /// so every row arrives with a category the person only has to glance at
-    private func suggestRest() {
-        suggestTask?.cancel()
-        let pending = inbox.filter { targets[$0.id] == nil }
-        suggesting = pending.count
-        guard !pending.isEmpty else { return }
-        suggestTask = Task {
-            var memo: [String: UUID] = [:]
-            for row in pending {
-                if Task.isCancelled { return }
-                let income = !row.amount.isNegative
-                let key = "\(income)|\(row.description.lowercased())"
-                let id: UUID?
-                if let known = memo[key] {
-                    id = known
-                } else {
-                    id = try? await CaptureService.category(for: row.description, income: income,
-                                                            snapshot: store.snapshot, store: store).id
-                    memo[key] = id
-                }
-                if Task.isCancelled { return }
-                if let id, targets[row.id] == nil { targets[row.id] = .category(id) }
-                suggesting -= 1
-            }
-        }
-    }
-
-    // MARK: - Choices
-
-    struct Option: Identifiable {
-        let target: LedgerStore.ImportedRow.Target
-        let title: String
-        let symbol: String
-        var id: LedgerStore.ImportedRow.Target { target }
-    }
-
-    private func options(for row: StatementRow) -> [(String, [Option])] {
-        let out = row.amount.isNegative
-        var groups: [(String, [Option])] = []
-        if out {
-            let bills = snapshot.upcomingBills(days: 45).filter { occ in
-                snapshot.item(for: occ).map { $0.accountId == nil || $0.accountId == accountId } ?? false
-            }
-            if !bills.isEmpty {
-                groups.append(("Pays a bill", bills.compactMap { occ in
-                    snapshot.item(for: occ).map {
-                        Option(target: .bill(occ.id),
-                               title: "\($0.name) · \(occ.dueDate.formatted(.dateTime.day().month(.abbreviated)))", symbol: "calendar")
-                    }
-                }))
-            }
-        }
-        let categories = out ? snapshot.expenseCategories : snapshot.incomeCategories
-        groups.append((out ? "Spending" : "Income", categories.map { Option(target: .category($0.id), title: $0.name, symbol: $0.icon) }))
-        let others = snapshot.accounts.filter { $0.id != accountId && $0.kind != .lent }
-        if !others.isEmpty {
-            groups.append((out ? "Moved to" : "Moved from", others.map {
-                Option(target: .transfer($0.id), title: $0.name, symbol: $0.icon)
-            }))
-        }
-        // Money lent isn't spending, and money paid back isn't income
-        let people = snapshot.accounts.filter { $0.id != accountId && $0.kind == .lent && !$0.archived }
-        if !people.isEmpty {
-            groups.append((out ? "Lent to" : "Paid back by", people.map {
-                Option(target: .transfer($0.id), title: $0.name, symbol: $0.icon)
-            }))
-        }
-        return groups
-    }
-
-    private func label(for target: LedgerStore.ImportedRow.Target?) -> String? {
-        switch target {
-        case .category(let id): return snapshot.account(id)?.name
-        case .transfer(let id):
-            return snapshot.account(id).map {
-                $0.kind == .loan ? "Pays \($0.name)" : $0.kind == .lent ? "Money lent · \($0.name)" : "Transfer · \($0.name)"
-            }
-        case .bill(let occId):
-            return snapshot.occurrences.first { $0.id == occId }.flatMap(snapshot.item(for:)).map { "Pays \($0.name)" }
-        case nil: return nil
-        }
-    }
-
     private func binding(_ row: StatementRow) -> Binding<LedgerStore.ImportedRow.Target?> {
-        Binding(get: { targets[row.id] }, set: { targets[row.id] = $0 })
+        Binding(get: { review.targets[row.id] }, set: { review.targets[row.id] = $0 })
     }
 
     private func skipBinding(_ row: StatementRow) -> Binding<Bool> {
-        Binding(get: { skipped.contains(row.id) }, set: { if $0 { skipped.insert(row.id) } else { skipped.remove(row.id) } })
-    }
-
-    // MARK: - Adding
-
-    private func add() {
-        let picks = ready.compactMap { row -> LedgerStore.ImportedRow? in
-            guard let target = targets[row.id] else { return nil }
-            return LedgerStore.ImportedRow(date: row.date, memo: row.description, amount: row.amount, target: target,
-                                           key: key(for: row))
-        }
-        do {
-            added = try store.importRows(picks, into: accountId)
-        } catch {
-            self.error = StoreError.from(error).errorDescription
-        }
-    }
-
-    /// The same row of the same statement always gets the same key, so a
-    /// double tap or a second import can't add it twice
-    private func key(for row: StatementRow) -> UUID {
-        let twins = rows.filter { $0.date == row.date && $0.amount == row.amount && $0.description == row.description }
-        let ordinal = twins.firstIndex { $0.id == row.id } ?? 0
-        let text = "\(accountId)|\(row.date.timeIntervalSince1970)|\(row.amount.minorUnits)|\(row.description)|\(ordinal)"
-        var bytes = Array(SHA256.hash(data: Data(text.utf8)).prefix(16))
-        bytes[6] = (bytes[6] & 0x0F) | 0x50
-        bytes[8] = (bytes[8] & 0x3F) | 0x80
-        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+        Binding(get: { review.skipped.contains(row.id) }, set: { if $0 { review.skipped.insert(row.id) } else { review.skipped.remove(row.id) } })
     }
 }
 
@@ -418,7 +217,7 @@ private struct InboxRow: View {
     let row: StatementRow
     @Binding var target: LedgerStore.ImportedRow.Target?
     @Binding var skipped: Bool
-    let options: [(String, [ImportStatementView.Option])]
+    let options: [(String, [StatementReview.Option])]
     let label: String?
 
     var body: some View {

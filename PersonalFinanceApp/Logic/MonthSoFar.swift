@@ -9,7 +9,6 @@
 
 import Foundation
 import NokaelCore
-import SwiftUI
 
 struct MonthSoFar: Equatable {
     let spent: Money
@@ -63,28 +62,5 @@ struct MonthSoFar: Equatable {
         return difference.isNegative
             ? "You've spent \(spent.compact), \(difference.magnitude.compact) less than this time last month."
             : "You've spent \(spent.compact), \(difference.compact) more than this time last month."
-    }
-}
-
-/// The month under Safe to spend. Tapping it goes deeper.
-struct MonthSoFarCard: View {
-    let sentence: String
-    let open: () -> Void
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("This month so far").font(.caption.weight(.semibold)).foregroundStyle(Palette.brand)
-                    Text(sentence).font(.subheadline).foregroundStyle(.primary)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("monthSoFar")
     }
 }

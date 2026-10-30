@@ -124,6 +124,17 @@ struct FinanceSnapshot {
         accountRecords.filter { $0.kind == .income && !$0.archived }
     }
 
+    /// The groups a spending category can be put in
+    static let categoryGroupChoices = ["Essentials", "Bills", "Lifestyle", "Savings", "Other"]
+
+    /// Spending categories by group, in Budget's order; a group not in the list comes last, by name
+    var expenseCategoryGroups: [(name: String, categories: [LedgerAccountRecord])] {
+        let order = ["Essentials", "Lifestyle", "Savings", "Other"]
+        let grouped = Dictionary(grouping: expenseCategories) { $0.group.isEmpty ? "Other" : $0.group }
+        return grouped.keys.sorted { (order.firstIndex(of: $0) ?? 99, $0) < (order.firstIndex(of: $1) ?? 99, $1) }
+            .map { ($0, grouped[$0] ?? []) }
+    }
+
     var hasAccounts: Bool { !accounts.isEmpty }
 
     func balance(_ accountId: UUID) -> Money { ledger.balance(of: accountId) }

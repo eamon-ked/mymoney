@@ -140,9 +140,9 @@ struct NewLoanSheet: View {
             error = "Enter the yearly rate as a percentage, e.g. 4.5, or leave it empty."; return
         }
         do {
-            let debt = try store.createAccount(name: title, kind: kind, opening: owed.magnitude.negated, openingDate: Date(),
-                                               institution: lender.isEmpty ? nil : lender,
-                                               colorHex: AccountColors.next(for: kind))
+            let debt = try store.addAccount(name: title, kind: kind, balance: owed, openingDate: Date(),
+                                            institution: lender.isEmpty ? nil : lender,
+                                            colorHex: AccountColors.next(for: kind))
             if !isCard, categoryId != nil { try store.setLoanCategory(categoryId, for: debt.id) }
             if let payment {
                 try store.saveDebtTerms(DebtTerms(annualRateBps: bps, monthlyPayment: payment, dueDay: dueDay),

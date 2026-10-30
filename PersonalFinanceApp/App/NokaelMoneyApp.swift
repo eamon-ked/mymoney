@@ -59,6 +59,7 @@ struct NokaelMoneyApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .modifier(AppDuties(store: store, plus: plus))
                 .environment(store)
                 .environment(plus)
                 .modelContainer(container)

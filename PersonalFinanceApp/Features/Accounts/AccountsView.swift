@@ -194,7 +194,6 @@ struct NewAccountSheet: View {
 
     // Money you have only: a loan picked from here would miss its payment and what's owed
     private let kinds: [AccountKind] = [.bank, .cash, .savings, .investment, .lent, .otherAsset]
-    private var isDebt: Bool { kind.isLiability }
 
     var body: some View {
         NavigationStack {
@@ -223,12 +222,10 @@ struct NewAccountSheet: View {
     private func save() {
         let entered = balanceText.isEmpty ? Money.zero(store.currency) : MoneyFormat.parse(balanceText, currency: store.currency)
         guard let entered else { error = "Enter the balance as a number."; return }
-        // What you owe is stored as a negative balance
-        let opening = isDebt ? entered.magnitude.negated : entered
         do {
-            let record = try store.createAccount(name: name, kind: kind, opening: opening, openingDate: balanceDate,
-                                                 institution: institution.isEmpty ? nil : institution,
-                                                 colorHex: AccountColors.next(for: kind))
+            let record = try store.addAccount(name: name, kind: kind, balance: entered, openingDate: balanceDate,
+                                              institution: institution.isEmpty ? nil : institution,
+                                              colorHex: AccountColors.next(for: kind))
             onCreated(record)
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }

@@ -7,32 +7,6 @@ import SwiftUI
 import LocalAuthentication
 import NokaelCore
 
-/// What the global Add button can create
-enum AddKind: String, Identifiable, CaseIterable {
-    case expense, income, transfer, adjustment
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .expense: return "Expense"
-        case .income: return "Income"
-        case .transfer: return "Transfer"
-        case .adjustment: return "Balance adjustment"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .expense: return "arrow.up.right"
-        case .income: return "arrow.down.left"
-        case .transfer: return "arrow.left.arrow.right"
-        case .adjustment: return "slider.horizontal.3"
-        }
-    }
-}
-
-enum AppTab: Hashable { case home, budget, activity, accounts, reports }
-
 struct RootView: View {
     @Environment(LedgerStore.self) private var store
     @Environment(PlusStore.self) private var plus
@@ -44,6 +18,7 @@ struct RootView: View {
     @State private var showingTour = false
     @State private var unlocked = false
     @State private var showingBills = false
+    @State private var router = AppRouter.shared
 
     var body: some View {
         Group {
@@ -94,25 +69,15 @@ struct RootView: View {
                 #endif
             }
         }
-        .task(id: store.revision) {
-            WidgetSync.update(store.snapshot, isPlus: plus.isPlus)
-            await BillReminders.sync(store.snapshot)
-        }
-        .onChange(of: plus.isPlus) { _, isPlus in WidgetSync.update(store.snapshot, isPlus: isPlus) }
         .onAppear {
-            NotificationRouter.openPlan = { tab = .home; showingBills = true }
-            store.extendSchedules()
             #if DEBUG
             // Screenshot helper: -tab budget|activity|accounts|reports
             if let t = UserDefaults.standard.string(forKey: "tab") {
                 tab = ["budget": .budget, "activity": .activity, "accounts": .accounts, "reports": .reports][t] ?? .home
             }
-            // Capture helper: -captureSMS "<message>" and -captureApplePay "card|merchant|amount"
-            Task { await debugCaptures() }
             #endif
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { store.extendSchedules() }
             if phase == .background { unlocked = false }
         }
     }
@@ -142,44 +107,20 @@ struct RootView: View {
         }
         .sheet(isPresented: $showingBills) { NavigationStack { BillsView() } }
         .sheet(isPresented: $showingTour, onDismiss: { seenTour = true }) { WelcomeTour() }
+        .onChange(of: router.pending, initial: true) { _, route in
+            guard let route else { return }
+            switch route {
+            case .tab(let t): tab = t
+            case .bills: tab = .home; showingBills = true
+            }
+            router.pending = nil
+        }
         .onAppear {
             let args = CommandLine.arguments
             let automated = args.contains("-uiTesting") || args.contains("-demoData") || args.contains("-screenshots")
             if !seenTour && !automated { showingTour = true }
         }
     }
-
-    #if DEBUG
-    private func debugCaptures() async {
-        let defaults = UserDefaults.standard
-        if defaults.string(forKey: "screen") == "debtpay",
-           !store.snapshot.entryRecords.contains(where: { $0.kind == .debtPayment }),
-           let loan = store.snapshot.debts.first(where: { $0.kind == .loan }) ?? store.snapshot.debts.first,
-           let bank = store.snapshot.accounts.first(where: \.spendable) {
-            let owed = store.snapshot.owed(loan.id)
-            let interest = DebtCalculator.monthlyInterest(owed: owed, annualRateBps: loan.debtRateBps ?? 500)
-            _ = try? store.payDebt(loan.id, from: bank.id, amount: Money(1500, currency: store.currency), interest: interest,
-                                   fees: .zero(store.currency), date: store.now(), key: UUID())
-        }
-        if let pay = defaults.string(forKey: "captureApplePay") {
-            let parts = pay.split(separator: "|").map(String.init)
-            if parts.count == 3, let amount = Decimal(string: parts[2]) {
-                let capture = Capture(source: .applePay, direction: .spent, amount: Money(amount, currency: store.currency),
-                                      merchant: parts[1], cardHint: parts[0], date: store.now().addingTimeInterval(-120), text: pay)
-                let outcome = try? await CaptureService.record(capture, in: store, isPlus: plus.isPlus)
-                print("captureApplePay:", outcome.map { "\($0)" } ?? "error")
-            }
-        }
-        if let text = defaults.string(forKey: "captureSMS") {
-            if let capture = await CaptureService.read(message: text, homeCurrency: store.currency, date: store.now()) {
-                let outcome = try? await CaptureService.record(capture, in: store, isPlus: plus.isPlus)
-                print("captureSMS:", outcome.map { "\($0)" } ?? "error")
-            } else {
-                print("captureSMS: not a transaction")
-            }
-        }
-    }
-    #endif
 
     private func authenticate() {
         let context = LAContext()

@@ -25,6 +25,7 @@ enum StoreError: LocalizedError, Equatable {
 
     static func from(_ error: Error) -> StoreError {
         if let e = error as? StoreError { return e }
+        if let e = error as? EntryForm.AmountProblem { return .invalid(e.message) }
         if let e = error as? LedgerError {
             switch e {
             case .amountMustBePositive: return .invalid("Enter an amount greater than zero.")
@@ -176,6 +177,15 @@ final class LedgerStore {
         return record
     }
 
+    /// The balance as the person types it: what's in the account, or for a card
+    /// or loan what's owed, which the ledger keeps as a negative balance
+    @discardableResult
+    func addAccount(name: String, kind: AccountKind, balance: Money, openingDate: Date,
+                    institution: String? = nil, colorHex: String = "#3A7BD5") throws -> LedgerAccountRecord {
+        try createAccount(name: name, kind: kind, opening: kind.isLiability ? balance.magnitude.negated : balance,
+                          openingDate: openingDate, institution: institution, colorHex: colorHex)
+    }
+
     func updateAccount(_ record: LedgerAccountRecord, _ change: (LedgerAccountRecord) -> Void) throws {
         let wasArchived = record.archived
         change(record)
@@ -188,17 +198,44 @@ final class LedgerStore {
     }
 
     @discardableResult
+    /// `policy` and `reserve` apply to spending categories only
     func createCategory(name: String, kind: AccountKind, group: String, icon: String = "tag.fill",
-                        colorHex: String = "#8E8E93") throws -> LedgerAccountRecord {
+                        colorHex: String = "#8E8E93", policy: RolloverPolicy? = nil,
+                        reserve: Bool? = nil) throws -> LedgerAccountRecord {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { throw StoreError.invalid("Give the category a name.") }
         guard kind.isCategory else { throw StoreError.invalid("Categories are for income or spending.") }
         let order = fetch(LedgerAccountRecord.self).filter { $0.kind == kind }.count
         let record = LedgerAccountRecord(name: trimmed, kind: kind, currency: currency, colorHex: colorHex,
                                          icon: icon, group: group, sortOrder: order)
+        if kind == .expense {
+            if let policy { record.policy = policy }
+            if let reserve { record.reserveInSafeToSpend = reserve }
+        }
         context.insert(record)
         try commit()
         return record
+    }
+
+    /// A new category, or changes to `editing`, as the category form fills them in
+    @discardableResult
+    func saveCategory(_ editing: LedgerAccountRecord?, name: String, isIncome: Bool, group: String,
+                      policy: RolloverPolicy, reserve: Bool, icon: String, colorHex: String) throws -> LedgerAccountRecord {
+        guard let editing else {
+            return try createCategory(name: name, kind: isIncome ? .income : .expense, group: group, icon: icon,
+                                      colorHex: colorHex, policy: policy, reserve: reserve)
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { throw StoreError.invalid("Give the category a name.") }
+        try updateAccount(editing) {
+            $0.name = trimmed
+            $0.group = group
+            $0.policy = policy
+            $0.reserveInSafeToSpend = reserve
+            $0.icon = icon
+            $0.colorHex = colorHex
+        }
+        return editing
     }
 
     // MARK: - Entries
@@ -502,6 +539,7 @@ final class LedgerStore {
 
     /// Sets a category's plan for a month by recording the change from the current amount
     func setAllocation(_ amount: Money, categoryId: UUID, month: String) throws {
+        guard !amount.isNegative else { throw StoreError.invalid("The plan can't be negative.") }
         let current = snapshot.budget.allocated(categoryId, month: month)
         let delta = amount - current
         guard !delta.isZero else { return }
@@ -546,6 +584,19 @@ final class LedgerStore {
         }
         regenerateOccurrences(for: item)
         try commit()
+    }
+
+    /// "Your pay" in setup: the salary as expected income into the first
+    /// everyday account, and how often pay comes for planning until payday
+    func setUpSalary(_ amount: Money, every frequency: Frequency, nextPayday: Date) throws {
+        guard amount.isPositive else { throw StoreError.invalid("Enter your usual pay, or skip.") }
+        let item = PlannedItem(name: "Salary", direction: .inflow, amount: amount,
+                               schedule: Schedule(start: calendar.startOfDay(for: nextPayday).addingTimeInterval(12 * 3600),
+                                                  frequency: frequency),
+                               accountId: snapshot.accounts.first { $0.spendable }?.id,
+                               categoryId: snapshot.incomeCategories.first?.id)
+        try savePlannedItem(item)
+        try updateSettings { $0.payFrequencyData = try? JSONEncoder().encode(frequency) }
     }
 
     func archivePlannedItem(_ id: UUID) throws {

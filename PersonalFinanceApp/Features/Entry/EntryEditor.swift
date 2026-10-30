@@ -49,7 +49,7 @@ struct EntryEditor: View {
     @State private var pendingDraft: DraftEntry?
     @State private var categorySuggested = false
     /// "Salary" was said: hand over to Payday, which uses the salary saved in Plan
-    @State private var payday: GuideView.PaydayRequest?
+    @State private var payday: PaydayRequest?
     @FocusState private var amountFocused: Bool
 
     private var snapshot: FinanceSnapshot { store.snapshot }
@@ -95,7 +95,7 @@ struct EntryEditor: View {
 
                 if kind == .income && editing == nil && prefill == nil, let salary = PaydayPlan.salaryItem(snapshot) {
                     Section {
-                        Button { payday = GuideView.PaydayRequest(said: nil) } label: {
+                        Button { payday = PaydayRequest(said: nil) } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: "banknote.fill").font(.title3).foregroundStyle(.green)
                                 VStack(alignment: .leading, spacing: 2) {
@@ -385,7 +385,7 @@ struct EntryEditor: View {
         guard !text.isEmpty, !reading else { return }
         // A salary is already set up in Plan: use it, never a guessed amount
         if PaydayPlan.mentionsSalary(text) {
-            payday = GuideView.PaydayRequest(said: AlertParser.spoken(text, homeCurrency: currency, date: Date())?.amount)
+            payday = PaydayRequest(said: AlertParser.spoken(text, homeCurrency: currency, date: Date())?.amount)
             return
         }
         #if canImport(FoundationModels)
@@ -476,22 +476,21 @@ struct EntryEditor: View {
 
     // MARK: - Saving
 
+    /// Everything typed so far, as the store records it
+    private var form: EntryForm {
+        EntryForm(kind: kind, amount: amount, accountId: accountId, toAccountId: toAccountId, categoryId: categoryId,
+                  memo: memo, notes: notes, date: date, reason: reason, repeats: editing == nil && repeats,
+                  frequency: frequency, occurrenceId: paysBill ? billCandidate?.occurrence.id : nil, key: key)
+    }
+
     private func save() {
         error = nil
         amountError = nil
-        guard let amount else { amountError = "Enter an amount."; return }
-        if kind != .adjustment && !amount.isPositive { amountError = "Enter an amount greater than zero."; return }
+        do { _ = try form.checkedAmount() } catch { amountError = error.localizedDescription; return }
         guard !saving else { return }
         saving = true
         do {
-            var entry = try buildEntry(amount)
-            if paysBill, let bill = billCandidate { entry.occurrenceId = bill.occurrence.id }
-            if let editing {
-                try store.replace(editing.id, with: entry, notes: notes)
-            } else {
-                try store.post(entry, notes: notes)
-                if repeats { try saveRepeat(amount) }
-            }
+            try store.save(form, replacing: editing?.id)
             // Stays disabled: the sheet is closing and the key already saved it once
             dismiss()
         } catch {
@@ -499,51 +498,6 @@ struct EntryEditor: View {
             self.error = StoreError.from(error).errorDescription
             // The keyboard would hide the message and the choice it asks for
             amountFocused = false
-        }
-    }
-
-    private func buildEntry(_ amount: Money) throws -> Entry {
-        let title = memo.trimmingCharacters(in: .whitespaces)
-        guard let account = snapshot.account(accountId)?.info else {
-            throw StoreError.invalid(snapshot.hasAccounts ? "Choose an account." : "Add an account first.")
-        }
-        switch kind {
-        case .expense:
-            guard let category = snapshot.account(categoryId)?.info else { throw StoreError.invalid("Choose what it was for.") }
-            return try EntryFactory.expense(amount, from: account, category: category, date: date,
-                                            memo: title.isEmpty ? category.name : title, key: key)
-        case .income:
-            guard let category = snapshot.account(categoryId)?.info else { throw StoreError.invalid("Choose the kind of income.") }
-            return try EntryFactory.income(amount, to: account, category: category, date: date,
-                                           memo: title.isEmpty ? category.name : title, key: key)
-        case .transfer:
-            guard let to = snapshot.account(toAccountId)?.info else { throw StoreError.invalid("Choose where the money goes.") }
-            return try EntryFactory.transfer(amount, from: account, to: to, date: date,
-                                             memo: title.isEmpty ? "Transfer to \(to.name)" : title, key: key)
-        case .adjustment:
-            let delta = amount - snapshot.ledger.balance(of: account.id, asOf: date)
-            guard !delta.isZero else { throw StoreError.invalid("That's already the recorded balance.") }
-            return try EntryFactory.adjustment(delta, account: account, equity: store.equityAccount.info, date: date,
-                                               reason: reason, key: key)
-        }
-    }
-
-    private func saveRepeat(_ amount: Money) throws {
-        guard let next = Calendar.current.date(byAdding: nextStep, to: date) else { return }
-        let item = PlannedItem(name: memo.isEmpty ? (snapshot.account(categoryId)?.name ?? kind.title) : memo,
-                               direction: kind == .income ? .inflow : .outflow, amount: amount,
-                               schedule: Schedule(start: next, frequency: frequency),
-                               accountId: accountId, categoryId: categoryId)
-        try store.savePlannedItem(item)
-    }
-
-    private var nextStep: DateComponents {
-        switch frequency {
-        case .weekly(let n): return DateComponents(day: 7 * n)
-        case .monthly(let n): return DateComponents(month: n)
-        case .quarterly: return DateComponents(month: 3)
-        case .annually: return DateComponents(year: 1)
-        case .everyDays(let n): return DateComponents(day: n)
         }
     }
 

@@ -14,6 +14,9 @@ import NokaelCore
 import FoundationModels
 #endif
 
+/// Where a request runs: on this iPhone, or on Apple's Private Cloud Compute
+enum AIEngine: Equatable, Sendable { case onDevice, cloud }
+
 enum AppleIntelligence {
     /// Person's choice in Settings; on by default where the device supports it
     static let enabledKey = "appleIntelligenceEnabled"
@@ -62,6 +65,61 @@ enum AppleIntelligence {
 
     static var isReady: Bool { status == .ready }
 
+    // MARK: - Which model answers
+
+    /// Plus members' choice in Settings; on by default
+    static let cloudKey = "useCloudModel"
+
+    enum CloudStatus: Equatable {
+        case ready
+        case limitReached       // today's allowance on this iCloud account is used up
+        case unavailable        // offline, not signed in to iCloud, or not set up for this app
+        case needsNewerIOS
+        case notSetUp           // this build doesn't include it yet: waiting on Apple's approval
+
+        /// Whether to offer the cloud model at all on this iPhone and build
+        var offered: Bool { self != .needsNewerIOS && self != .notSetUp }
+    }
+
+    /// Apple's larger model on Private Cloud Compute (iOS 27): needs the internet and has a daily limit per iCloud account.
+    ///
+    /// Creating the model in an app without Apple's `com.apple.developer.private-cloud-compute` entitlement
+    /// stops the app at once, so every use is compiled only when the PRIVATE_CLOUD_COMPUTE flag is set.
+    /// Turn it on together with the entitlement, once Apple has approved the app:
+    /// add the entitlement to the app's .entitlements file and PRIVATE_CLOUD_COMPUTE to the target's
+    /// Active Compilation Conditions (SWIFT_ACTIVE_COMPILATION_CONDITIONS), for Debug and Release.
+    static var cloudStatus: CloudStatus {
+        #if canImport(FoundationModels) && PRIVATE_CLOUD_COMPUTE
+        if #available(iOS 27.0, *) {
+            let model = PrivateCloudComputeLanguageModel()
+            guard model.isAvailable else { return .unavailable }
+            return model.quotaUsage.isLimitReached ? .limitReached : .ready
+        }
+        return .needsNewerIOS
+        #else
+        return .notSetUp
+        #endif
+    }
+
+    /// The cloud model is a Plus benefit, used only when it's switched on and can answer right now
+    static func engine(plus: Bool, cloudOn: Bool, cloud: CloudStatus) -> AIEngine {
+        plus && cloudOn && cloud == .ready ? .cloud : .onDevice
+    }
+
+    static func engine(plus: Bool) -> AIEngine {
+        guard plus else { return .onDevice }
+        let cloudOn = UserDefaults.standard.object(forKey: cloudKey) as? Bool ?? true
+        return engine(plus: plus, cloudOn: cloudOn, cloud: cloudOn ? cloudStatus : .unavailable)
+    }
+
+    /// Whether the on-device model has the larger context of newer iPhones on iOS 27
+    static var onDeviceIsRoomy: Bool {
+        #if canImport(FoundationModels)
+        if #available(iOS 27.0, *) { return SystemLanguageModel.default.contextSize >= 8192 }
+        #endif
+        return false
+    }
+
     /// Shared rules for every prompt: plain words, real numbers only
     static let baseInstructions = """
         You are the assistant inside Nokael Money, a personal budgeting app. \
@@ -72,6 +130,15 @@ enum AppleIntelligence {
         """
 
     static func message(for error: Error) -> String {
+        #if canImport(FoundationModels) && PRIVATE_CLOUD_COMPUTE
+        if #available(iOS 27.0, *), let error = error as? PrivateCloudComputeLanguageModel.Error {
+            switch error {
+            case .networkFailure: return "No internet connection. Try again when you're online."
+            case .quotaLimitReached: return "Today's limit for Apple's cloud model is used up. It resets tomorrow."
+            default: return "Apple's cloud model isn't available right now. Try again in a little while."
+            }
+        }
+        #endif
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), let error = error as? LanguageModelSession.GenerationError {
             switch error {

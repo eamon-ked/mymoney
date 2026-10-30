@@ -347,9 +347,16 @@ struct ImportStatementView: View {
         }
         let categories = out ? snapshot.expenseCategories : snapshot.incomeCategories
         groups.append((out ? "Spending" : "Income", categories.map { Option(target: .category($0.id), title: $0.name, symbol: $0.icon) }))
-        let others = snapshot.accounts.filter { $0.id != accountId }
+        let others = snapshot.accounts.filter { $0.id != accountId && $0.kind != .lent }
         if !others.isEmpty {
             groups.append((out ? "Moved to" : "Moved from", others.map {
+                Option(target: .transfer($0.id), title: $0.name, symbol: $0.icon)
+            }))
+        }
+        // Money lent isn't spending, and money paid back isn't income
+        let people = snapshot.accounts.filter { $0.id != accountId && $0.kind == .lent && !$0.archived }
+        if !people.isEmpty {
+            groups.append((out ? "Lent to" : "Paid back by", people.map {
                 Option(target: .transfer($0.id), title: $0.name, symbol: $0.icon)
             }))
         }
@@ -360,7 +367,9 @@ struct ImportStatementView: View {
         switch target {
         case .category(let id): return snapshot.account(id)?.name
         case .transfer(let id):
-            return snapshot.account(id).map { $0.kind == .loan ? "Pays \($0.name)" : "Transfer · \($0.name)" }
+            return snapshot.account(id).map {
+                $0.kind == .loan ? "Pays \($0.name)" : $0.kind == .lent ? "Money lent · \($0.name)" : "Transfer · \($0.name)"
+            }
         case .bill(let occId):
             return snapshot.occurrences.first { $0.id == occId }.flatMap(snapshot.item(for:)).map { "Pays \($0.name)" }
         case nil: return nil

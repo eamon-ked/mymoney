@@ -1,222 +1,78 @@
 //
-//  PlanView.swift
+//  BillsView.swift
 //  Nokael Money
 //
-//  Bills, expected income, debts and savings in one place, so a planned saving
-//  and next week's loan payment can be seen together. Scheduled items are
-//  never posted money until they're marked paid or matched.
+//  Every bill and expected payment, opened from Home's Coming up. Scheduled
+//  items are never posted money until they're marked paid or matched.
 //
 
 import SwiftUI
 import NokaelCore
 
-struct PlanView: View {
+struct BillsView: View {
     @Environment(LedgerStore.self) private var store
-    @Environment(PlusStore.self) private var plus
-    @State private var paywall: PlusFeature?
     @State private var editingItem: PlannedItemSheet?
     @State private var paying: Occurrence?
-    @State private var addingReserve = false
-    @State private var addingLoan = false
-    @State private var addingGoal = false
-    @State private var editingReserve: Reserve?
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section { banner.bannerRow() }
-
-                Section {
-                    let fc = snapshot.cashForecast(days: 60)
-                    if plus.isPlus {
-                        NavigationLink { ForecastView() } label: {
-                            ListRow(title: "Money ahead",
-                                    caption: fc.firstShortfall.map { "Short on " + $0.formatted(.dateTime.day().month(.abbreviated)) }
-                                        ?? "Lowest in 60 days: \(fc.lowest.compact)",
-                                    symbol: "chart.line.uptrend.xyaxis", color: fc.firstShortfall == nil ? Palette.plan : .red) {
-                                EmptyView()
-                            }
-                        }
-                        .accessibilityIdentifier("moneyAhead")
-                    } else {
-                        // The heads-up is free; the day-by-day detail is Plus
-                        Button { paywall = .moneyAhead } label: {
-                            ListRow(title: "Money ahead",
-                                    caption: fc.firstShortfall == nil ? "Your balance day by day for 60 days"
-                                        : "You may run short in the next 60 days. See when.",
-                                    symbol: "chart.line.uptrend.xyaxis", color: fc.firstShortfall == nil ? Palette.plan : .red) {
-                                PlusBadge()
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("moneyAhead")
-                    }
-                }
-
-                Section {
-                    let dueSoon = snapshot.upcomingBills(days: 30)
-                    if dueSoon.isEmpty { Text("Nothing due in the next 30 days").foregroundStyle(.secondary) }
+        List {
+            let dueSoon = snapshot.upcomingBills(days: 30)
+            if !dueSoon.isEmpty {
+                Section("Due in 30 days") {
                     ForEach(dueSoon) { occ in
                         Button { paying = occ } label: { OccurrenceRow(occurrence: occ, snapshot: snapshot) }
                             .buttonStyle(.plain)
                     }
-                } header: {
-                    Text("Due soon")
-                } footer: {
-                    Text("Paid one? Tap it to mark it paid.")
                 }
-
-                Section {
-                    let bills = snapshot.items.filter { $0.direction == .outflow }
-                    if bills.isEmpty {
-                        EmptyStateView(symbol: "calendar.badge.plus", title: "No bills yet",
-                                       message: "Add rent, utilities, subscriptions and loan payments. They're reserved in safe-to-spend until paid.",
-                                       actionTitle: "Add a bill") { editingItem = .new(.outflow) }
-                    }
-                    ForEach(bills) { item in
-                        Button { editingItem = .edit(item) } label: { PlannedItemRow(item: item, snapshot: snapshot) }
-                            .buttonStyle(.plain)
-                    }
-                } header: {
-                    HStack {
-                        Text("Your bills")
-                        Spacer()
-                        Button("Add a bill") { editingItem = .new(.outflow) }.font(.subheadline)
-                    }
-                } footer: {
-                    if !snapshot.items.filter({ $0.direction == .outflow }).isEmpty {
-                        Text("Tap a bill to change its amount or date, or to stop it.")
-                    }
-                }
-
-                Section {
-                    let income = snapshot.items.filter { $0.direction == .inflow }
-                    if income.isEmpty {
-                        Button { editingItem = .new(.inflow) } label: { Label("Add expected income", systemImage: "plus") }
-                    }
-                    ForEach(income) { item in
-                        Button { editingItem = .edit(item) } label: { PlannedItemRow(item: item, snapshot: snapshot) }
-                            .buttonStyle(.plain)
-                    }
-                } header: {
-                    HStack {
-                        Text("Expected income")
-                        Spacer()
-                        if !snapshot.items.filter({ $0.direction == .inflow }).isEmpty {
-                            Button("Add") { editingItem = .new(.inflow) }.font(.subheadline)
-                        }
-                    }
-                } footer: {
-                    Text("Expected income is a plan. It isn't counted as money you have until you mark it received.")
-                }
-
-                debtsSection
-                savingsSection
             }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Plan")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Button { editingItem = .new(.outflow) } label: { Label("Bill", systemImage: "calendar.badge.plus") }
-                        Button { editingItem = .new(.inflow) } label: { Label("Expected income", systemImage: "arrow.down.circle") }
-                        Button { newGoal() } label: { Label("Savings goal", systemImage: "target") }
-                        Button { addingReserve = true } label: { Label("Money set aside", systemImage: "lock") }
-                        Button { addingLoan = true } label: { Label("Loan or credit card", systemImage: "creditcard") }
-                    } label: { Text("New bill or goal").font(.body.weight(.semibold)) }
-                    .accessibilityLabel("New bill, expected income or savings goal")
+
+            Section {
+                let bills = snapshot.items.filter { $0.direction == .outflow }
+                if bills.isEmpty {
+                    EmptyStateView(symbol: "calendar.badge.plus", title: "No bills yet",
+                                   message: "Add rent, utilities and subscriptions. They're kept out of Safe to spend until paid.",
+                                   actionTitle: "Add a bill") { editingItem = .new(.outflow) }
                 }
-                GlobalAddButton()
+                ForEach(bills) { item in
+                    Button { editingItem = .edit(item) } label: { PlannedItemRow(item: item, snapshot: snapshot) }
+                        .buttonStyle(.plain)
+                }
+            } header: {
+                Text("Your bills")
             }
-            .sheet(item: $editingItem) { PlannedItemEditor(sheet: $0) }
-            .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
-            .sheet(isPresented: $addingReserve) { ReserveEditor() }
-            .sheet(isPresented: $addingLoan) { NewLoanSheet() }
-            .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
-            .paywall($paywall)
-            .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }
+
+            Section {
+                let income = snapshot.items.filter { $0.direction == .inflow }
+                if income.isEmpty {
+                    Button { editingItem = .new(.inflow) } label: { Label("Add expected income", systemImage: "plus") }
+                }
+                ForEach(income) { item in
+                    Button { editingItem = .edit(item) } label: { PlannedItemRow(item: item, snapshot: snapshot) }
+                        .buttonStyle(.plain)
+                }
+            } header: {
+                Text("Expected income")
+            } footer: {
+                Text("Not counted as money you have until you mark it received.")
+            }
         }
-    }
-
-    /// One goal is free; more need Plus
-    private func newGoal() {
-        if plus.isPlus || snapshot.goals.isEmpty { addingGoal = true } else { paywall = .goals }
-    }
-
-    private var banner: some View {
-        let due = snapshot.upcomingBills(days: 30)
-        let total = due.map(\.remaining).sum(store.currency)
-        let next = due.first
-        let caption: String = {
-            guard let next, let item = snapshot.item(for: next) else { return "No bills due in the next 30 days" }
-            let state = snapshot.state(of: next)
-            let when = state == .overdue ? "was due " : "next: "
-            return "\(item.name) \(when)\(next.dueDate.formatted(.dateTime.day().month(.abbreviated))) · \(next.remaining.compact)"
-        }()
-        return SummaryBanner(title: "Bills due in 30 days", amount: total.compact, caption: caption, tint: Palette.plan) {
-            BannerFigures(figures: [("Debt", snapshot.totalDebt.compact)]
-                          + (snapshot.activeReservesTotal.isPositive ? [("Set aside", snapshot.activeReservesTotal.compact)] : []))
+        .listStyle(.insetGrouped)
+        .canvas()
+        .navigationTitle("Bills")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button { editingItem = .new(.outflow) } label: { Label("Bill", systemImage: "calendar.badge.plus") }
+                    Button { editingItem = .new(.inflow) } label: { Label("Expected income", systemImage: "arrow.down.circle") }
+                } label: { Image(systemName: "plus") }
+                .accessibilityLabel("New bill or expected income")
+                .accessibilityIdentifier("newBill")
+            }
         }
-    }
-
-    @ViewBuilder private var debtsSection: some View {
-        let debts = snapshot.debts
-        Section {
-            if debts.isEmpty {
-                Text("No cards or loans added").foregroundStyle(.secondary)
-            }
-            ForEach(debts, id: \.id) { debt in
-                let owed = snapshot.owed(debt.id)
-                let caption: String = {
-                    guard let terms = debt.debtTerms else { return "Add the rate and payment to see a payoff date" }
-                    let payoff = snapshot.payoff(for: debt)?.shortText
-                    return ["\(terms.monthlyPayment.compact) a month", payoff].compactMap { $0 }.joined(separator: " · ")
-                }()
-                NavigationLink {
-                    AccountDetailView(accountId: debt.id)
-                } label: {
-                    ListRow(title: debt.name, caption: caption, symbol: debt.icon, color: Color(hex: debt.colorHex)) {
-                        AmountPill(text: owed.isPositive ? "\(owed.compact) owed" : "Paid off", style: owed.isPositive ? .neutral : .positive)
-                    }
-                }
-            }
-        } header: {
-            Text("Debts")
-        } footer: {
-            Text("Open a card or loan to set its rate and payment, see when it's paid off, and record payments split into interest and principal.")
-        }
-    }
-
-    @ViewBuilder private var savingsSection: some View {
-        Section {
-            if snapshot.goals.isEmpty {
-                Button { addingGoal = true } label: { Label("Start a savings goal", systemImage: "target") }
-                    .accessibilityIdentifier("startGoal")
-            }
-            ForEach(snapshot.goals) { goal in
-                if let progress = snapshot.progress(of: goal) {
-                    NavigationLink { GoalDetailView(goalId: goal.id) } label: { GoalRow(goal: goal, progress: progress) }
-                }
-            }
-            ForEach(snapshot.reserves.filter { !$0.isGoal }) { r in
-                Button { editingReserve = r } label: {
-                    ListRow(title: r.name, caption: "Set aside in \(snapshot.account(r.accountId)?.name ?? "an account")",
-                            symbol: "lock.fill", color: Palette.plan) {
-                        AmountPill(r.amount)
-                    }
-                }.buttonStyle(.plain)
-            }
-        } header: {
-            HStack {
-                Text("Savings")
-                Spacer()
-                if !snapshot.goals.isEmpty { Button("Add") { newGoal() }.font(.subheadline) }
-            }
-        } footer: {
-            Text("Saved money stays in its account and is kept out of safe-to-spend, so you can't spend it by accident.")
-        }
+        .sheet(item: $editingItem) { PlannedItemEditor(sheet: $0) }
+        .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
     }
 }
 

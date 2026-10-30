@@ -164,6 +164,17 @@ struct BudgetTests {
         #expect(line.remaining == Fixture.aed(-20))
     }
 
+    @Test("Spending with no budget lowers money not planned yet; it's never added back")
+    func unbudgetedSpendingIsGone() throws {
+        let b = budget([try opening(5000),
+                        try EntryFactory.expense(Fixture.aed(400), from: f.current, category: f.transport, date: Fixture.date(2026, 10, 9))],
+                       [Allocation(categoryId: f.groceries.id, month: oct, amount: Fixture.aed(1000)),
+                        Allocation(categoryId: f.groceries.id, month: oct, amount: Fixture.aed(0))])
+        // 4,600 left in the account, 1,000 of it planned for groceries
+        #expect(b.line(f.transport.id, month: oct).remaining == Fixture.aed(-400))
+        #expect(b.availableToAllocate(month: oct) == Fixture.aed(3600))
+    }
+
     @Test("QA-11 / BUD-05: a new month follows each category's rollover policy")
     func newMonthRollover() throws {
         let entries = [try opening(5000),

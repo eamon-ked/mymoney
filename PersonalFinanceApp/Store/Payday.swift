@@ -130,7 +130,7 @@ struct PaydayPlan {
                 done.append("Saved your salary, so next month's is expected")
             }
         }
-        done.insert("Recorded \(MoneyFormat.string(amount)) salary into \(account.name)", at: 0)
+        done.insert("Recorded \(MoneyFormat.string(amount, dropWholeFraction: true)) salary into \(account.name)", at: 0)
 
         if choices.copyBudget, let from = budgetFrom {
             try store.copyPlan(from: from, to: store.snapshot.monthKey)

@@ -17,6 +17,12 @@ extension Money {
     var formatted: String { MoneyFormat.string(self) }
     /// Drops ".00" on whole amounts, for rows and pills
     var compact: String { MoneyFormat.string(self, dropWholeFraction: true) }
+    /// Rounded to whole units, for the big figure on a summary card, e.g. "AED 1,216"
+    var whole: String {
+        let unit = Int64((0..<Currency.scale(of: currency)).reduce(1) { r, _ in r * 10 })
+        let rounded = (minorUnits + (minorUnits < 0 ? -unit : unit) / 2) / unit * unit
+        return Money(minorUnits: rounded, currency: currency).compact
+    }
     /// With an explicit sign for changes, e.g. "+AED 50" / "−AED 85"
     var signed: String {
         if isZero { return compact }
@@ -28,11 +34,26 @@ enum Palette {
     static let positive = Color.green
     static let negative = Color.red
     static let warning = Color.orange
-    static let home = Color(red: 0.20, green: 0.36, blue: 0.85)
-    static let budget = Color(red: 0.13, green: 0.60, blue: 0.40)
-    static let activity = Color(red: 0.93, green: 0.50, blue: 0.16)
-    static let accounts = Color(red: 0.36, green: 0.33, blue: 0.85)
-    static let plan = Color(red: 0.05, green: 0.58, blue: 0.62)
+    /// The one brand colour: every hero card, every main action. Red and orange are only for alerts.
+    static let brand = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.16, green: 0.55, blue: 0.53, alpha: 1)
+        : UIColor(red: 0.04, green: 0.40, blue: 0.40, alpha: 1) })
+    /// Warm off-white behind the cards; deep neutral at night
+    static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.07, green: 0.07, blue: 0.08, alpha: 1)
+        : UIColor(red: 0.965, green: 0.957, blue: 0.94, alpha: 1) })
+    static let home = brand
+    static let budget = brand
+    static let activity = brand
+    static let accounts = brand
+    static let plan = brand
+}
+
+extension View {
+    /// The calm canvas every tab sits on
+    func canvas() -> some View {
+        scrollContentBackground(.hidden).background(Palette.canvas.ignoresSafeArea())
+    }
 }
 
 enum AccountStyle {
@@ -45,6 +66,7 @@ enum AccountStyle {
         case .loan: return "doc.text.fill"
         case .investment: return "chart.line.uptrend.xyaxis"
         case .otherAsset: return "shippingbox.fill"
+        case .lent: return "person.crop.circle.badge.clock"
         case .income: return "arrow.down.circle.fill"
         case .expense: return "tag.fill"
         case .equity: return "scalemass.fill"
@@ -60,6 +82,7 @@ enum AccountStyle {
         case .loan: return "Loan"
         case .investment: return "Investment"
         case .otherAsset: return "Other asset"
+        case .lent: return "Money lent"
         case .income: return "Income"
         case .expense: return "Spending"
         case .equity: return "Adjustments"
@@ -84,7 +107,8 @@ extension Color {
 
 // MARK: - Banner
 
-/// The coloured block at the top of each tab. Tapping it explains the number.
+/// The hero card at the top of each tab: one title, one number, at most one line under it.
+/// Tapping it explains the number.
 struct SummaryBanner<Footer: View>: View {
     let title: String
     let amount: String
@@ -93,6 +117,8 @@ struct SummaryBanner<Footer: View>: View {
     var alert: String? = nil
     var tint: Color
     var action: (() -> Void)? = nil
+    /// A soft glow, kept for Home so the first screen feels alive
+    var glow: Bool = false
     @ViewBuilder var footer: () -> Footer
 
     var body: some View {
@@ -107,47 +133,127 @@ struct SummaryBanner<Footer: View>: View {
     }
 
     private var content: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.subheadline.weight(.medium))
-                .opacity(0.9)
-            Text(amount)
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
+                .opacity(0.85)
+            AmountText(amount, size: 40)
                 .contentTransition(.numericText())
             if let alert {
                 Label(alert, systemImage: "exclamationmark.triangle.fill")
-                    .font(.headline)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(Capsule().fill(.white.opacity(0.22)))
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Capsule().fill(.white.opacity(0.2)))
             }
             if let caption {
                 Text(caption)
                     .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .opacity(0.9)
+                    .opacity(0.8)
             }
             footer()
             if action != nil {
-                Label("How is this worked out?", systemImage: "info.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.top, 2)
-                    .opacity(0.9)
+                HStack(spacing: 4) {
+                    Text("How it's calculated")
+                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                }
+                .font(.footnote.weight(.semibold))
+                .opacity(0.85)
+                .padding(.top, 4)
             }
         }
         .monospacedDigit()
         .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
-        .padding(.horizontal, 14)
-        .background(tint.gradient)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 22)
+        .padding(.horizontal, 22)
+        .background {
+            if glow {
+                LinearGradient(colors: [tint, Color(red: 0.10, green: 0.55, blue: 0.58), Color(red: 0.03, green: 0.30, blue: 0.33)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            } else {
+                tint
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 }
 
 extension SummaryBanner where Footer == EmptyView {
-    init(title: String, amount: String, caption: String? = nil, alert: String? = nil, tint: Color, action: (() -> Void)? = nil) {
-        self.init(title: title, amount: amount, caption: caption, alert: alert, tint: tint, action: action, footer: { EmptyView() })
+    init(title: String, amount: String, caption: String? = nil, alert: String? = nil, tint: Color,
+         action: (() -> Void)? = nil, glow: Bool = false) {
+        self.init(title: title, amount: amount, caption: caption, alert: alert, tint: tint, action: action, glow: glow,
+                  footer: { EmptyView() })
+    }
+}
+
+/// A big figure with the currency code or symbol set smaller, in any locale: "AED 561", "561 €", "-$12"
+struct AmountText: View {
+    let amount: String
+    var size: CGFloat
+
+    init(_ amount: String, size: CGFloat) {
+        self.amount = amount
+        self.size = size
+    }
+
+    var body: some View {
+        Text(styled)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+    }
+
+    private var styled: AttributedString {
+        var out = AttributedString()
+        // Digits, signs and separators stay big; the currency part is set smaller
+        let big: (Character) -> Bool = { $0.isNumber || "-−+.,'\u{00A0}\u{202F} ".contains($0) }
+        var run = ""
+        var runIsBig: Bool?
+        func flush() {
+            guard let isBig = runIsBig, !run.isEmpty else { return }
+            var part = AttributedString(run)
+            part.font = .system(size: isBig ? size : size * 0.55, weight: .bold, design: .rounded)
+            out += part
+        }
+        // A hyphen reads as a dash at this size; use a true minus sign
+        for ch in amount.replacingOccurrences(of: "-", with: "\u{2212}") {
+            let b = big(ch)
+            if b != runIsBig { flush(); run = ""; runIsBig = b }
+            run.append(ch)
+        }
+        flush()
+        return out
+    }
+}
+
+/// One soft note under a hero card, when a screen has exactly one thing worth saying
+struct NoteCard: View {
+    let text: String
+    var symbol = "info.circle"
+    var link: String? = nil
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        Button { action?() } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: symbol).font(.title3).foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(text).foregroundStyle(.primary)
+                    if let link {
+                        HStack(spacing: 4) {
+                            Text(link)
+                            Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Palette.brand)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.orange.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .disabled(action == nil)
     }
 }
 
@@ -181,15 +287,15 @@ extension View {
 struct IconBadge: View {
     let symbol: String
     let color: Color
-    var size: CGFloat = 34
+    var size: CGFloat = 40
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
-            .fill(color.gradient)
+        Circle()
+            .fill(color.opacity(0.14))
             .frame(width: size, height: size)
             .overlay(Image(systemName: symbol.isEmpty ? "circle" : symbol)
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .foregroundStyle(.white))
+                .font(.system(size: size * 0.4, weight: .semibold))
+                .foregroundStyle(color))
             .accessibilityHidden(true)
     }
 }
@@ -214,7 +320,7 @@ struct ListRow<Trailing: View>: View {
             Spacer(minLength: 8)
             trailing().layoutPriority(1)
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: 52)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
@@ -225,6 +331,8 @@ enum PillStyle { case neutral, positive, negative, warning }
 struct AmountPill: View {
     let text: String
     var style: PillStyle = .neutral
+    /// A word under the amount, e.g. "owed"
+    var note: String? = nil
 
     init(_ money: Money, style: PillStyle? = nil) {
         self.text = money.compact
@@ -233,8 +341,9 @@ struct AmountPill: View {
 
     /// A card or loan balance: what's owed, as a positive amount and in words, never a minus sign
     init(owed balance: Money) {
-        self.text = balance.isNegative ? "\(balance.magnitude.compact) owed" : balance.compact
-        self.style = balance.isNegative ? .warning : .neutral
+        self.text = balance.isNegative ? balance.magnitude.compact : balance.compact
+        self.style = .neutral
+        self.note = balance.isNegative ? "owed" : nil
     }
 
     init(text: String, style: PillStyle = .neutral) {
@@ -243,14 +352,25 @@ struct AmountPill: View {
     }
 
     var body: some View {
+        if let note {
+            VStack(alignment: .trailing, spacing: 1) {
+                amount
+                Text(note).font(.caption).foregroundStyle(.secondary)
+            }
+        } else {
+            amount
+        }
+    }
+
+    private var amount: some View {
         Text(text)
-            .font(.subheadline.weight(.semibold))
+            .font(.body.weight(.semibold))
             .monospacedDigit()
             .lineLimit(1)
             .foregroundStyle(foreground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(background))
+            .padding(.horizontal, style == .negative ? 8 : 0)
+            .padding(.vertical, style == .negative ? 3 : 0)
+            .background(Capsule().fill(style == .negative ? Color.red : .clear))
             .fixedSize()
     }
 
@@ -260,15 +380,6 @@ struct AmountPill: View {
         case .positive: return .green
         case .warning: return .orange
         case .neutral: return .primary
-        }
-    }
-
-    private var background: Color {
-        switch style {
-        case .neutral: return Color.gray.opacity(0.15)
-        case .positive: return Color.green.opacity(0.15)
-        case .warning: return Color.orange.opacity(0.15)
-        case .negative: return .red
         }
     }
 }
@@ -313,16 +424,23 @@ struct EmptyStateView: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 28)).foregroundStyle(.secondary)
-            Text(title).font(.headline)
+        VStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 44, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Palette.brand)
+                .padding(.bottom, 4)
+            Text(title).font(.title3.weight(.semibold))
             Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if let actionTitle, let action {
-                Button(actionTitle, action: action).buttonStyle(.borderedProminent).padding(.top, 4)
+                Button(actionTitle, action: action)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Palette.brand)
+                    .padding(.top, 6)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        .padding(.vertical, 28)
     }
 }
 

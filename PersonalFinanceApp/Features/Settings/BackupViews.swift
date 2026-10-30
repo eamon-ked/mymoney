@@ -62,9 +62,11 @@ struct BackupSection: View {
     }
 
     private var footer: String {
-        let status = store.settings.lastBackupAt.map { "Last backup " + $0.formatted(.relative(presentation: .named)) + "." }
-            ?? "No backup yet."
-        return status + " Your data is only on this iPhone. Save a backup to iCloud Drive or another place you trust, so you can restore it if the phone is lost or replaced."
+        // The warning only matters until there's a backup
+        if let last = store.settings.lastBackupAt {
+            return "Last backup " + last.formatted(.relative(presentation: .named)) + "."
+        }
+        return "No backup yet. Your data is only on this iPhone. Save one to iCloud Drive or another place you trust."
     }
 
     private func save() {

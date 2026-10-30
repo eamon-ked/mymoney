@@ -3,7 +3,7 @@
 //  Nokael Money
 //
 //  Screens and cards powered by Apple Intelligence: Ask about your money,
-//  the month in brief on Home, and the month's story in Reports.
+//  and the month's story in Reports.
 //
 
 import SwiftUI
@@ -28,32 +28,56 @@ final class AskModel {
 
     private(set) var messages: [Message] = []
     private(set) var busy = false
+    /// Where the current conversation runs; drops to the iPhone if the cloud can't answer
+    private(set) var engine: AIEngine = .onDevice
     private var session: LanguageModelSession?
     private var task: Task<Void, Never>?
 
-    func ask(_ question: String, digest: FinanceDigest) {
+    func ask(_ question: String, digest: FinanceDigest, plus: Bool) {
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !busy else { return }
-        if session == nil { session = MoneyAI.assistantSession(digest) }
-        guard let session else { return }
+        if session == nil {
+            engine = AppleIntelligence.engine(plus: plus)
+            session = MoneyAI.assistantSession(digest, engine: engine)
+        }
         messages.append(Message(fromPerson: true, text: question))
         messages.append(Message(fromPerson: false, text: ""))
         let index = messages.count - 1
         busy = true
         task = Task {
             do {
-                for try await partial in session.streamResponse(to: question) {
-                    messages[index].text = partial.content
-                }
+                try await stream(question, into: index)
             } catch is CancellationError {
+            } catch where engine == .cloud {
+                // Offline, out of today's allowance or not available: carry on, on this iPhone
+                engine = .onDevice
+                session = MoneyAI.assistantSession(digest, engine: .onDevice)
+                do {
+                    try await stream(question, into: index)
+                } catch is CancellationError {
+                } catch {
+                    fail(index, error)
+                }
             } catch {
-                messages[index].text = AppleIntelligence.message(for: error)
-                messages[index].failed = true
-                // A full context window can't recover; the next question starts fresh
-                self.session = nil
+                fail(index, error)
             }
             busy = false
         }
+    }
+
+    private func stream(_ question: String, into index: Int) async throws {
+        guard let session else { return }
+        messages[index].text = ""
+        for try await partial in session.streamResponse(to: question) {
+            messages[index].text = partial.content
+        }
+    }
+
+    private func fail(_ index: Int, _ error: Error) {
+        messages[index].text = AppleIntelligence.message(for: error)
+        messages[index].failed = true
+        // A full context window can't recover; the next question starts fresh
+        session = nil
     }
 
     func reset() {
@@ -67,6 +91,7 @@ final class AskModel {
 @available(iOS 26.0, *)
 struct AskMoneyView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
     @Environment(\.dismiss) private var dismiss
     @State private var model = AskModel()
     @State private var question = ""
@@ -116,7 +141,9 @@ struct AskMoneyView: View {
         VStack(alignment: .leading, spacing: 14) {
             AIBadge()
             Text("Ask about your money").font(.title2.bold())
-            Text("Answers come from your accounts, budget and bills, worked out privately on this iPhone. Nothing is sent anywhere.")
+            Text(AppleIntelligence.engine(plus: plus.isPlus) == .cloud
+                 ? "Answered by Apple's larger model on Private Cloud Compute, from your accounts, budget and bills. Apple uses your data only to answer and doesn't keep it."
+                 : "Answers come from your accounts, budget and bills, worked out privately on this iPhone. Nothing is sent anywhere.")
                 .font(.subheadline).foregroundStyle(.secondary)
             ForEach(suggestions, id: \.self) { s in
                 Button { send(s) } label: {
@@ -161,84 +188,28 @@ struct AskMoneyView: View {
             }
             .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || model.busy)
             .accessibilityLabel("Send")
+            .accessibilityIdentifier("askSend")
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
     }
 
     private func send(_ text: String) {
-        model.ask(text, digest: FinanceDigest(store.snapshot))
+        model.ask(text, digest: FinanceDigest(store.snapshot), plus: plus.isPlus)
         question = ""
     }
 }
 
-// MARK: - The month in brief (Home)
+#endif
 
-@available(iOS 26.0, *)
-struct InsightCard: View {
-    @Environment(LedgerStore.self) private var store
-    let ask: () -> Void
-    @State private var insight: MonthInsight?
-    @State private var loading = false
-    @State private var failed = false
-    /// Insights are worked out once per data change, not on every appearance
-    @State private var builtForRevision: Int?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                AIBadge(text: "Your month in brief")
-                Spacer()
-                if !loading {
-                    Button { Task { await load(force: true) } } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.borderless).font(.caption)
-                        .accessibilityLabel("Refresh summary")
-                }
-            }
-            if let insight {
-                Text(insight.headline).font(.subheadline)
-                ForEach(insight.tips, id: \.self) { tip in
-                    Label(tip, systemImage: "lightbulb").font(.caption).foregroundStyle(.secondary)
-                }
-            } else if loading {
-                HStack(spacing: 8) { ProgressView(); Text("Looking at your month…").font(.subheadline).foregroundStyle(.secondary) }
-            } else if failed {
-                Text("Couldn't make a summary right now.").font(.subheadline).foregroundStyle(.secondary)
-            }
-            Button(action: ask) { Label("Ask about your money", systemImage: "bubble.left.and.text.bubble.right") }
-                .font(.subheadline.weight(.medium))
-                .buttonStyle(.borderless)
-                .padding(.top, 2)
-        }
-        .padding(.vertical, 4)
-        .task(id: store.revision) { await load(force: false) }
-    }
-
-    private func load(force: Bool) async {
-        guard force || builtForRevision != store.revision else { return }
-        if !force {
-            // Let a run of quick edits settle before reading the month again
-            try? await Task.sleep(for: .seconds(1))
-            if Task.isCancelled { return }
-        }
-        loading = true
-        failed = false
-        defer { loading = false }
-        do {
-            insight = try await MoneyAI.insight(FinanceDigest(store.snapshot))
-            builtForRevision = store.revision
-        } catch is CancellationError {
-        } catch {
-            failed = insight == nil
-        }
-    }
-}
+#if canImport(FoundationModels)
 
 // MARK: - The month's story (Reports)
 
 @available(iOS 26.0, *)
 struct MonthStoryView: View {
     @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
     let monthKey: String
     @State private var text = ""
     @State private var loading = false
@@ -269,9 +240,20 @@ struct MonthStoryView: View {
         error = nil
         text = ""
         defer { loading = false }
+        let digest = FinanceDigest(store.snapshot)
+        let engine = AppleIntelligence.engine(plus: plus.isPlus)
         do {
-            for try await partial in MoneyAI.monthStory(FinanceDigest(store.snapshot), monthKey: monthKey) {
+            for try await partial in MoneyAI.monthStory(digest, monthKey: monthKey, engine: engine) {
                 text = partial.content
+            }
+        } catch where engine == .cloud && !(error is CancellationError) {
+            // The cloud couldn't answer: tell the story on this iPhone instead
+            do {
+                for try await partial in MoneyAI.monthStory(digest, monthKey: monthKey, engine: .onDevice) {
+                    text = partial.content
+                }
+            } catch {
+                self.error = AppleIntelligence.message(for: error)
             }
         } catch {
             self.error = AppleIntelligence.message(for: error)
@@ -284,22 +266,36 @@ struct MonthStoryView: View {
 // MARK: - Settings
 
 struct AppleIntelligenceSection: View {
+    @Environment(PlusStore.self) private var plus
     @AppStorage(AppleIntelligence.enabledKey) private var enabled = true
+    @AppStorage(AppleIntelligence.cloudKey) private var cloudOn = true
 
     var body: some View {
         let system = AppleIntelligence.systemStatus
+        let cloud = AppleIntelligence.cloudStatus
         Section {
             if system == .ready {
                 Toggle("Use Apple Intelligence", isOn: $enabled)
+                // Apple's larger model is a Plus benefit on iOS 27
+                if enabled, plus.isPlus, cloud.offered {
+                    Toggle("Use Apple's cloud model when online", isOn: $cloudOn)
+                        .accessibilityIdentifier("cloudModelToggle")
+                    if cloudOn, cloud == .limitReached {
+                        Label("Today's limit is used up. Answers come from this iPhone until it resets.", systemImage: "hourglass")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
             } else {
                 LabeledContent("Apple Intelligence", value: "Unavailable")
             }
-        } header: {
-            Text("Apple Intelligence")
         } footer: {
-            Text(system == .ready
-                 ? "Quick add from a sentence, category suggestions, a monthly summary and answers to your questions. Runs privately on this iPhone, free and offline. Always check before saving."
-                 : system.explanation)
+            if system != .ready {
+                Text(system.explanation)
+            } else if plus.isPlus, cloud.offered, cloudOn, enabled {
+                Text("A summary of your month and answers to your questions use Apple's larger model on Private Cloud Compute when you're online. Apple uses your data only to answer and doesn't keep it. Offline, everything runs on this iPhone. Always check before saving.")
+            } else {
+                Text("Quick add from a sentence, category suggestions, a summary of your month and answers to your questions. Runs privately on this iPhone, free and offline. Always check before saving.")
+            }
         }
     }
 }

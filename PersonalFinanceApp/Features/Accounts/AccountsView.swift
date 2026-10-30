@@ -11,7 +11,7 @@ import SwiftUI
 import NokaelCore
 
 enum AccountSection: String, CaseIterable, Identifiable {
-    case cash = "Cash & banks", cards = "Credit cards", loans = "Loans", investments = "Investments", other = "Other assets"
+    case cash = "Cash & banks", cards = "Credit cards", loans = "Loans", investments = "Investments", lent = "Lent to people", other = "Other assets"
     var id: String { rawValue }
 
     func contains(_ kind: AccountKind) -> Bool {
@@ -20,6 +20,7 @@ enum AccountSection: String, CaseIterable, Identifiable {
         case .cards: return kind == .creditCard
         case .loans: return kind == .loan
         case .investments: return kind == .investment
+        case .lent: return kind == .lent
         case .other: return kind == .otherAsset
         }
     }
@@ -29,6 +30,8 @@ struct AccountsView: View {
     @Environment(LedgerStore.self) private var store
     @State private var addingAccount = false
     @State private var addingLoan = false
+    /// Started as a bank account, but it's a loan or card: open that form once this one closes
+    @State private var switchToLoan = false
     @State private var explanation: Explanation?
     @State private var showArchived = false
 
@@ -39,12 +42,10 @@ struct AccountsView: View {
             List {
                 Section {
                     let worth = snapshot.netWorth
-                    SummaryBanner(title: "Net worth", amount: worth.total.compact,
-                                  caption: netWorthCaption(worth),
-                                  tint: worth.total.isNegative ? .red : Palette.accounts,
-                                  action: { explanation = netWorthExplanation(worth) }) {
-                        BannerFigures(figures: [("You own", worth.assets.compact), ("You owe", worth.liabilities.compact)])
-                    }
+                    // Just the number: what's owned and owed is already in the list below.
+                    // Never red: a big loan makes it negative and that's normal, not an alarm.
+                    SummaryBanner(title: "Net worth", amount: worth.total.whole, tint: Palette.accounts,
+                                  action: { explanation = netWorthExplanation(worth) })
                     .bannerRow()
                 }
 
@@ -67,30 +68,27 @@ struct AccountsView: View {
                             HStack {
                                 Text(section.rawValue)
                                 Spacer()
-                                let total = accounts.map { snapshot.balance($0.id) }.sum(store.currency)
-                                // Debt is an amount owed, never a minus sign
-                                Text(section.contains(.creditCard) || section.contains(.loan)
-                                     ? "\(total.negated.compact) owed" : total.compact)
-                                    .monospacedDigit()
-                            }
-                        } footer: {
-                            if section == .cash {
-                                Text("Tap an account to see its history or import a statement.")
-                            } else if section == .cards || section == .loans {
-                                Text("Tap one to record a payment.")
+                                // A total only adds something when there's more than one row to add up
+                                if accounts.count > 1 {
+                                    let total = accounts.map { snapshot.balance($0.id) }.sum(store.currency)
+                                    // Debt is an amount owed, never a minus sign
+                                    Text(section.contains(.creditCard) || section.contains(.loan)
+                                         ? "\(total.negated.compact) owed" : total.compact)
+                                        .monospacedDigit()
+                                }
                             }
                         }
                     }
                 }
 
                 Section {
+                    Button { addingAccount = true } label: {
+                        Label("Add bank account", systemImage: "building.columns")
+                    }
                     Button { addingLoan = true } label: {
-                        Label("Add a loan or credit card", systemImage: "creditcard")
+                        Label("Add loan or credit card", systemImage: "creditcard")
                     }
                     .accessibilityIdentifier("addLoan")
-                    Button { addingAccount = true } label: {
-                        Label("Add a bank account, cash or savings", systemImage: "building.columns")
-                    }
                 }
 
                 if !snapshot.archivedAccounts.isEmpty {
@@ -106,28 +104,30 @@ struct AccountsView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .canvas()
             .navigationTitle("Accounts")
+            // Nothing else lives in the top bar here, so the title takes that row instead of leaving it empty
+            .toolbarTitleDisplayMode(.inlineLarge)
             .navigationDestination(for: UUID.self) { AccountDetailView(accountId: $0) }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { addingAccount = true } label: { Text("New account").font(.body.weight(.semibold)) }
+                // Always in reach, however long the list of accounts and loans gets
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button { addingAccount = true } label: { Label("Bank account, cash or savings", systemImage: "building.columns") }
+                        Button { addingLoan = true } label: { Label("Loan or credit card", systemImage: "creditcard") }
+                    } label: {
+                        Image(systemName: "plus").font(.body.weight(.semibold))
+                    }
+                    .accessibilityLabel("Add account or loan")
+                    .accessibilityIdentifier("addAccountMenu")
                 }
-                GlobalAddButton()
             }
-            .sheet(isPresented: $addingAccount) { NewAccountSheet() }
+            .sheet(isPresented: $addingAccount, onDismiss: {
+                if switchToLoan { switchToLoan = false; addingLoan = true }
+            }) { NewAccountSheet(onLoan: { switchToLoan = true }) }
             .sheet(isPresented: $addingLoan) { NewLoanSheet() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
         }
-    }
-
-    /// Net worth with context: a big loan makes it negative, and that's said plainly
-    private func netWorthCaption(_ worth: NetWorth) -> String {
-        guard worth.total.isNegative else { return "What you own minus what you owe" }
-        let biggest = snapshot.debtAccounts.max { snapshot.balance($0.id).negated < snapshot.balance($1.id).negated }
-        if let biggest, snapshot.balance(biggest.id).negated.minorUnits * 2 > worth.liabilities.minorUnits {
-            return "You owe more than you own, mostly on \(biggest.name). That's usual while paying off a large loan."
-        }
-        return "You owe more than you own right now"
     }
 
     private func netWorthExplanation(_ worth: NetWorth) -> Explanation {
@@ -159,7 +159,15 @@ struct AccountRow: View {
     }
 
     private var caption: String {
-        var parts = [account.institution, AccountStyle.name(for: account.kind)].compactMap { $0 }.filter { !$0.isEmpty }
+        // A card or loan with terms says what it costs a month and when it's done
+        if account.kind.isLiability, let terms = account.debtTerms {
+            return ["\(terms.monthlyPayment.compact) a month", snapshot.payoff(for: account)?.shortText].compactMap { $0 }.joined(separator: " · ")
+        }
+        // "Emirates NBD Current" already says the bank; don't say it again underneath
+        let bank = account.institution.flatMap { name in
+            name.isEmpty || account.name.localizedCaseInsensitiveContains(name) ? nil : name
+        }
+        var parts = [bank, AccountStyle.name(for: account.kind)].compactMap { $0 }
         if let last = account.lastReconciledAt {
             parts.append("Checked " + last.formatted(.relative(presentation: .named)))
         }
@@ -174,6 +182,8 @@ struct NewAccountSheet: View {
     @Environment(LedgerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     var onCreated: (LedgerAccountRecord) -> Void = { _ in }
+    /// Loans and cards have their own form, with what's owed and the monthly payment
+    var onLoan: (() -> Void)? = nil
 
     @State private var name = ""
     @State private var kind: AccountKind = .bank
@@ -182,7 +192,8 @@ struct NewAccountSheet: View {
     @State private var balanceDate = Date()
     @State private var error: String?
 
-    private let kinds: [AccountKind] = [.bank, .cash, .savings, .creditCard, .loan, .investment, .otherAsset]
+    // Money you have only: a loan picked from here would miss its payment and what's owed
+    private let kinds: [AccountKind] = [.bank, .cash, .savings, .investment, .lent, .otherAsset]
     private var isDebt: Bool { kind.isLiability }
 
     var body: some View {
@@ -190,6 +201,14 @@ struct NewAccountSheet: View {
             Form {
                 AccountFormFields(name: $name, kind: $kind, institution: $institution, balanceText: $balanceText,
                                   balanceDate: $balanceDate, kinds: kinds, currency: store.currency)
+                if let onLoan {
+                    Section {
+                        Button { onLoan(); dismiss() } label: {
+                            Label("Adding a loan or credit card?", systemImage: "creditcard")
+                        }
+                        .accessibilityIdentifier("switchToLoan")
+                    }
+                }
                 if let error { Section { FieldError(message: error) } }
             }
             .navigationTitle("New account")
@@ -243,10 +262,12 @@ struct AccountFormFields: View {
             }
             DatePicker("On", selection: $balanceDate, in: ...Date(), displayedComponents: .date)
         } header: {
-            Text(kind.isLiability ? "Amount you owe" : "Balance")
+            Text(kind.isLiability ? "Amount you owe" : kind == .lent ? "Amount they owe you" : "Balance")
         } footer: {
             Text(kind.isLiability
                  ? "Enter what you owe today. Spending on it adds to this; payments reduce it."
+                 : kind == .lent
+                 ? "One for each person. What they owe you counts in your net worth, but not as money you can spend."
                  : "What the account holds on this date, from your banking app or statement.")
         }
     }
@@ -261,6 +282,7 @@ enum AccountColors {
         case .creditCard: return "#E4572E"
         case .loan: return "#8E44AD"
         case .investment: return "#5B6CFF"
+        case .lent: return "#FF9500"
         default: return "#8E8E93"
         }
     }

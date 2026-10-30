@@ -80,7 +80,7 @@ struct GoalDetailView: View {
     private func content(_ goal: Reserve, _ progress: GoalProgress) -> some View {
         List {
             Section {
-                SummaryBanner(title: goal.name, amount: progress.saved.compact,
+                SummaryBanner(title: goal.name, amount: progress.saved.whole,
                               caption: "saved of \(progress.target.formatted)", tint: progress.tint) {
                     ProgressBar(value: progress.fraction, tint: .white)
                         .padding(.top, 6)
@@ -193,7 +193,7 @@ struct GoalMoneySheet: View {
                         Toggle("Move it from another account", isOn: $moveMoney)
                         if moveMoney {
                             AccountPicker(title: "From",
-                                          accounts: snapshot.accounts.filter { $0.kind.isAsset && $0.id != goal.accountId },
+                                          accounts: snapshot.accounts.filter { $0.kind.holdsMoney && $0.id != goal.accountId },
                                           selection: $fundingId)
                             DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
                         }

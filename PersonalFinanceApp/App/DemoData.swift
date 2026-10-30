@@ -25,7 +25,8 @@ enum DemoData {
         guard let current = try? store.createAccount(name: "Emirates NBD Current", kind: .bank, opening: aed(14200), openingDate: day(-20), institution: "Emirates NBD", colorHex: "#3A7BD5"),
               let savings = try? store.createAccount(name: "Wio Savings", kind: .savings, opening: aed(25000), openingDate: day(-20), institution: "Wio", colorHex: "#0E9AA7"),
               let card = try? store.createAccount(name: "Mashreq Cashback", kind: .creditCard, opening: aed(-1850), openingDate: day(-20), institution: "Mashreq", colorHex: "#E4572E"),
-              let loan = try? store.createAccount(name: "Car loan", kind: .loan, opening: aed(-36500), openingDate: day(-20), institution: "ADCB", colorHex: "#8E44AD")
+              let loan = try? store.createAccount(name: "Car loan", kind: .loan, opening: aed(-36500), openingDate: day(-20), institution: "ADCB", colorHex: "#8E44AD"),
+              let personal = try? store.createAccount(name: "Personal loan", kind: .loan, opening: aed(-12000), openingDate: day(-20), institution: "Mashreq", colorHex: "#5B6CFF")
         else { return }
 
         let entries: [Entry?] = [
@@ -35,7 +36,8 @@ enum DemoData {
             try? EntryFactory.expense(aed(210), from: card.info, category: cat("Entertainment"), date: day(-2), memo: "VOX Cinemas"),
             try? EntryFactory.transfer(aed(2000), from: current.info, to: savings.info, date: day(-3), memo: "Move to savings"),
             try? EntryFactory.expense(aed(389), from: current.info, category: cat("Utilities"), date: day(-5), memo: "DEWA"),
-            try? EntryFactory.expense(aed(96), from: card.info, category: cat("Groceries"), date: day(-6), memo: "Spinneys")
+            try? EntryFactory.expense(aed(96), from: card.info, category: cat("Groceries"), date: day(-6), memo: "Spinneys"),
+            try? EntryFactory.expense(aed(185), from: card.info, category: cat("Groceries"), date: day(-4), memo: "Carrefour")
         ]
         for e in entries.compactMap({ $0 }) { _ = try? store.post(e) }
 
@@ -53,6 +55,11 @@ enum DemoData {
                                  for: loan.id, paidFrom: current.id)
         try? store.saveDebtTerms(DebtTerms(annualRateBps: 3900, monthlyPayment: aed(500), dueDay: 20),
                                  for: card.id, paidFrom: nil)
+        // A second loan in the same category as the car loan, already paid this month
+        try? store.saveDebtTerms(DebtTerms(annualRateBps: 650, monthlyPayment: aed(900), dueDay: store.calendar.component(.day, from: day(-2))),
+                                 for: personal.id, paidFrom: current.id)
+        _ = try? store.payDebt(personal.id, from: current.id, amount: aed(900), interest: aed(65), fees: aed(0),
+                               date: day(-2), key: UUID())
         try? store.savePlannedItem(PlannedItem(name: "Du mobile", direction: .outflow, amount: aed(280), isEstimate: true,
                                                schedule: Schedule(start: day(9), frequency: .monthly(every: 1)),
                                                accountId: current.id, categoryId: cat("Phone & internet").id))

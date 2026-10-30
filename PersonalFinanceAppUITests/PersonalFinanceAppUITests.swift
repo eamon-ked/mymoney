@@ -14,7 +14,8 @@ final class JourneyUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-uiTesting"]
+        // Currency follows the phone's region; these journeys check AED amounts
+        app.launchArguments = ["-uiTesting", "-AppleLocale", "en_AE"]
         app.launch()
     }
 
@@ -60,8 +61,15 @@ final class JourneyUITests: XCTestCase {
         let skip = app.buttons["skip"]
         XCTAssertTrue(skip.waitForExistence(timeout: 5))
         skip.tap()
+        let bills = app.buttons["continue"]
+        XCTAssertTrue(bills.waitForExistence(timeout: 5))
+        bills.tap()
+        XCTAssertTrue(element(containing: "Plan the essentials").waitForExistence(timeout: 5))
+        // The last step ends on what's actually free to spend, below the essentials
         let finish = app.buttons["finish"]
-        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !finish.isHittable { app.swipeUp() }
+        XCTAssertTrue(element(containing: "Safe to spend").exists)
+        XCTAssertTrue(finish.isHittable)
         finish.tap()
     }
 
@@ -70,7 +78,7 @@ final class JourneyUITests: XCTestCase {
         completeSetup()
 
         // Home shows a real safe-to-spend from the opening balance
-        XCTAssertTrue(app.navigationBars["Your money"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["safeToSpend"].waitForExistence(timeout: 5))
         XCTAssertTrue(element(containing: "AED 12,000").waitForExistence(timeout: 5))
 
         // Plan groceries for the month
@@ -136,7 +144,7 @@ final class JourneyUITests: XCTestCase {
     func testJourneyC_PayTheCarLoan() throws {
         // Demo household: car loan of 36,500 at 4.99%, 1,850 a month
         app.terminate()
-        app.launchArguments = ["-demoData", "-tab", "plan"]
+        app.launchArguments = ["-demoData", "-tab", "accounts"]
         app.launch()
 
         let loanRow = element(containing: "Car loan, AED 1,850 a month")
@@ -154,10 +162,49 @@ final class JourneyUITests: XCTestCase {
     }
 
     @MainActor
+    func testFixingALoanEnteredWrong() throws {
+        // Demo household: personal loan added at 12,000, one payment of 900 with 65 interest, so 11,165 owed
+        app.terminate()
+        app.launchArguments = ["-demoData", "-tab", "accounts"]
+        app.launch()
+
+        let loanRow = element(containing: "Personal loan")
+        for _ in 0..<6 where !loanRow.isHittable { app.swipeUp() }
+        loanRow.tap()
+        XCTAssertTrue(element(containing: "AED 11,165").waitForExistence(timeout: 5))
+
+        // It was really 21,000. Tapping the amount selects it, so typing replaces it
+        let edit = app.buttons["editDebt"]
+        for _ in 0..<4 where !edit.isHittable { app.swipeUp() }
+        edit.tap()
+        let field = app.textFields["owedWhenAdded"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("21000")
+        XCTAssertTrue(element(containing: "AED 20,165").waitForExistence(timeout: 3))
+        app.buttons["saveTerms"].tap()
+        for _ in 0..<4 { app.swipeDown() }
+        XCTAssertTrue(element(containing: "AED 20,165").waitForExistence(timeout: 5))
+
+        // And the payment was 1,000, not 900; the 65 interest from the statement stays
+        let payment = element(containing: "Personal loan payment")
+        for _ in 0..<6 where !payment.isHittable { app.swipeUp() }
+        payment.tap()
+        app.buttons["Edit"].tap()
+        let amount = app.textFields["debtPaymentAmount"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 5))
+        amount.tap()
+        amount.typeText("1000")
+        app.buttons["recordDebtPayment"].tap()
+        for _ in 0..<6 { app.swipeDown() }
+        XCTAssertTrue(element(containing: "AED 20,065").waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testSavingTowardsAGoal() throws {
         // Demo household: "Japan trip", 6,000 of 15,000 saved in Wio Savings
         app.terminate()
-        app.launchArguments = ["-demoData", "-tab", "plan"]
+        app.launchArguments = ["-demoData", "-tab", "budget"]
         app.launch()
 
         let goal = element(containing: "Japan trip, AED 6,000 of AED 15,000")

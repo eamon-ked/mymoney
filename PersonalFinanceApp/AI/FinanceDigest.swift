@@ -28,6 +28,8 @@ struct FinanceDigest: Sendable {
         let overBy: String
         let overspent: Bool
         let used: Bool
+        /// Loan instalments, not spending to cut back on
+        var loans: [String] = []
     }
 
     struct Transaction: Sendable {
@@ -88,29 +90,30 @@ struct FinanceDigest: Sendable {
         monthKey = snapshot.monthKey
 
         let sts = snapshot.safeToSpend()
-        safeToSpend = snapshot.setupComplete ? (sts.amount?.formatted ?? "unknown") : "not set up yet"
+        safeToSpend = snapshot.setupComplete ? (sts.amount?.compact ?? "unknown") : "not set up yet"
         safeToSpendThrough = sts.periodEnd
-        cashAndBank = snapshot.cashAndBank.formatted
-        totalDebt = snapshot.totalDebt.formatted
+        cashAndBank = snapshot.cashAndBank.compact
+        totalDebt = snapshot.totalDebt.compact
         let worth = snapshot.netWorth
-        netWorth = (worth.assets - worth.liabilities).formatted
+        netWorth = (worth.assets - worth.liabilities).compact
 
         accounts = snapshot.accounts.map {
             Account(name: $0.name, kind: AccountStyle.name(for: $0.kind),
-                    balance: snapshot.balance($0.id).formatted, spendable: $0.spendable)
+                    balance: snapshot.balance($0.id).compact, spendable: $0.spendable)
         }
 
         let month = snapshot.monthKey
         let lines = snapshot.expenseCategories.map { ($0, snapshot.budget.line($0.id, month: month)) }
         categories = lines.map { c, line in
             let planned = line.planned
-            return Category(name: c.name, group: c.group, planned: planned.formatted,
-                            spent: line.spent.formatted, spentMinor: line.spent.minorUnits, remaining: line.remaining.formatted,
-                            overBy: line.remaining.magnitude.formatted, overspent: line.isOverspent, used: !planned.isZero || !line.spent.isZero)
+            return Category(name: c.name, group: c.group, planned: planned.compact,
+                            spent: line.spent.compact, spentMinor: line.spent.minorUnits, remaining: line.remaining.compact,
+                            overBy: line.remaining.magnitude.compact, overspent: line.isOverspent, used: !planned.isZero || !line.spent.isZero,
+                            loans: snapshot.loans(in: c.id).map(\.name))
         }
         .sorted { $0.spentMinor > $1.spentMinor }
-        spentThisMonth = lines.map { $0.1.spent }.sum(snapshot.currency).formatted
-        plannedThisMonth = lines.map { $0.1.planned }.sum(snapshot.currency).formatted
+        spentThisMonth = lines.map { $0.1.spent }.sum(snapshot.currency).compact
+        plannedThisMonth = lines.map { $0.1.planned }.sum(snapshot.currency).compact
         incomeCategoryNames = snapshot.incomeCategories.map(\.name)
 
         transactions = snapshot.entries().prefix(400).map { record in
@@ -130,16 +133,16 @@ struct FinanceDigest: Sendable {
         months = (0..<6).map { back in
             let key = BudgetMonth.adding(-back, to: month, calendar: calendar)
             let report = Reports.month(key, ledger: snapshot.ledger, expenseCategories: expense,
-                                       incomeCategories: income, calendar: calendar)
+                                       incomeCategories: income, calendar: calendar, loanCategories: snapshot.loanCategories)
             let title = BudgetMonth.start(of: key, calendar: calendar)?
                 .formatted(.dateTime.month(.wide).year()) ?? key
-            return Month(key: key, title: title, income: report.totals.income.formatted,
-                         spending: report.totals.spending.formatted, leftOver: report.totals.leftOver.formatted,
-                         topCategories: report.spending.prefix(5).map { ($0.name, $0.amount.formatted) })
+            return Month(key: key, title: title, income: report.totals.income.compact,
+                         spending: report.totals.spending.compact, leftOver: report.totals.leftOver.compact,
+                         topCategories: report.spending.prefix(5).map { ($0.name, $0.amount.compact) })
         }
 
         bills = snapshot.upcomingBills(days: 45).map { occ in
-            Bill(name: snapshot.item(for: occ)?.name ?? "Bill", due: occ.dueDate, amount: occ.remaining.formatted,
+            Bill(name: snapshot.item(for: occ)?.name ?? "Bill", due: occ.dueDate, amount: occ.remaining.compact,
                  overdue: snapshot.state(of: occ) == .overdue, estimated: snapshot.item(for: occ)?.isEstimate ?? false)
         }
 
@@ -149,7 +152,7 @@ struct FinanceDigest: Sendable {
         }
         let payday = PaydayPlan.make(snapshot)
         expectedIncome = snapshot.items.filter { $0.direction == .inflow }.map { item in
-            var line = "\(item.name): \(item.amount.formatted), \(item.schedule.frequency.label.lowercased())"
+            var line = "\(item.name): \(item.amount.compact), \(item.schedule.frequency.label.lowercased())"
             if let account = snapshot.account(item.accountId) { line += ", paid into \(account.name)" }
             line += ", \(next(item))"
             if item.id == payday.item?.id, let received = payday.alreadyReceived {
@@ -158,14 +161,14 @@ struct FinanceDigest: Sendable {
             return line
         }
         plannedBills = snapshot.items.filter { $0.direction == .outflow }.map { item in
-            "\(item.name): \(item.amount.formatted)\(item.isEstimate ? " (estimate)" : ""), \(item.schedule.frequency.label.lowercased()), \(next(item))"
+            "\(item.name): \(item.amount.compact)\(item.isEstimate ? " (estimate)" : ""), \(item.schedule.frequency.label.lowercased()), \(next(item))"
         }
         debts = snapshot.debts.map { debt in
-            var line = "\(debt.name) (\(AccountStyle.name(for: debt.kind))): owe \(snapshot.owed(debt.id).formatted)"
-            if let terms = debt.debtTerms { line += ", interest \(terms.rateText), monthly payment \(terms.monthlyPayment.formatted)" }
+            var line = "\(debt.name) (\(AccountStyle.name(for: debt.kind))): owe \(snapshot.owed(debt.id).compact)"
+            if let terms = debt.debtTerms { line += ", interest \(terms.rateText), monthly payment \(terms.monthlyPayment.compact)" }
             switch snapshot.payoff(for: debt) {
             case .paidOff(_, let last, let interest, _)?:
-                line += ", paid off by \(last.formatted(.dateTime.month(.wide).year())) with \(interest.formatted) more interest"
+                line += ", paid off by \(last.formatted(.dateTime.month(.wide).year())) with \(interest.compact) more interest"
             case .never?:
                 line += ", the payment doesn't cover the interest so it never falls"
             default: break
@@ -174,8 +177,8 @@ struct FinanceDigest: Sendable {
         }
 
         goals = snapshot.reserves.map { r in
-            if let target = r.target { return "\(r.name): \(r.amount.formatted) saved of \(target.formatted)" }
-            return "\(r.name): \(r.amount.formatted) set aside"
+            if let target = r.target { return "\(r.name): \(r.amount.compact) saved of \(target.compact)" }
+            return "\(r.name): \(r.amount.compact) set aside"
         }
     }
 
@@ -214,8 +217,8 @@ struct FinanceDigest: Sendable {
         out += "Each category:\n" + used.map {
             "- \($0.name): spent \($0.spent) of \($0.planned) planned, \($0.remaining) left"
         }.joined(separator: "\n")
-        if used.contains(where: { $0.name == "Loan payments" }) {
-            out += "\nLoan payments are fixed loan instalments (interest plus repaying the loan), not spending to cut back on."
+        for c in used where !c.loans.isEmpty {
+            out += "\n\(c.name) holds fixed loan instalments (interest plus repaying the loan) for \(c.loans.joined(separator: ", ")), not spending to cut back on."
         }
         return out
     }
@@ -242,23 +245,47 @@ struct FinanceDigest: Sendable {
         }.joined(separator: "\n")
     }
 
+    /// Everything, for Apple's larger cloud model (32K tokens): the whole picture, three months of
+    /// transactions and how the app works, so it can answer like someone who knows both.
+    /// Kept to about 80,000 characters (around 20K tokens), leaving room for the question and answer.
+    var fullContext: String {
+        let parts = [
+            overview,
+            budget(monthKey: nil),
+            billsText,
+            trend,
+            "Transactions in the last 90 days:\n" + search(text: nil, category: nil, days: 90, limit: 300),
+            "How the Nokael Money app works (use these exact button names when explaining):\n" + AppGuide.reference,
+        ]
+        let text = parts.joined(separator: "\n\n")
+        return text.count <= Self.fullContextBudget ? text : String(text.prefix(Self.fullContextBudget))
+    }
+
+    static let fullContextBudget = 80_000
+
     /// Matching transactions, newest first, with a total
     func search(text: String?, category: String?, days: Int?, limit: Int = 25) -> String {
         let since = days.flatMap { Calendar.current.date(byAdding: .day, value: -$0, to: today) }
         let needle = text?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
         let cat = category?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
-        let hits = transactions.filter { t in
-            if let since, t.date < since { return false }
-            if !needle.isEmpty && !t.memo.lowercased().contains(needle) && !(t.category?.lowercased().contains(needle) ?? false) { return false }
-            if !cat.isEmpty && !(t.category?.lowercased().contains(cat) ?? false) { return false }
-            return true
+        func matches(_ t: Transaction, _ word: String) -> Bool {
+            t.memo.lowercased().contains(word) || (t.category?.lowercased().contains(word) ?? false)
+        }
+        let recent = transactions.filter { t in since.map { t.date >= $0 } ?? true }
+        var hits = recent.filter { t in
+            (needle.isEmpty || matches(t, needle)) && (cat.isEmpty || (t.category?.lowercased().contains(cat) ?? false))
+        }
+        // The model often puts the same word in both fields, or a category name that's only in
+        // the description; match either rather than answer that there's nothing
+        if hits.isEmpty, !needle.isEmpty || !cat.isEmpty {
+            hits = recent.filter { t in (!needle.isEmpty && matches(t, needle)) || (!cat.isEmpty && matches(t, cat)) }
         }
         guard !hits.isEmpty else { return "No matching transactions." }
         let spent = hits.filter { $0.kind == "expense" || $0.kind == "debtPayment" }.map(\.amount).sum(currency)
         let received = hits.filter { $0.kind == "income" }.map(\.amount).sum(currency)
-        var out = "\(hits.count) matching transactions. Total spent: \(spent.formatted). Total received: \(received.formatted).\n"
+        var out = "\(hits.count) matching transactions. Total spent: \(spent.compact). Total received: \(received.compact).\n"
         out += hits.prefix(limit).map {
-            "- \(day($0.date)): \($0.memo), \($0.kind)\($0.category.map { ", \($0)" } ?? "")\($0.account.map { ", \($0)" } ?? ""): \($0.amount.formatted)"
+            "- \(day($0.date)): \($0.memo), \($0.kind)\($0.category.map { ", \($0)" } ?? "")\($0.account.map { ", \($0)" } ?? ""): \($0.amount.compact)"
         }.joined(separator: "\n")
         if hits.count > limit { out += "\n(\(hits.count - limit) older ones not listed)" }
         return out

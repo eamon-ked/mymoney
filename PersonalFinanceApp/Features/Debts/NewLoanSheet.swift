@@ -22,6 +22,8 @@ struct NewLoanSheet: View {
     @State private var rateText = ""
     @State private var dueDay: Int?
     @State private var fundingId: UUID?
+    /// Loans only; nil is Loan payments
+    @State private var categoryId: UUID?
     @State private var error: String?
     @State private var saved: LedgerAccountRecord?
 
@@ -74,7 +76,7 @@ struct NewLoanSheet: View {
                     Text("Not sure").tag(nil as Int?)
                     ForEach(1...31, id: \.self) { Text("Day \($0) of the month").tag($0 as Int?) }
                 }
-                AccountPicker(title: "Paid from", accounts: store.snapshot.accounts.filter { $0.kind.isAsset }, selection: $fundingId)
+                AccountPicker(title: "Paid from", accounts: store.snapshot.accounts.filter { $0.kind.holdsMoney }, selection: $fundingId)
                 HStack {
                     Text("Interest rate")
                     Spacer()
@@ -90,6 +92,14 @@ struct NewLoanSheet: View {
                 Text("With a payment day, the payment is added to your bills and kept aside in safe-to-spend. Skip the rate if you don't know it; you can add it later.")
             }
 
+            if !isCard {
+                Section {
+                    LoanCategoryPicker(selection: $categoryId)
+                } footer: {
+                    Text("Its payments count here in Budget and Reports. Several loans can share one.")
+                }
+            }
+
             if let error { Section { FieldError(message: error) } }
         }
     }
@@ -99,8 +109,8 @@ struct NewLoanSheet: View {
             Label("\(debt.name) added", systemImage: "checkmark.circle")
         } description: {
             Text(debt.debtTerms?.dueDay != nil
-                 ? "Its payment is in your bills. When you pay it, tap Pay a loan on Home."
-                 : "When you make a payment, tap Pay a loan on Home. You'll find it under Accounts too.")
+                 ? "Its payment is in your bills. When you pay it, tap + and choose I paid a loan or credit card."
+                 : "When you make a payment, tap + and choose I paid a loan or credit card. You'll find it under Accounts too.")
         } actions: {
             Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
         }
@@ -133,6 +143,7 @@ struct NewLoanSheet: View {
             let debt = try store.createAccount(name: title, kind: kind, opening: owed.magnitude.negated, openingDate: Date(),
                                                institution: lender.isEmpty ? nil : lender,
                                                colorHex: AccountColors.next(for: kind))
+            if !isCard, categoryId != nil { try store.setLoanCategory(categoryId, for: debt.id) }
             if let payment {
                 try store.saveDebtTerms(DebtTerms(annualRateBps: bps, monthlyPayment: payment, dueDay: dueDay),
                                         for: debt.id, paidFrom: dueDay == nil ? nil : fundingId)
@@ -140,6 +151,36 @@ struct NewLoanSheet: View {
             saved = debt
         } catch {
             self.error = StoreError.from(error).errorDescription
+        }
+    }
+}
+
+/// Which budget category a loan's payments count under: Loan payments, or any spending category
+struct LoanCategoryPicker: View {
+    @Environment(LedgerStore.self) private var store
+    @Binding var selection: UUID?
+    @State private var creating = false
+
+    /// Picking this opens the category editor instead of choosing it
+    private static let newCategory = UUID(uuidString: "00000000-0000-0000-0000-00000000C0DE")!
+
+    var body: some View {
+        let snapshot = store.snapshot
+        let loanPayments = FinanceSnapshot.systemCategory("loanPayments", name: "Loan payments", in: snapshot.accountRecords)
+        let interest = FinanceSnapshot.systemCategory("interest", name: "Interest & fees", in: snapshot.accountRecords)
+        Picker("Budget category", selection: Binding(get: { selection }, set: { picked in
+            if picked == Self.newCategory { creating = true } else { selection = picked }
+        })) {
+            Text(loanPayments?.name ?? "Loan payments").tag(nil as UUID?)
+            ForEach(snapshot.expenseCategories.filter { $0.id != loanPayments?.id && $0.id != interest?.id }, id: \.id) {
+                Text($0.name).tag($0.id as UUID?)
+            }
+            Divider()
+            Label("New category…", systemImage: "plus").tag(Self.newCategory as UUID?)
+        }
+        .accessibilityIdentifier("loanCategory")
+        .sheet(isPresented: $creating) {
+            CategoryEditor(forLoans: true) { selection = $0 }
         }
     }
 }

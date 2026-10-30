@@ -35,8 +35,22 @@ public enum CategoryRules {
         (["rent", "ejari", "real estate", "properties", "landlord", "mortgage"], ["rent", "housing", "mortgage", "home"]),
         (["fee", "fees", "charge", "charges", "interest", "commission", "vat on"], ["interest", "fee", "bank charge"]),
         (["school", "university", "tuition", "academy", "nursery", "course"], ["education", "school"]),
-        (["gym", "fitness", "salon", "barber", "spa"], ["personal", "fitness", "health"])
+        (["gym", "fitness", "salon", "barber", "spa"], ["personal", "fitness", "health"]),
+        // Last, so a transfer fee is still a fee: money sent to another person is spending on them
+        (sentToPeopleWords, ["sent to people", "people", "family", "gift"])
     ]
+
+    /// Words banks use for money sent to someone else, in many countries
+    static let sentToPeopleWords = ["trf", "transfer", "transferred", "remittance", "remit", "ipp", "aani", "p2p", "zelle",
+                                    "venmo", "interac", "upi", "imps", "neft", "paynow", "pix", "bizum", "blik", "swish",
+                                    "sepa", "western union", "moneygram", "send money", "sent to", "fast payment"]
+
+    /// Whether a description reads like money sent to another person
+    public static func isSentToPeople(_ description: String) -> Bool {
+        let words = tokens(description)
+        let joined = " " + words.joined(separator: " ") + " "
+        return sentToPeopleWords.contains { $0.contains(" ") ? joined.contains(" \($0) ") : words.contains($0) }
+    }
 
     static let income: [([String], [String])] = [
         (["salary", "payroll", "wps", "sal credit", "wages"], ["salary", "pay", "wage"]),

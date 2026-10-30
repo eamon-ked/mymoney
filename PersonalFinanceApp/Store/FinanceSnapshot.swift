@@ -24,6 +24,8 @@ struct FinanceSnapshot {
     let itemRecords: [UUID: PlannedItemRecord]
     let occurrences: [Occurrence]
     let reserves: [Reserve]
+    /// The spending category each loan's payments count under (loan id to category id)
+    let loanCategories: [UUID: UUID]
 
     init(store: LedgerStore) {
         let settings = store.settings
@@ -52,9 +54,17 @@ struct FinanceSnapshot {
             .sorted { $0.dueDate < $1.dueDate }
         self.occurrences = occurrences
 
-        // Bills count as planned in their category. A loan's goes to Loan payments; a card's
+        // Each loan counts under the category it names, or Loan payments
+        let expenseIds = Set(accounts.filter { $0.kind == .expense && !$0.archived }.map(\.id))
+        let loanPayments = Self.systemCategory("loanPayments", name: "Loan payments", in: accounts)?.id
+        let loanCategories = Dictionary(accounts.filter { $0.kind == .loan }.compactMap { loan -> (UUID, UUID)? in
+            guard let category = loan.debtCategoryId.flatMap({ expenseIds.contains($0) ? $0 : nil }) ?? loanPayments else { return nil }
+            return (loan.id, category)
+        }, uniquingKeysWith: { a, _ in a })
+        self.loanCategories = loanCategories
+
+        // Bills count as planned in their category. A loan's goes to its loan's category; a card's
         // payment covers purchases already counted, so it isn't planned again.
-        let loanPayments = accounts.first { $0.kind == .expense && $0.name == "Loan payments" }?.id
         let kinds = Dictionary(accounts.map { ($0.id, $0.kind) }, uniquingKeysWith: { a, _ in a })
         let billItems = Dictionary(itemRecords.map(\.item).filter { $0.direction == .outflow }.map { ($0.id, $0) },
                                    uniquingKeysWith: { a, _ in a })
@@ -62,15 +72,32 @@ struct FinanceSnapshot {
             guard let item = billItems[occ.itemId], !occ.skipped else { return nil }
             let loan = item.debtId.flatMap { kinds[$0] } == .loan
             if item.debtId != nil && !loan { return nil }
-            guard let category = item.categoryId ?? (loan ? loanPayments : nil) else { return nil }
+            guard let category = loan ? item.debtId.flatMap({ loanCategories[$0] }) : item.categoryId else { return nil }
             return BudgetBill(categoryId: category, month: BudgetMonth.key(for: occ.dueDate, calendar: store.calendar),
                               amount: Money.max(occ.expected, occ.paid), unpaid: occ.remaining)
         }
         self.budget = Budget(ledger: ledger, categories: categories,
                              allocations: store.fetch(AllocationRecord.self).map(\.allocation), calendar: store.calendar,
                              saved: reserves.filter { budgetAccounts.contains($0.accountId) }.map(\.amount).sum(settings.currency),
-                             bills: bills)
+                             bills: bills, loanCategories: loanCategories)
         self.reserves = reserves
+    }
+
+    /// A built-in category by its role, or by name in stores from before roles
+    static func systemCategory(_ role: String, name: String, in accounts: [LedgerAccountRecord]) -> LedgerAccountRecord? {
+        let expenses = accounts.filter { $0.kind == .expense && !$0.archived }
+        return expenses.first { $0.systemRole == role } ?? expenses.first { $0.systemRole == nil && $0.name == name }
+    }
+
+    /// Whether a category holds loan payments (Loan payments, or one a loan was put in)
+    func holdsLoans(_ categoryId: UUID) -> Bool {
+        loanCategories.values.contains(categoryId)
+            || Self.systemCategory("loanPayments", name: "Loan payments", in: accountRecords)?.id == categoryId
+    }
+
+    /// Loans whose payments count under a category
+    func loans(in categoryId: UUID) -> [LedgerAccountRecord] {
+        accountRecords.filter { $0.kind == .loan && !$0.archived && loanCategories[$0.id] == categoryId }
     }
 
     // MARK: - Lookups
@@ -115,11 +142,80 @@ struct FinanceSnapshot {
 
     var monthKey: String { BudgetMonth.key(for: today, calendar: calendar) }
 
+    /// A month's entries in a spending category, loan payments for its loans included (even with no interest)
+    func entries(in categoryId: UUID, month: String) -> [EntryRecord] {
+        guard let start = BudgetMonth.start(of: month, calendar: calendar),
+              let end = BudgetMonth.end(of: month, calendar: calendar) else { return [] }
+        return entryRecords.filter { record in
+            record.status == .posted && record.date >= start && record.date < end
+                && ledger.spending(of: record.entry, on: categoryId, loanCategories: loanCategories) != nil
+        }
+    }
+
+    /// One row of "what went in" to a category
+    struct CategoryPart: Identifiable {
+        let id: String
+        let name: String
+        let amount: Money
+        let detail: String?
+        /// The loan it's for, when the category holds loans
+        var loanId: UUID? = nil
+        /// How many entries it sums
+        var count = 1
+    }
+
+    /// What went into a category in a month: each of its loans (paid, with interest, or when it's due),
+    /// then everything else grouped by what it was spent on, largest first
+    func breakdown(_ categoryId: UUID, month: String) -> [CategoryPart] {
+        let entries = entries(in: categoryId, month: month)
+        let loans = loans(in: categoryId)
+        let loanIds = Set(loans.map(\.id))
+        var parts = loans.map { loan -> CategoryPart in
+            let payments = entries.filter { $0.kind == .debtPayment && $0.lines.contains { $0.accountId == loan.id } }
+            let paid = payments.compactMap { record -> Money? in
+                let lines = record.entry.lines.filter { $0.accountId == loan.id || $0.accountId == categoryId }
+                return lines.isEmpty ? nil : lines.map(\.amount).sum(currency)
+            }.sum(currency)
+            let interest = payments.compactMap { $0.entry.amount(on: categoryId) }.sum(currency)
+            let detail: String
+            if paid.isPositive {
+                detail = interest.isPositive ? "\(interest.compact) interest" : "Paid"
+            } else if let item = paymentItem(for: loan.id),
+                      let due = occurrences.first(where: { $0.itemId == item.id && !$0.remaining.isZero && !$0.skipped
+                                                           && BudgetMonth.key(for: $0.dueDate, calendar: calendar) == month }) {
+                detail = "Due " + due.dueDate.formatted(.dateTime.day().month(.abbreviated))
+            } else {
+                detail = "Not paid this month"
+            }
+            return CategoryPart(id: loan.id.uuidString, name: loan.name, amount: paid, detail: detail, loanId: loan.id)
+        }
+        .sorted { ($0.amount.minorUnits, $1.name) > ($1.amount.minorUnits, $0.name) }
+        // Everything else, grouped by what it was for
+        let others = entries.filter { record in !(record.kind == .debtPayment && record.lines.contains { loanIds.contains($0.accountId) }) }
+        func label(_ record: EntryRecord) -> String {
+            let memo = record.memo.trimmingCharacters(in: .whitespaces)
+            return memo.isEmpty ? "No description" : memo
+        }
+        // "Carrefour" and "carrefour" are the same shop
+        let grouped = Dictionary(grouping: others) { label($0).lowercased() }
+        parts += grouped.map { key, records in
+            let amount = records.compactMap { ledger.spending(of: $0.entry, on: categoryId, loanCategories: loanCategories) }.sum(currency)
+            // Show the spelling used most, the earliest one on a tie
+            let spellings = Dictionary(grouping: records.sorted { $0.createdAt < $1.createdAt }, by: label)
+            let name = records.sorted { $0.createdAt < $1.createdAt }.map(label)
+                .max { spellings[$0]!.count < spellings[$1]!.count } ?? key
+            return CategoryPart(id: "memo-" + key, name: name, amount: amount,
+                                detail: records.count > 1 ? "\(records.count) times" : nil, count: records.count)
+        }
+        .sorted { ($0.amount.minorUnits, $1.name) > ($1.amount.minorUnits, $0.name) }
+        return parts
+    }
+
     var netWorth: NetWorth { ledger.netWorth() }
 
     /// Cash, bank and savings accounts counted in net worth: the same accounts as "Own" on Accounts, less investments
     var cashAccounts: [LedgerAccountRecord] {
-        accounts.filter { $0.kind.isAsset && $0.kind != .investment && $0.includeInNetWorth }
+        accounts.filter { $0.kind.holdsMoney && $0.kind != .investment && $0.includeInNetWorth }
     }
 
     var cashAndBank: Money { cashAccounts.map { balance($0.id) }.sum(currency) }
@@ -170,12 +266,11 @@ struct FinanceSnapshot {
     /// `buffer` previews a buffer that hasn't been saved yet.
     func safeToSpendCalculator(buffer: Money? = nil) -> SafeToSpendCalculator {
         // A debt's bill already holds back its instalment, so the budget line it's paid from isn't held back twice
-        let interest = accountRecords.first { $0.kind == .expense && $0.name == "Interest & fees" }?.id
-        let loanPayments = accountRecords.first { $0.kind == .expense && $0.name == "Loan payments" }?.id
+        let interest = Self.systemCategory("interest", name: "Interest & fees", in: accountRecords)?.id
         let billed = items.map { item -> PlannedItem in
             var item = item
-            if let debtId = item.debtId, item.categoryId == nil {
-                item.categoryId = account(debtId)?.kind == .loan ? loanPayments : interest
+            if let debtId = item.debtId {
+                item.categoryId = account(debtId)?.kind == .loan ? loanCategories[debtId] : (item.categoryId ?? interest)
             }
             return item
         }

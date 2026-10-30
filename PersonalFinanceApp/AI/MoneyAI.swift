@@ -25,15 +25,21 @@ struct DraftEntry: Equatable {
     var daysAgo = 0
 }
 
-struct MonthInsight: Equatable {
-    var headline: String
-    var tips: [String]
-}
-
 #if canImport(FoundationModels)
 
 @available(iOS 26.0, *)
 enum MoneyAI {
+
+    /// A session on the chosen model: Apple's cloud model when asked for and possible, else this iPhone's
+    static func session(_ engine: AIEngine, tools: [any Tool] = [], instructions: String) -> LanguageModelSession {
+        // Only built in once Apple has granted the entitlement (see AppleIntelligence.cloudStatus)
+        #if PRIVATE_CLOUD_COMPUTE
+        if #available(iOS 27.0, *), engine == .cloud {
+            return LanguageModelSession(model: PrivateCloudComputeLanguageModel(), tools: tools, instructions: instructions)
+        }
+        #endif
+        return LanguageModelSession(tools: tools, instructions: instructions)
+    }
 
     // MARK: - Quick add from a sentence
 
@@ -112,7 +118,7 @@ enum MoneyAI {
     /// appear in the message, so a made-up number is never saved.
     static func readAlert(_ text: String, homeCurrency: String, date: Date) async throws -> Capture? {
         let session = LanguageModelSession(instructions: """
-            Read one SMS from a bank and say whether it reports money moving, how much, and where. \
+            Read one text message or app notification from a bank and say whether it reports money moving, how much, and where. \
             Ignore available balances and credit limits; they are not the amount moved.
             """)
         let out = try await session.respond(to: text, generating: AlertOutput.self, options: GenerationOptions(sampling: .greedy)).content
@@ -122,10 +128,7 @@ enum MoneyAI {
         let scale = Currency.scale(of: code)
         let exact = String(format: "%.\(scale)f", out.amount)
         let money = Money(Decimal(string: exact) ?? 0, currency: code)
-        let digitsInText = AlertParser.westernDigits(text).filter(\.isASCII).filter(\.isNumber)
-        let amountDigits = String(format: "%.2f", out.amount).filter(\.isNumber)
-        let whole = String(Int(out.amount))
-        guard digitsInText.contains(amountDigits.hasSuffix("00") ? whole : amountDigits) else { return nil }
+        guard money.minorUnits > 0, AlertParser.mentions(money, in: text) else { return nil }
         let card = out.cardLast4.filter(\.isNumber)
         return Capture(source: .sms, direction: out.isIncoming ? .received : .spent, amount: money,
                        merchant: out.merchant.trimmingCharacters(in: .whitespaces),
@@ -134,38 +137,9 @@ enum MoneyAI {
 
     // MARK: - The month in a few lines
 
-    @Generable
-    struct InsightOutput {
-        @Guide(description: "One or two sentences on how the month is going, with real figures")
-        var headline: String
-        @Guide(description: "Practical, specific suggestions based on the figures", .maximumCount(2))
-        var tips: [String]
-    }
-
-    static func insight(_ digest: FinanceDigest) async throws -> MonthInsight {
-        let session = LanguageModelSession(instructions: AppleIntelligence.baseInstructions)
-        let prompt = """
-            Summarise how this person's money is doing right now and suggest up to two useful next steps. \
-            Be encouraging but honest; mention overspent categories or overdue bills only if the figures say so. \
-            Planned amounts and upcoming bills are not money already spent. \
-            Loan payments are fixed instalments that also repay the loan; never suggest cutting them. \
-            Net worth is a plain figure, not compared with any plan; mention it only as it is.
-
-            \(digest.overview)
-
-            \(digest.budget(monthKey: nil))
-
-            \(digest.billsText)
-
-            \(digest.months.prefix(2).map { "\($0.title): income \($0.income), spending \($0.spending)" }.joined(separator: "\n"))
-            """
-        let response = try await session.respond(to: prompt, generating: InsightOutput.self)
-        return MonthInsight(headline: response.content.headline, tips: response.content.tips)
-    }
-
     /// A short story of one month for Reports
-    static func monthStory(_ digest: FinanceDigest, monthKey: String) -> LanguageModelSession.ResponseStream<String> {
-        let session = LanguageModelSession(instructions: AppleIntelligence.baseInstructions)
+    static func monthStory(_ digest: FinanceDigest, monthKey: String, engine: AIEngine) -> LanguageModelSession.ResponseStream<String> {
+        let session = session(engine, instructions: AppleIntelligence.baseInstructions)
         let previous = BudgetMonth.adding(-1, to: monthKey, calendar: .current)
         return session.streamResponse(to: """
             In three or four sentences, explain where this person's money went in the month below compared with the month before, \
@@ -178,8 +152,9 @@ enum MoneyAI {
 
     // MARK: - Ask about your money
 
-    static func assistantSession(_ digest: FinanceDigest) -> LanguageModelSession {
-        LanguageModelSession(
+    static func assistantSession(_ digest: FinanceDigest, engine: AIEngine) -> LanguageModelSession {
+        session(
+            engine,
             tools: [BudgetTool(digest: digest), TransactionsTool(digest: digest), TrendTool(digest: digest), BillsTool(digest: digest),
                     HowToTool()],
             instructions: """
@@ -189,7 +164,7 @@ enum MoneyAI {
                 with the exact button names. Their salary, regular bills and loans are listed below: answer from them, never say you can't see them. \
                 Keep answers to a few sentences unless asked for detail.
 
-                \(digest.overview)
+                \(engine == .cloud ? digest.fullContext : digest.overview + "\n\n" + digest.budget(monthKey: nil))
                 """)
     }
 }

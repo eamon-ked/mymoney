@@ -412,6 +412,34 @@ struct LedgerStoreTests {
         #expect(other.auditTrail.contains { $0.action == "data.restored" })
     }
 
+    @Test("Pinned categories and SMS bank choices survive a backup")
+    func backupKeepsSettings() throws {
+        _ = try household()
+        let groceries = category("Groceries").id
+        try store.updateSettings { $0.pinnedCategoryIds = [groceries]; $0.bankRegion = "DE"; $0.bankSenders = ["Sparkasse"] }
+        let (container, other) = try freshStore()
+        _ = container
+        try other.restore(try LedgerStore.readBackup(try store.backupData()))
+        #expect(other.settings.pinnedCategoryIds == [groceries])
+        #expect(other.settings.bankRegion == "DE")
+        #expect(other.settings.bankSenders == ["Sparkasse"])
+    }
+
+    @Test("A backup saved before pinning existed still restores")
+    func olderBackupRestores() throws {
+        _ = try household()
+        var json = try #require(try JSONSerialization.jsonObject(with: try store.backupData()) as? [String: Any])
+        var settings = try #require(json["settings"] as? [String: Any])
+        for key in ["pinnedCategoryIds", "bankRegion", "bankSenders"] { settings.removeValue(forKey: key) }
+        json["settings"] = settings
+        let (container, other) = try freshStore()
+        _ = container
+        try other.restore(try LedgerStore.readBackup(try JSONSerialization.data(withJSONObject: json)))
+        #expect(other.settings.pinnedCategoryIds.isEmpty)
+        #expect(other.settings.bankSenders.isEmpty)
+        #expect(other.settings.onboardingDone)
+    }
+
     @Test("Restoring over existing data replaces it rather than doubling it")
     func restoreOverExisting() throws {
         let (bank, _) = try household()

@@ -34,7 +34,11 @@ enum PlusFeature: String, Identifiable, CaseIterable {
         switch self {
         case .autoCapture: return "Apple Pay purchases and bank SMS alerts saved for you"
         case .statementImport: return "Bring in a CSV from your bank; what's already recorded is skipped"
-        case .appleIntelligence: return "Add from a sentence, ask about your money, a monthly summary"
+        case .appleIntelligence:
+            // Only promise the cloud model where this iPhone can actually reach it
+            return [.ready, .limitReached].contains(AppleIntelligence.cloudStatus)
+                ? "Ask anything about your money, answered by Apple's larger cloud model"
+                : "Ask anything about your money, add from a sentence, tips for your month"
         case .moneyAhead: return "Your balance day by day for the next 60 days"
         case .reports: return "Where the money went, six months side by side"
         case .widget: return "Safe to spend and the next bills at a glance"

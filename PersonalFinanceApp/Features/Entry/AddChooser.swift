@@ -82,7 +82,7 @@ struct AddChooser: View {
                         }
                     }
                     if !bills.isEmpty {
-                        choice("I paid a bill", detail: "Rent, DEWA, phone, anything in your plan",
+                        choice("I paid a bill", detail: "Rent, electricity, phone, anything in your plan",
                                symbol: "calendar.badge.checkmark", color: Palette.plan) { withAnimation { showBills.toggle() } }
                         if showBills {
                             ForEach(bills) { occ in

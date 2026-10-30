@@ -57,18 +57,22 @@ struct DebtSection: View {
                 if let item = snapshot.paymentItem(for: debt.id), let from = snapshot.account(item.accountId) {
                     LabeledContent("Paid from", value: from.name)
                 }
-                Button("Change rate or payment") { sheet = .terms }
+                Button(debt.kind == .creditCard ? "Edit card" : "Edit loan") { sheet = .terms }
+                    .accessibilityIdentifier("editDebt")
             } else {
                 Button { sheet = .terms } label: {
                     Label("Add the interest rate and monthly payment", systemImage: "percent")
                 }
+                .accessibilityIdentifier("editDebt")
             }
         } header: {
             Text(debt.kind == .creditCard ? "Card" : "Loan")
         } footer: {
             Text(debt.debtTerms == nil
                  ? "With the rate and payment, Nokael works out when you'll be debt-free and splits each payment into interest and principal."
-                 : "Only the principal part of a payment lowers what you owe. Interest and fees are counted as spending.")
+                 : debt.kind == .creditCard
+                    ? "Only the principal part of a payment lowers what you owe. Interest and fees are counted as spending."
+                    : "Only the principal part of a payment lowers what you owe. The whole payment counts as spending in its budget category.")
         }
 
         if debt.debtTerms != nil, let payoff = snapshot.payoff(for: debt) {
@@ -168,12 +172,36 @@ struct DebtTermsEditor: View {
     @State private var dueDay: Int?
     @State private var addBill = true
     @State private var fundingId: UUID?
+    @State private var categoryId: UUID?
+    @State private var owedText = ""
     @State private var error: String?
+
+    private var opening: EntryRecord? { store.openingEntry(for: debt.id) }
+    private var recordedOwed: Money { (opening?.entry.amount(on: debt.id) ?? .zero(store.currency)).magnitude }
+    private var enteredOwed: Money? { MoneyFormat.parse(owedText.isEmpty ? "0" : owedText, currency: store.currency) }
 
     var body: some View {
         let snapshot = store.snapshot
         NavigationStack {
             Form {
+                Section {
+                    HStack {
+                        Text("Owed when added")
+                        Spacer()
+                        Text(store.currency).foregroundStyle(.secondary)
+                        TextField("0", text: $owedText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 120)
+                            .accessibilityIdentifier("owedWhenAdded")
+                    }
+                    if let entered = enteredOwed, entered.magnitude != recordedOwed {
+                        LabeledContent("You'll owe now", value: (snapshot.owed(debt.id) - recordedOwed + entered.magnitude).compact)
+                    }
+                } footer: {
+                    Text("If this was typed wrong, fix it here. Payments since \(opening?.date.formatted(.dateTime.day().month(.abbreviated)) ?? "then") stay as they are.")
+                }
+
                 Section {
                     HStack {
                         Text("Interest rate")
@@ -208,12 +236,20 @@ struct DebtTermsEditor: View {
                 Section {
                     Toggle("Add to my bills", isOn: $addBill)
                     if addBill {
-                        AccountPicker(title: "Paid from", accounts: snapshot.accounts.filter { $0.kind.isAsset }, selection: $fundingId)
+                        AccountPicker(title: "Paid from", accounts: snapshot.accounts.filter { $0.kind.holdsMoney }, selection: $fundingId)
                     }
                 } footer: {
                     Text(addBill
                          ? "The payment shows in Plan each month and is set aside in safe-to-spend until it's paid. Needs a due day."
                          : "The payment won't be reserved in safe-to-spend.")
+                }
+
+                if debt.kind == .loan {
+                    Section {
+                        LoanCategoryPicker(selection: $categoryId)
+                    } footer: {
+                        Text("Its payments count here in Budget and Reports, past ones too. Several loans can share one.")
+                    }
                 }
 
                 if debt.debtTerms != nil {
@@ -223,7 +259,7 @@ struct DebtTermsEditor: View {
                 }
                 if let error { Section { FieldError(message: error) } }
             }
-            .navigationTitle(debt.name)
+            .navigationTitle(debt.kind == .creditCard ? "Edit card" : "Edit loan")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -243,11 +279,16 @@ struct DebtTermsEditor: View {
             addBill = item != nil
         }
         fundingId = item?.accountId ?? snapshot.settings.lastUsedAccountId ?? snapshot.accounts.first { $0.spendable }?.id
+        categoryId = debt.debtCategoryId
+        owedText = MoneyFormat.editable(recordedOwed, emptyWhenZero: true)
     }
 
     private func save(clearing: Bool = false) {
+        guard let owed = enteredOwed else { error = "Enter what was owed as a number."; return }
+        // Only fixing the amount owed: the rate and payment can stay empty
+        let termsUntouched = debt.debtTerms == nil && rateText.isEmpty && paymentText.isEmpty && !clearing
         let terms: DebtTerms?
-        if clearing {
+        if clearing || termsUntouched {
             terms = nil
         } else {
             guard let bps = DebtTerms.rateBps(from: rateText.isEmpty ? "0" : rateText) else {
@@ -261,7 +302,9 @@ struct DebtTermsEditor: View {
             terms = DebtTerms(annualRateBps: bps, monthlyPayment: payment, dueDay: dueDay)
         }
         do {
-            try store.saveDebtTerms(terms, for: debt.id, paidFrom: addBill ? fundingId : nil)
+            if owed.magnitude != recordedOwed { try store.correctOpeningBalance(debt.id, to: owed.magnitude.negated) }
+            if !termsUntouched { try store.saveDebtTerms(terms, for: debt.id, paidFrom: addBill ? fundingId : nil) }
+            if debt.kind == .loan, categoryId != debt.debtCategoryId { try store.setLoanCategory(categoryId, for: debt.id) }
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
     }
@@ -275,6 +318,10 @@ struct PayDebtSheet: View {
     let debt: LedgerAccountRecord
     /// The bill this pays, when opened from Plan
     var occurrence: Occurrence? = nil
+    /// A payment already recorded, being corrected
+    var editing: EntryRecord? = nil
+    /// An expense that was really this payment (an imported EMI), recorded again as one
+    var replacing: EntryRecord? = nil
 
     @State private var key = UUID()
     @State private var amountText = ""
@@ -288,11 +335,13 @@ struct PayDebtSheet: View {
     @State private var countsAsBill = false
 
     private var snapshot: FinanceSnapshot { store.snapshot }
-    private var owed: Money { snapshot.owed(debt.id) }
+    private var editedParts: LedgerStore.DebtPaymentParts? { editing.flatMap { store.debtPaymentParts($0) } }
+    /// What was owed before this payment: today's amount, plus what the payment being edited took off
+    private var owed: Money { snapshot.owed(debt.id) + (editedParts?.principal ?? .zero(store.currency)) }
 
     /// This card's or loan's unpaid monthly bill closest to today, when the sheet wasn't opened from one
     private var suggestedBill: Occurrence? {
-        guard occurrence == nil, let item = snapshot.paymentItem(for: debt.id) else { return nil }
+        guard occurrence == nil, editing == nil, replacing == nil, let item = snapshot.paymentItem(for: debt.id) else { return nil }
         let s = snapshot
         return s.occurrences
             .filter { $0.itemId == item.id && !$0.skipped && $0.remaining.isPositive }
@@ -318,7 +367,7 @@ struct PayDebtSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("You owe", value: owed.formatted)
+                    if editing == nil { LabeledContent("You owe", value: owed.formatted) }
                     if let occurrence {
                         LabeledContent("Due", value: occurrence.dueDate.formatted(date: .long, time: .omitted))
                     }
@@ -328,10 +377,24 @@ struct PayDebtSheet: View {
                             .keyboardType(.decimalPad)
                             .accessibilityIdentifier("debtPaymentAmount")
                     }
-                    AccountPicker(title: "From", accounts: snapshot.accounts.filter { $0.kind.isAsset }, selection: $fundingId)
+                    AccountPicker(title: "From", accounts: snapshot.accounts.filter { $0.kind.holdsMoney }, selection: $fundingId)
                     DatePicker("Date", selection: $date, in: ...Date(), displayedComponents: .date)
                 }
 
+                if editing != nil {
+                    Section {
+                        moneyField("Interest", text: $interestText)
+                        if !feesText.isEmpty { moneyField("Fees", text: $feesText) }
+                        if let split {
+                            LabeledContent("Came off \(debt.name)", value: split.principal.compact).bold()
+                            if split.overpaid.isPositive {
+                                FieldError(message: "That's \(split.overpaid.compact) more than you owed. Lower the payment.")
+                            }
+                        }
+                    } footer: {
+                        Text("If your statement shows a different interest figure for this payment, enter it here.")
+                    }
+                } else {
                 Section {
                     Toggle("Use the amounts on my statement", isOn: $fromStatement)
                     if fromStatement {
@@ -355,6 +418,7 @@ struct PayDebtSheet: View {
                          ? "No interest rate is set, so the whole payment lowers what you owe. Add the rate on the card's or loan's page, or use your statement's amounts."
                          : "The estimate is one month of interest at \(debt.debtTerms?.rateText ?? "the rate"). Your lender's figure can differ a little; use your statement's amounts to match it exactly.")
                 }
+                }
 
                 if let bill = suggestedBill {
                     Section {
@@ -374,12 +438,12 @@ struct PayDebtSheet: View {
                 }
                 if let error { Section { FieldError(message: error) } }
             }
-            .navigationTitle("Pay \(debt.name)")
+            .navigationTitle(editing != nil ? "Edit payment" : replacing != nil ? "Payment to \(debt.name)" : "Pay \(debt.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Record", action: record).accessibilityIdentifier("recordDebtPayment")
+                    Button(editing == nil && replacing == nil ? "Record" : "Save", action: record).accessibilityIdentifier("recordDebtPayment")
                 }
             }
             .onAppear(perform: load)
@@ -396,6 +460,22 @@ struct PayDebtSheet: View {
     }
 
     private func load() {
+        if let editing, let parts = editedParts {
+            amountText = MoneyFormat.editable(parts.total)
+            fundingId = parts.funding.id
+            date = editing.date
+            // The recorded interest, as a plain field to correct
+            fromStatement = true
+            interestText = MoneyFormat.editable(parts.interest, emptyWhenZero: true)
+            feesText = MoneyFormat.editable(parts.fees, emptyWhenZero: true)
+            return
+        }
+        if let replacing, let paid = replacing.entry.lines.first(where: { store.account($0.accountId)?.kind.isAsset == true }) {
+            amountText = MoneyFormat.editable(paid.amount.magnitude)
+            fundingId = paid.accountId
+            date = replacing.date
+            return
+        }
         let item = snapshot.paymentItem(for: debt.id)
         let suggested = occurrence?.remaining ?? debt.debtTerms?.monthlyPayment
         if let suggested {
@@ -413,72 +493,20 @@ struct PayDebtSheet: View {
         guard let split else { error = "Enter interest and fees as numbers."; return }
         guard split.overpaid.isZero else { error = "That's more than you owe. Lower the payment."; return }
         do {
+            if let editing {
+                try store.editDebtPayment(editing.id, from: fundingId, amount: amount, interest: split.interest,
+                                          fees: split.fees, date: date)
+                dismiss()
+                return
+            }
+            if let replacing {
+                try store.recordAsDebtPayment(replacing.id, debt: debt.id, from: fundingId, amount: amount,
+                                              interest: split.interest, fees: split.fees, date: date)
+                dismiss()
+                return
+            }
             try store.payDebt(debt.id, from: fundingId, amount: amount, interest: split.interest, fees: split.fees,
                               date: date, key: key, occurrenceId: occurrence?.id ?? (countsAsBill ? suggestedBill?.id : nil))
-            dismiss()
-        } catch { self.error = StoreError.from(error).errorDescription }
-    }
-}
-
-// MARK: - Changing a recorded split
-
-/// The lender's own figures for a payment already recorded with an estimate
-struct ResplitSheet: View {
-    @Environment(LedgerStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    let record: EntryRecord
-    let parts: LedgerStore.DebtPaymentParts
-
-    @State private var interestText = ""
-    @State private var feesText = ""
-    @State private var error: String?
-
-    private var interest: Money? { interestText.isEmpty ? .zero(store.currency) : MoneyFormat.parse(interestText, currency: store.currency) }
-    private var fees: Money? { feesText.isEmpty ? .zero(store.currency) : MoneyFormat.parse(feesText, currency: store.currency) }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    LabeledContent("You paid", value: parts.total.formatted)
-                    moneyField("Interest", text: $interestText)
-                    moneyField("Fees", text: $feesText)
-                } footer: {
-                    Text("Use the interest shown for this payment on your loan or card statement, or in your bank's app.")
-                }
-                if let interest, let fees, !(parts.total < interest + fees) {
-                    Section {
-                        LabeledContent("Comes off \(parts.debt.name)", value: (parts.total - interest - fees).formatted).bold()
-                    }
-                }
-                if let error { Section { FieldError(message: error) } }
-            }
-            .navigationTitle("Change the split")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save", action: save) }
-            }
-            .onAppear {
-                interestText = MoneyFormat.editable(parts.interest, emptyWhenZero: true)
-                feesText = MoneyFormat.editable(parts.fees, emptyWhenZero: true)
-            }
-        }
-    }
-
-    private func moneyField(_ title: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(store.currency).foregroundStyle(.secondary)
-            TextField("0", text: text).keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 110)
-        }
-    }
-
-    private func save() {
-        guard let interest, let fees else { error = "Enter interest and fees as numbers."; return }
-        do {
-            try store.resplitDebtPayment(record.id, interest: interest, fees: fees)
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
     }

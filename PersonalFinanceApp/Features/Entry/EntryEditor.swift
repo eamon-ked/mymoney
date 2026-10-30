@@ -123,7 +123,8 @@ struct EntryEditor: View {
                             .accessibilityLabel(kind == .adjustment ? "Correct balance" : "Amount")
                             .accessibilityIdentifier("amountField")
                     }
-                    FieldError(message: amountError)
+                    // Any reason it didn't save, here where it's seen above the keyboard
+                    FieldError(message: amountError ?? error)
                 } header: {
                     Text(kind == .adjustment ? "What the account really holds" : "Amount")
                 }
@@ -149,10 +150,6 @@ struct EntryEditor: View {
                             }
                         }
                     }
-                }
-
-                if let error {
-                    Section { FieldError(message: error) }
                 }
 
                 if let editing {
@@ -196,7 +193,7 @@ struct EntryEditor: View {
             if categorySuggested && !categoryTouched { AIBadge(text: "Category suggested by Apple Intelligence") }
         }
         Section {
-            AccountPicker(title: "Paid from", accounts: spendingAccounts, selection: $accountId)
+            AccountPicker(title: "Paid from", accounts: spendingAccounts.filter { $0.kind != .lent }, selection: $accountId)
             DatePicker("Date", selection: $date, displayedComponents: .date)
             TextField("Description (e.g. Carrefour)", text: $memo)
                 .accessibilityIdentifier("memoField")
@@ -210,10 +207,23 @@ struct EntryEditor: View {
             if categorySuggested && !categoryTouched { AIBadge(text: "Category suggested by Apple Intelligence") }
         }
         Section {
-            AccountPicker(title: "Paid into", accounts: spendingAccounts, selection: $accountId)
+            AccountPicker(title: "Paid into", accounts: spendingAccounts.filter { $0.kind != .lent }, selection: $accountId)
             DatePicker("Date", selection: $date, displayedComponents: .date)
             TextField("Description (e.g. October salary)", text: $memo)
         }
+    }
+
+    private var transferFooter: String {
+        if let to = snapshot.account(toAccountId), to.kind == .lent {
+            return "Lent to \(to.name): they'll owe you this. It isn't spending."
+        }
+        if let from = snapshot.account(accountId), from.kind == .lent {
+            return "Paid back by \(from.name): it lowers what they owe you. It isn't income."
+        }
+        if snapshot.account(toAccountId)?.kind.isLiability == true {
+            return "Pays down what you owe. It isn't spending: the purchases were counted when you made them."
+        }
+        return "Moves money between your own accounts. It isn't income or spending."
     }
 
     @ViewBuilder private var transferFields: some View {
@@ -223,9 +233,7 @@ struct EntryEditor: View {
             DatePicker("Date", selection: $date, displayedComponents: .date)
             TextField("Description (optional)", text: $memo)
         } footer: {
-            Text(snapshot.account(toAccountId)?.kind.isLiability == true
-                 ? "Pays down what you owe. It isn't spending: the purchases were counted when you made them."
-                 : "Moves money between your own accounts. It isn't income or spending.")
+            Text(transferFooter)
         }
         billSection
     }
@@ -281,13 +289,13 @@ struct EntryEditor: View {
             AccountPicker(title: "Account", accounts: spendingAccounts, selection: $accountId)
             if let id = accountId, let target = amount {
                 let current = snapshot.balance(id)
-                LabeledContent("Currently recorded", value: current.formatted)
+                LabeledContent("Currently recorded", value: current.compact)
                 LabeledContent("Change", value: (target - current).signed)
             }
             TextField("Reason (required)", text: $reason)
             DatePicker("As of", selection: $date, displayedComponents: .date)
         } footer: {
-            Text("For corrections only. To check against a bank statement, use Reconcile on the account instead.")
+            Text("For corrections only. To check against a bank statement, use Check against a statement on the account instead.")
         }
     }
 
@@ -340,7 +348,11 @@ struct EntryEditor: View {
         } else {
             accountId = store.settings.lastUsedAccountId.flatMap { id in spendingAccounts.first { $0.id == id }?.id }
                 ?? spendingAccounts.first { $0.kind.defaultSpendable }?.id ?? spendingAccounts.first?.id
-            amountFocused = true
+            // Focus once the sheet has finished presenting, or the keyboard never comes up
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                amountFocused = true
+            }
             #if DEBUG
             // Test helper: -describe "Lunch 45 at Shake Shack yesterday"
             if let text = UserDefaults.standard.string(forKey: "describe") {
@@ -485,6 +497,8 @@ struct EntryEditor: View {
         } catch {
             saving = false
             self.error = StoreError.from(error).errorDescription
+            // The keyboard would hide the message and the choice it asks for
+            amountFocused = false
         }
     }
 

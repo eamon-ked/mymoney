@@ -14,15 +14,15 @@ struct BudgetView: View {
     @Environment(LedgerStore.self) private var store
     @Environment(PlusStore.self) private var plus
     @State private var paywall: PlusFeature?
-    @State private var showingReports = false
+    @State private var addingReserve = false
     @State private var month: String?
     @State private var selected: UUID?
     @State private var addingCategory = false
-    @State private var fundingGoal: Reserve?
     @State private var editingReserve: Reserve?
     @State private var addingGoal = false
     @State private var explanation: Explanation?
     @State private var error: String?
+    @State private var filter = BudgetFilter.all
 
     private var snapshot: FinanceSnapshot { store.snapshot }
     private var currentMonth: String { month ?? snapshot.monthKey }
@@ -36,25 +36,10 @@ struct BudgetView: View {
             let available = budget.availableToAllocate(month: currentMonth)
             let progress = budget.allocationProgress(month: currentMonth)
             List {
-                Section {
-                    SummaryBanner(title: available.isNegative ? "Planned more than you have" : "Not planned yet",
-                                  amount: available.compact,
-                                  caption: progress.planningFunds.isPositive
-                                      ? (available.isNegative ? "Lower a category below to fix it"
-                                         : available.isZero ? "Every dirham this month has a job"
-                                         : owedCaption ?? "Money with no job yet. Tap a category below to give it some")
-                                      : "Add an account with money in it to start planning",
-                                  tint: available.isNegative ? .red : Palette.budget,
-                                  action: { explanation = availableExplanation(available) }) {
-                        VStack(spacing: 4) {
-                            ProgressBar(value: progress.fraction, tint: .white)
-                            Text("\(Int((progress.fraction * 100).rounded()))% of this month's money planned")
-                                .font(.footnote).foregroundStyle(.white)
-                        }
-                        .padding(.horizontal, 24).padding(.top, 6)
-                    }
-                    .bannerRow()
-                }
+                // The first job comes before any figure; then one plain line about money with no budget
+                firstJobSection(hasLastMonth: budget.allocationProgress(month: previousMonth).allocated.isPositive)
+                summarySection(available: available, hasFunds: progress.planningFunds.isPositive)
+                attentionSection
 
                 if snapshot.expenseCategories.isEmpty {
                     Section {
@@ -72,24 +57,37 @@ struct BudgetView: View {
                     }
                 }
 
-                ForEach(groups, id: \.name) { group in
+                if filter != .all {
+                    let shown = groups.flatMap(\.categories).filter { filter.matches(budget.line($0.id, month: currentMonth)) }
                     Section {
-                        ForEach(group.categories, id: \.id) { category in
+                        HStack {
+                            Label("Showing \(filter.title.lowercased())", systemImage: "line.3.horizontal.decrease.circle.fill")
+                            Spacer()
+                            Button("Show all") { filter = .all }.font(.subheadline.weight(.semibold))
+                        }
+                        if shown.isEmpty { Text("No categories match").foregroundStyle(.secondary) }
+                    }
+                }
+
+                ForEach(groups, id: \.name) { group in
+                    let categories = group.categories.filter { filter.matches(budget.line($0.id, month: currentMonth)) }
+                    if !categories.isEmpty {
+                    Section {
+                        ForEach(categories, id: \.id) { category in
                             Button { selected = category.id } label: {
-                                BudgetRow(category: category, line: budget.line(category.id, month: currentMonth))
+                                BudgetRow(category: category, line: budget.line(category.id, month: currentMonth),
+                                          holdsLoans: snapshot.holdsLoans(category.id))
                             }
                             .buttonStyle(.plain)
                         }
                     } header: {
-                        let remaining = group.categories.map { budget.line($0.id, month: currentMonth).remaining }.sum(store.currency)
+                        let spent = group.categories.map { budget.line($0.id, month: currentMonth).spent }.sum(store.currency)
                         HStack {
                             Text(group.name); Spacer()
-                            if !remaining.isZero { Text("\(remaining.compact) left").monospacedDigit() }
+                            // A filtered list shows only some of the group, so its total would mislead
+                            if spent.isPositive && filter == .all { Text("\(spent.compact) spent").monospacedDigit() }
                         }
-                    } footer: {
-                        if group.name == groups.first?.name {
-                            Text("Tap a category to set how much you plan to spend on it this month.")
-                        }
+                    }
                     }
                 }
 
@@ -98,9 +96,9 @@ struct BudgetView: View {
                 if let error { Section { FieldError(message: error) } }
             }
             .listStyle(.insetGrouped)
+            .canvas()
             .navigationTitle("Budget")
             .paywall($paywall)
-            .navigationDestination(isPresented: $showingReports) { ReportsView() }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 14) {
@@ -118,14 +116,14 @@ struct BudgetView: View {
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        Button { addingCategory = true } label: { Label("New category", systemImage: "folder.badge.plus") }
-                        Button { if plus.isPlus { showingReports = true } else { paywall = .reports } } label: {
-                            Label(plus.isPlus ? "Reports" : "Reports (Plus)", systemImage: "chart.bar.xaxis")
+                        Picker("Show", selection: $filter) {
+                            ForEach(BudgetFilter.allCases, id: \.self) { Text($0.title).tag($0) }
                         }
+                        Button { addingCategory = true } label: { Label("New category", systemImage: "folder.badge.plus") }
                     } label: {
-                        Text("More").font(.body.weight(.semibold))
+                        Image(systemName: filter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                     }
-                    .accessibilityLabel("More: new category, reports")
+                    .accessibilityLabel("Filter and new category")
                 }
                 GlobalAddButton()
             }
@@ -133,25 +131,24 @@ struct BudgetView: View {
                 CategoryDetailView(categoryId: item.id, month: currentMonth)
             }
             .sheet(isPresented: $addingCategory) { CategoryEditor() }
-            .sheet(item: $fundingGoal) { GoalMoneySheet(goal: $0, adding: true) }
             .sheet(item: $editingReserve) { ReserveEditor(editing: $0) }
             .sheet(isPresented: $addingGoal) { ReserveEditor(asGoal: true) }
+            .sheet(isPresented: $addingReserve) { ReserveEditor() }
             .sheet(item: $explanation) { ExplanationSheet(explanation: $0) }
         }
     }
 
-    /// Goals and set-asides kept in budget accounts. Their money already has a job,
+    /// Every goal and set-aside, the one place savings live. Their money already has a job,
     /// so it's out of "Not planned yet" just as it's out of Safe to spend.
     @ViewBuilder private var savingsSection: some View {
-        let held = snapshot.reserves.filter { snapshot.account($0.accountId)?.onBudget == true }
         Section {
             if snapshot.goals.isEmpty {
                 Button { addingGoal = true } label: { Label("Start a savings goal", systemImage: "target") }
+                    .accessibilityIdentifier("startGoal")
             }
-            ForEach(held) { r in
+            ForEach(snapshot.reserves) { r in
                 if let progress = snapshot.progress(of: r) {
-                    Button { fundingGoal = r } label: { GoalRow(goal: r, progress: progress) }
-                        .buttonStyle(.plain)
+                    NavigationLink { GoalDetailView(goalId: r.id) } label: { GoalRow(goal: r, progress: progress) }
                 } else {
                     Button { editingReserve = r } label: {
                         ListRow(title: r.name, caption: "Set aside in \(snapshot.account(r.accountId)?.name ?? "an account")",
@@ -163,11 +160,20 @@ struct BudgetView: View {
         } header: {
             HStack {
                 Text("Savings"); Spacer()
-                if snapshot.budget.saved.isPositive { Text("\(snapshot.budget.saved.compact) saved").monospacedDigit() }
+                Menu("Add") {
+                    Button { newGoal() } label: { Label("Savings goal", systemImage: "target") }
+                    Button { addingReserve = true } label: { Label("Money set aside", systemImage: "lock") }
+                }
+                .font(.subheadline)
             }
         } footer: {
-            Text("Tap a goal to add money to it. Saved money stays in its account but isn't counted as Not planned yet or Safe to spend.")
+            Text("Saved money isn't counted in Not planned yet or Safe to spend.")
         }
+    }
+
+    /// One goal is free; more need Plus
+    private func newGoal() {
+        if plus.isPlus || snapshot.goals.isEmpty { addingGoal = true } else { paywall = .goals }
     }
 
     private var previousMonth: String { BudgetMonth.adding(-1, to: currentMonth, calendar: snapshot.calendar) }
@@ -184,11 +190,87 @@ struct BudgetView: View {
     }
 
     /// Says when card debt is already taken out, so this doesn't look like money missing
-    private var owedCaption: String? {
-        let owed = snapshot.owedInBudget
-        guard !owed.isEmpty else { return nil }
-        let names = owed.map { "\($0.amount.compact) owed on \($0.name)" }.joined(separator: ", ")
-        return "Money with no job yet, after \(names). Tap a category to plan it"
+    /// Nothing budgeted by hand this month: setting the main budgets is the job, before any number
+    @ViewBuilder private func firstJobSection(hasLastMonth: Bool) -> some View {
+        let month = currentMonth
+        let categories = groups.flatMap(\.categories)
+        let nothingSet = !categories.isEmpty && categories.allSatisfy { !snapshot.budget.line($0.id, month: month).allocated.isPositive }
+        let next = categories.first { !snapshot.budget.line($0.id, month: month).planned.isPositive }
+        if nothingSet && !hasLastMonth, let next {
+            Section {
+                Button { selected = next.id } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Set budgets for your main costs").font(.headline)
+                        Text("Start with \(categories.prefix(3).map(\.name).joined(separator: ", ")). One tap each.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Text("Set \(next.name)").font(.subheadline.weight(.semibold)).foregroundStyle(.tint)
+                    }
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// One plain line about money with no budget. It's a planning figure, kept smaller than Safe to spend
+    /// on Home, and it says so; it disappears when there's nothing to say.
+    @ViewBuilder private func summarySection(available: Money, hasFunds: Bool) -> some View {
+        Section {
+            if !hasFunds {
+                Text("Add an account with money in it to start budgeting.").foregroundStyle(.secondary)
+            } else if available.isNegative {
+                Button { explanation = availableExplanation(available) } label: {
+                    AlertRow(symbol: "exclamationmark.triangle.fill", color: .red,
+                             text: "Your budgets are \(available.magnitude.compact) more than you have",
+                             detail: "Lower one of the budgets below.", action: "Why?")
+                }.buttonStyle(.plain)
+            } else if available.isZero {
+                Label("All your money has a budget", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
+            } else {
+                Button { explanation = availableExplanation(available) } label: {
+                    // One figure; what it leaves out (cards owed, goals) is one tap away
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Not planned yet")
+                        Spacer()
+                        Text(available.compact).font(.title3.bold()).monospacedDigit()
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Shows how this is worked out")
+            }
+        }
+    }
+
+    /// What needs doing on this month's budget, at most a few rows, each with one action
+    @ViewBuilder private var attentionSection: some View {
+        let budget = snapshot.budget
+        let lines = snapshot.expenseCategories.map { ($0, budget.line($0.id, month: currentMonth)) }
+        let over = lines.filter { $0.1.isOverBudget }
+        let noBudget = lines.filter { $0.1.isUnbudgetedSpending }.sorted { $0.1.spent > $1.1.spent }
+        if !over.isEmpty || !noBudget.isEmpty {
+            Section("Needs attention") {
+                ForEach(over, id: \.0.id) { c, line in
+                    Button { selected = c.id } label: {
+                        AlertRow(symbol: "exclamationmark.circle.fill", color: .red,
+                                 text: "\(c.name) went \(line.remaining.magnitude.compact) over its budget",
+                                 action: "Fix it")
+                    }.buttonStyle(.plain)
+                }
+                if let first = noBudget.first {
+                    let total = noBudget.map(\.1.spent).sum(store.currency)
+                    Button { selected = first.0.id } label: {
+                        AlertRow(symbol: "questionmark.circle.fill", color: .orange,
+                                 text: "\(total.compact) spent with no budget",
+                                 detail: noBudget.prefix(3).map(\.0.name).joined(separator: ", ") + (noBudget.count > 3 ? " and \(noBudget.count - 3) more" : ""),
+                                 action: noBudget.count == 1 ? "Set budget" : "Set budgets")
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     private func availableExplanation(_ available: Money) -> Explanation {
@@ -199,20 +281,20 @@ struct BudgetView: View {
         }
         let setAside = snapshot.expenseCategories.compactMap { c -> BreakdownItem? in
             let r = budget.line(c.id, month: currentMonth).remaining
-            return r.isZero ? nil : BreakdownItem(label: c.name, amount: r)
+            return r.isPositive ? BreakdownItem(label: c.name, amount: r) : nil
         }
         let future = snapshot.budget.allocations.filter { $0.month > currentMonth }.map(\.amount).sum(store.currency)
         var sections: [(String, [BreakdownItem], String)] = [("Money in budget accounts", held, ""),
-                                                             ("Already planned in categories", setAside, "−")]
+                                                             ("Still left in budgets", setAside, "−")]
         if !future.isZero { sections.append(("Planned for later months", [BreakdownItem(label: "Future months", amount: future)], "−")) }
         let saved = snapshot.reserves.filter { snapshot.account($0.accountId)?.onBudget == true && !$0.amount.isZero }
             .map { BreakdownItem(label: $0.name, amount: $0.amount) }
         if !saved.isEmpty { sections.append(("Saved in goals", saved, "−")) }
         return Explanation(title: "Not planned yet", total: available,
-                           definition: "Money in your budget accounts that doesn't have a job yet. It's not extra cash: it's part of the money you already have, and Safe to spend on Home is what you can actually spend. Planning money doesn't move it out of any account.",
+                           definition: "Money in your accounts that no budget uses yet. It isn't extra cash: Safe to spend on Home is what you can actually spend. Setting a budget doesn't move money out of any account.",
                            sections: sections,
                            notes: ["Bills due this month are planned in their category automatically, and count until they're paid.",
-                                   "You don't have to plan every dirham.", "Spending from a category lowers what's left in it, not this number.",
+                                   "You don't have to plan all of it.", "Spending within a budget lowers what's left in it. Spending past a budget, or where there's no budget, lowers this number.",
                                    "Safe to spend on Home is a different number: it holds back only bills due before payday, and treats what's left in categories like Groceries as money you can spend. Budget also takes out everything still owed on cards in your budget, and everything you've planned."])
     }
 }
@@ -222,6 +304,7 @@ struct IdentifiedUUID: Identifiable { let id: UUID }
 struct BudgetRow: View {
     let category: LedgerAccountRecord
     let line: CategoryLine
+    var holdsLoans = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -229,34 +312,69 @@ struct BudgetRow: View {
             ListRow(title: category.name, caption: caption(planned: planned),
                     symbol: category.icon, color: Color(hex: category.colorHex)) {
                 AmountPill(text: pill(planned: planned),
-                           style: line.isOverspent ? .negative
-                               : (line.remaining.isPositive || (planned.isPositive && category.name == "Loan payments") ? .positive : .neutral))
+                           style: line.isOverBudget ? .negative : (nearlySpent(planned) ? .warning : .neutral))
             }
             if planned.isPositive {
                 ProgressBar(value: Double(line.spent.minorUnits) / Double(planned.minorUnits),
-                            tint: line.isOverspent ? .red : Color(hex: category.colorHex))
+                            tint: line.isOverBudget ? .red : Color(hex: category.colorHex))
                     .padding(.leading, 46)
             }
         }
         .padding(.vertical, 2)
     }
 
-    private func caption(planned: Money) -> String {
+    private func caption(planned: Money) -> String? {
         // Bills are planned automatically; until they're paid they show as not yet spent
         if line.unpaidBills.isPositive {
             return line.spent.isPositive
-                ? "\(line.spent.compact) spent of \(planned.compact) · \(line.unpaidBills.compact) for bills not yet spent"
-                : "\(line.unpaidBills.compact) for bills, not yet spent"
+                ? "\(line.unpaidBills.compact) for bills not yet paid"
+                : "\(line.unpaidBills.compact) for bills, not yet paid"
         }
-        if planned.isPositive { return "\(line.spent.compact) spent of \(planned.compact)" }
-        return line.spent.isPositive ? "\(line.spent.compact) spent, nothing planned" : "Not planned this month"
+        // The bar shows how much of the budget is spent; the amount says what's left
+        if planned.isPositive { return nil }
+        return line.spent.isPositive ? "\(line.spent.compact) spent" : "No budget set"
+    }
+
+    /// Colour only where it needs a look: nine-tenths or more of a budget gone
+    private func nearlySpent(_ planned: Money) -> Bool {
+        planned.isPositive && line.remaining.isPositive && line.remaining.minorUnits * 10 <= planned.minorUnits
     }
 
     private func pill(planned: Money) -> String {
-        if line.isOverspent { return "\(line.remaining.magnitude.compact) over" }
-        if !planned.isPositive { return "Plan" }
-        if line.remaining.isZero { return category.name == "Loan payments" ? "Paid" : "All spent" }
+        if line.isOverBudget { return "\(line.remaining.magnitude.compact) over" }
+        if !planned.isPositive { return line.spent.isPositive ? "No budget" : "Set budget" }
+        if line.remaining.isZero { return holdsLoans ? "Paid" : "All spent" }
         return "\(line.remaining.compact) left"
+    }
+}
+
+extension CategoryLine {
+    /// More spent than the budget allowed. Spending where no budget was set isn't "over"
+    var isOverBudget: Bool { planned.isPositive && isOverspent }
+    /// Money spent in a category that has no budget this month
+    var isUnbudgetedSpending: Bool { !planned.isPositive && spent.isPositive }
+}
+
+/// Narrows the Budget list to the categories that need a look
+enum BudgetFilter: CaseIterable {
+    case all, over, notPlanned, moneyLeft
+
+    var title: String {
+        switch self {
+        case .all: "All categories"
+        case .over: "Over budget"
+        case .notPlanned: "No budget set"
+        case .moneyLeft: "Money left"
+        }
+    }
+
+    func matches(_ line: CategoryLine) -> Bool {
+        switch self {
+        case .all: true
+        case .over: line.isOverBudget
+        case .notPlanned: !line.planned.isPositive
+        case .moneyLeft: line.remaining.isPositive
+        }
     }
 }
 
@@ -273,6 +391,10 @@ struct CategoryDetailView: View {
     @State private var editing = false
     @State private var error: String?
     @State private var selectedEntry: EntryRecord?
+    /// Entries shown only for one "what went in" row
+    @State private var only: String?
+    @State private var choosingLoans = false
+    @FocusState private var allocationFocused: Bool
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -283,13 +405,14 @@ struct CategoryDetailView: View {
                 List {
                     Section {
                         HStack {
-                            Text("Planned this month")
+                            Text("Budget this month")
                             Spacer()
                             Text(store.currency).foregroundStyle(.secondary)
                             TextField("0", text: $allocationText)
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 110)
+                                .focused($allocationFocused)
                                 .onSubmit(saveAllocation)
                                 .accessibilityIdentifier("allocationField")
                         }
@@ -304,27 +427,67 @@ struct CategoryDetailView: View {
                         if line.unpaidBills.isPositive {
                             LabeledContent("Bills not yet spent", value: line.unpaidBills.compact)
                         }
-                        LabeledContent {
-                            Text(line.remaining.compact).bold().foregroundStyle(line.isOverspent ? .red : .primary)
-                        } label: {
-                            Text(line.isOverspent ? "Over by" : "Left").bold()
+                        if line.planned.isPositive {
+                            LabeledContent {
+                                Text(line.remaining.magnitude.compact).bold().foregroundStyle(line.isOverBudget ? .red : .primary)
+                            } label: {
+                                Text(line.isOverBudget ? "Over budget by" : "Left").bold()
+                            }
                         }
                         Button { moving = true } label: { Label("Move money from another category", systemImage: "arrow.left.arrow.right") }
                     } footer: {
-                        Text(line.isOverspent
-                             ? "Overspent by \(line.remaining.magnitude.compact). Move money in from another category to cover it."
-                             : line.fromBills.isPositive
-                                ? "This month's bills are planned here automatically, so they're counted before they're paid. Planning doesn't move money out of your accounts."
-                                : "Planning doesn't move money out of your accounts. It only sets how much you mean to spend.")
+                        if line.isUnbudgetedSpending {
+                            Text("No budget is set here yet. Enter one above, or move money in from another category to cover what's spent.")
+                        } else if line.isOverBudget {
+                            Text("\(line.remaining.magnitude.compact) more than the budget was spent. Raise the budget, or move money in from another category.")
+                        } else if line.fromBills.isPositive && !snapshot.holdsLoans(categoryId) {
+                            Text("This month's bills are planned here automatically, so they're counted before they're paid.")
+                        }
                     }
 
-                    Section("This month's spending") {
-                        let entries = monthEntries
+                    let parts = snapshot.breakdown(categoryId, month: month)
+                    let holdsLoans = snapshot.holdsLoans(categoryId)
+                    // Only when it groups something; otherwise the entries below say it all
+                    if holdsLoans || parts.contains(where: { $0.count > 1 }) {
+                        Section("What went in") {
+                            ForEach(parts) { part in
+                                if let loanId = part.loanId {
+                                    NavigationLink { AccountDetailView(accountId: loanId) } label: { partRow(part) }
+                                } else {
+                                    Button { only = only == part.name ? nil : part.name } label: {
+                                        partRow(part).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityAddTraits(only == part.name ? .isSelected : [])
+                                }
+                            }
+                            if holdsLoans {
+                                Button { choosingLoans = true } label: { Label("Choose loans", systemImage: "checklist") }
+                                    .accessibilityIdentifier("chooseLoans")
+                            }
+                        }
+                    }
+
+                    // A loan's payments are in its row above; tapping it shows them
+                    let loanIds = Set(snapshot.loans(in: categoryId).map(\.id))
+                    let entries = monthEntries.filter { record in
+                        (only == nil || label(record).caseInsensitiveCompare(only!) == .orderedSame)
+                            && !record.lines.contains { loanIds.contains($0.accountId) }
+                    }
+                    if !(holdsLoans && entries.isEmpty) {
+                    Section {
                         if entries.isEmpty { Text("Nothing yet").foregroundStyle(.secondary) }
                         ForEach(entries, id: \.id) { record in
                             Button { selectedEntry = record } label: { EntryRow(record: record, snapshot: snapshot) }
                                 .buttonStyle(.plain)
                         }
+                    } header: {
+                        HStack {
+                            Text(only ?? "This month's spending")
+                            Spacer()
+                            if only != nil { Button("Show all") { only = nil }.font(.footnote) }
+                        }
+                    }
                     }
 
                     Section {
@@ -336,27 +499,73 @@ struct CategoryDetailView: View {
                 .navigationTitle(category.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) { Button("Done") { saveAllocation(); dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { if allocationFocused { saveAllocation() }; dismiss() }
+                    }
+                    if category.kind == .expense {
+                        let pinned = snapshot.settings.pinnedCategoryIds.contains(categoryId)
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button { togglePin() } label: {
+                                Label(pinned ? "Unpin from Home" : "Pin to Home", systemImage: pinned ? "pin.slash" : "pin")
+                            }
+                        }
+                    }
                 }
-                .onAppear { allocationText = MoneyFormat.editable(line.allocated, emptyWhenZero: true) }
+                .onAppear { allocationText = shown(line.allocated) }
+                .onChange(of: allocationFocused) { _, focused in
+                    let allocated = snapshot.budget.line(categoryId, month: month).allocated
+                    if focused { allocationText = MoneyFormat.editable(allocated, emptyWhenZero: true) }
+                    else { saveAllocation(); allocationText = shown(snapshot.budget.line(categoryId, month: month).allocated) }
+                }
                 .sheet(isPresented: $moving) {
                     MoveMoneySheet(destinationId: categoryId, month: month) {
-                        allocationText = MoneyFormat.editable(snapshot.budget.line(categoryId, month: month).allocated, emptyWhenZero: true)
+                        allocationText = shown(snapshot.budget.line(categoryId, month: month).allocated)
                     }
                 }
                 .sheet(isPresented: $editing) { CategoryEditor(editing: category) }
                 .sheet(item: $selectedEntry) { EntryDetailView(record: $0) }
+                .sheet(isPresented: $choosingLoans) { NavigationStack { LoansInCategoryView(categoryId: categoryId) } }
             }
         }
     }
 
-    private var monthEntries: [EntryRecord] {
-        guard let start = BudgetMonth.start(of: month, calendar: snapshot.calendar),
-              let end = BudgetMonth.end(of: month, calendar: snapshot.calendar) else { return [] }
-        return snapshot.entries(touching: categoryId).filter { $0.date >= start && $0.date < end }
+    private var monthEntries: [EntryRecord] { snapshot.entries(in: categoryId, month: month) }
+
+    /// "2,750" while not being edited, like every other amount on the screen
+    private func shown(_ money: Money) -> String {
+        guard !money.isZero else { return "" }
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = Currency.scale(of: money.currency)
+        return f.string(from: money.decimal as NSDecimalNumber) ?? MoneyFormat.editable(money)
     }
 
-    private func saveAllocation() {
+    private func label(_ record: EntryRecord) -> String {
+        let memo = record.memo.trimmingCharacters(in: .whitespaces)
+        return memo.isEmpty ? "No description" : memo
+    }
+
+    private func partRow(_ part: FinanceSnapshot.CategoryPart) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(part.name)
+                if let detail = part.detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
+            }
+            Spacer()
+            Text(part.amount.compact).monospacedDigit()
+        }
+    }
+
+    private func togglePin() {
+        do {
+            try store.updateSettings { s in
+                if let i = s.pinnedCategoryIds.firstIndex(of: categoryId) { s.pinnedCategoryIds.remove(at: i) }
+                else { s.pinnedCategoryIds.append(categoryId) }
+            }
+        } catch { self.error = StoreError.from(error).errorDescription }
+    }
+
+        private func saveAllocation() {
         guard let amount = MoneyFormat.parse(allocationText.isEmpty ? "0" : allocationText, currency: store.currency) else {
             error = "Enter the planned amount as a number."
             return
@@ -475,6 +684,9 @@ struct CategoryEditor: View {
     @Environment(LedgerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     var editing: LedgerAccountRecord? = nil
+    /// Made from a loan's category picker: a spending category in Bills
+    var forLoans = false
+    var onCreated: (UUID) -> Void = { _ in }
 
     @State private var name = ""
     @State private var isIncome = false
@@ -486,9 +698,9 @@ struct CategoryEditor: View {
     @State private var error: String?
     @State private var showMore = false
 
-    private let groups = ["Essentials", "Lifestyle", "Savings", "Other"]
+    private let groups = ["Essentials", "Bills", "Lifestyle", "Savings", "Other"]
     private let icons = ["tag.fill", "cart.fill", "house.fill", "car.fill", "bolt.fill", "fork.knife", "film.fill",
-                         "bag.fill", "heart.fill", "airplane", "gift.fill", "graduationcap.fill", "pawprint.fill", "dumbbell.fill"]
+                         "bag.fill", "heart.fill", "airplane", "gift.fill", "graduationcap.fill", "pawprint.fill", "dumbbell.fill", "building.columns.fill"]
     private let colors = ["#3A7BD5", "#2BA84A", "#F2A33A", "#E4572E", "#AF52DE", "#FF2D55", "#0E9AA7", "#8E8E93"]
     private let colorNames = ["Blue", "Green", "Amber", "Red", "Purple", "Pink", "Teal", "Grey"]
 
@@ -497,7 +709,7 @@ struct CategoryEditor: View {
             Form {
                 Section {
                     TextField("Name", text: $name).accessibilityIdentifier("categoryName")
-                    if editing == nil {
+                    if editing == nil && !forLoans {
                         Picker("For", selection: $isIncome) {
                             Text("Spending").tag(false)
                             Text("Income").tag(true)
@@ -507,6 +719,17 @@ struct CategoryEditor: View {
                 if !isIncome {
                     Section {
                         Picker("Group", selection: $group) { ForEach(groups, id: \.self) { Text($0) } }
+                    }
+                    // A category like "Loans" can hold the payments of any number of loans
+                    if let editing, store.snapshot.accountRecords.contains(where: { $0.kind == .loan && !$0.archived }) {
+                        Section {
+                            NavigationLink { LoansInCategoryView(categoryId: editing.id) } label: {
+                                LabeledContent("Loans", value: loansSummary(editing.id))
+                            }
+                            .accessibilityIdentifier("categoryLoans")
+                        } footer: {
+                            Text("Pick loans whose payments count here.")
+                        }
                     }
                 }
                 Section("Icon") {
@@ -565,7 +788,10 @@ struct CategoryEditor: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Save", action: save) }
             }
             .onAppear {
-                guard let editing else { return }
+                guard let editing else {
+                    if forLoans { group = "Bills"; icon = "building.columns.fill" }
+                    return
+                }
                 name = editing.name
                 isIncome = editing.kind == .income
                 group = editing.group.isEmpty ? "Other" : editing.group
@@ -574,6 +800,15 @@ struct CategoryEditor: View {
                 icon = editing.icon.isEmpty ? "tag.fill" : editing.icon
                 colorHex = editing.colorHex
             }
+        }
+    }
+
+    private func loansSummary(_ categoryId: UUID) -> String {
+        let loans = store.snapshot.loans(in: categoryId)
+        switch loans.count {
+        case 0: return "None"
+        case 1: return loans[0].name
+        default: return "\(loans.count) loans"
         }
     }
 
@@ -595,8 +830,56 @@ struct CategoryEditor: View {
                 if !isIncome {
                     try store.updateAccount(record) { $0.policy = policy; $0.reserveInSafeToSpend = reserve }
                 }
+                onCreated(record.id)
             }
             dismiss()
         } catch { self.error = StoreError.from(error).errorDescription }
+    }
+}
+
+/// Tick the loans whose payments count in a category; several can share one
+struct LoansInCategoryView: View {
+    @Environment(LedgerStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let categoryId: UUID
+    @State private var error: String?
+
+    var body: some View {
+        let snapshot = store.snapshot
+        let loans = snapshot.accountRecords.filter { $0.kind == .loan && !$0.archived }
+        List {
+            Section {
+                if loans.isEmpty { Text("No loans yet. Add one in Accounts.").foregroundStyle(.secondary) }
+                ForEach(loans, id: \.id) { loan in
+                    let here = snapshot.loanCategories[loan.id] == categoryId
+                    Button { toggle(loan, here: here) } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(loan.name).foregroundStyle(.primary)
+                                if let terms = loan.debtTerms {
+                                    Text("\(terms.monthlyPayment.compact) a month").font(.footnote).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            if here { Image(systemName: "checkmark").foregroundStyle(Palette.brand).fontWeight(.semibold) }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(here ? .isSelected : [])
+                }
+            } footer: {
+                Text("Their payments count here in Budget and Reports, past ones too. A loan you untick goes back to Loan payments.")
+            }
+            if let error { Section { FieldError(message: error) } }
+        }
+        .navigationTitle("Loans in \(snapshot.account(categoryId)?.name ?? "this category")")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+    }
+
+    private func toggle(_ loan: LedgerAccountRecord, here: Bool) {
+        do { try store.setLoanCategory(here ? nil : categoryId, for: loan.id) }
+        catch { self.error = StoreError.from(error).errorDescription }
     }
 }

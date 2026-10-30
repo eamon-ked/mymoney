@@ -111,8 +111,6 @@ struct BillRemindersSection: View {
                     }
                 }
             }
-        } header: {
-            Text("Reminders")
         } footer: {
             Text(denied
                  ? "Notifications are off for Nokael Money. Turn them on in the Settings app under Notifications."

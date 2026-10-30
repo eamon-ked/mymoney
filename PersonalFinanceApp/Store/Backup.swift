@@ -72,12 +72,17 @@ struct SettingsDTO: Codable {
     var lastUsedAccountId: UUID?
     var biometricLock: Bool
     var lastBackupAt: Date?
+    // Optional so backups saved before these existed still restore
+    var bankRegion: String?
+    var bankSenders: [String]?
+    var pinnedCategoryIds: [UUID]?
 
     init(_ r: SettingsRecord) {
         currency = r.currency; localeIdentifier = r.localeIdentifier; firstWeekday = r.firstWeekday
         bufferMinor = r.bufferMinor; staleAfterDays = r.staleAfterDays; onboardingStep = r.onboardingStep
         onboardingDone = r.onboardingDone; payFrequencyData = r.payFrequencyData; lastUsedAccountId = r.lastUsedAccountId
         biometricLock = r.biometricLock; lastBackupAt = r.lastBackupAt
+        bankRegion = r.bankRegion; bankSenders = r.bankSenders; pinnedCategoryIds = r.pinnedCategoryIds
     }
 
     func apply(to r: SettingsRecord) {
@@ -85,6 +90,7 @@ struct SettingsDTO: Codable {
         r.bufferMinor = bufferMinor; r.staleAfterDays = staleAfterDays; r.onboardingStep = onboardingStep
         r.onboardingDone = onboardingDone; r.payFrequencyData = payFrequencyData; r.lastUsedAccountId = lastUsedAccountId
         r.biometricLock = biometricLock; r.lastBackupAt = lastBackupAt
+        r.bankRegion = bankRegion; r.bankSenders = bankSenders ?? []; r.pinnedCategoryIds = pinnedCategoryIds ?? []
     }
 }
 
@@ -106,6 +112,9 @@ struct AccountDTO: Codable {
     var debtRateBps: Int?
     var debtPaymentMinor: Int64?
     var debtDueDay: Int?
+    /// Added later; older backups have none. An unknown category falls back to Loan payments.
+    var debtCategoryId: UUID?
+    var systemRole: String?
     var group: String
     var policyRaw: String
     var reserveInSafeToSpend: Bool
@@ -117,6 +126,7 @@ struct AccountDTO: Codable {
         spendable = r.spendable; onBudget = r.onBudget; archived = r.archived; isSystem = r.isSystem; sortOrder = r.sortOrder
         colorHex = r.colorHex; icon = r.icon; institution = r.institution; lastReconciledAt = r.lastReconciledAt
         debtRateBps = r.debtRateBps; debtPaymentMinor = r.debtPaymentMinor; debtDueDay = r.debtDueDay
+        debtCategoryId = r.debtCategoryId; systemRole = r.systemRole
         group = r.group; policyRaw = r.policyRaw; reserveInSafeToSpend = r.reserveInSafeToSpend
         createdAt = r.createdAt; updatedAt = r.updatedAt
     }
@@ -128,6 +138,7 @@ struct AccountDTO: Codable {
         r.institution = institution; r.lastReconciledAt = lastReconciledAt; r.debtRateBps = debtRateBps
         r.debtPaymentMinor = debtPaymentMinor; r.debtDueDay = debtDueDay; r.group = group; r.policyRaw = policyRaw
         r.reserveInSafeToSpend = reserveInSafeToSpend; r.createdAt = createdAt; r.updatedAt = updatedAt
+        r.debtCategoryId = debtCategoryId; r.systemRole = systemRole
         return r
     }
 }

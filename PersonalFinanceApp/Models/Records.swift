@@ -33,6 +33,10 @@ final class LedgerAccountRecord {
     var debtRateBps: Int?
     var debtPaymentMinor: Int64?
     var debtDueDay: Int?
+    /// Loans only: the spending category its payments count under; nil means Loan payments
+    var debtCategoryId: UUID? = nil
+    /// Built-in categories only ("loanPayments", "interest"), so renaming one doesn't create another
+    var systemRole: String? = nil
     // Category settings (expense categories only)
     var group: String
     var policyRaw: String
@@ -381,6 +385,8 @@ final class SettingsRecord {
     var bankRegion: String? = nil
     /// SMS senders the person chose; empty accepts any message that reads as a transaction
     var bankSenders: [String] = []
+    /// Budget categories shown on Home, in the order they were pinned
+    var pinnedCategoryIds: [UUID] = []
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {
         self.currency = currency

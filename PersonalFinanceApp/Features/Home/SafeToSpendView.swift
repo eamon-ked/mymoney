@@ -29,7 +29,7 @@ struct SafeToSpendView: View {
     private var budgetDifference: String {
         let owed = snapshot.owedInBudget.map { "\($0.amount.compact) still owed on \($0.name)" }
         let extra = owed.isEmpty ? "" : " It also takes out " + owed.joined(separator: " and ") + ", which isn't due before payday so isn't held back here."
-        return "Not planned yet in Budget is a different number. It takes out everything you've planned in categories, like Groceries, which here still counts as money you can spend." + extra
+        return "Not planned yet, in Budget, is a different number. It takes out everything you've planned in categories, like Groceries, which here still counts as money you can spend." + extra
     }
 
     private var periodEnd: Date {
@@ -65,10 +65,10 @@ struct SafeToSpendView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {
                         if let amount = result.amount {
-                            Text(amount.isNegative ? Money.zero(store.currency).formatted : amount.formatted)
+                            Text(amount.isNegative ? Money.zero(store.currency).compact : amount.compact)
                                 .font(.largeTitle.bold()).monospacedDigit()
                             if amount.isNegative {
-                                Label("Short by \(amount.magnitude.formatted)", systemImage: "exclamationmark.triangle.fill")
+                                Label("Short by \(amount.magnitude.compact)", systemImage: "exclamationmark.triangle.fill")
                                     .font(.headline).foregroundStyle(.red)
                             }
                             Text("Safe to spend through \(result.periodEnd.formatted(date: .long, time: .omitted))")
@@ -266,7 +266,7 @@ struct ReserveEditor: View {
                             .frame(width: 110)
                             .accessibilityIdentifier("goalSaved")
                     }
-                    AccountPicker(title: "Kept in", accounts: store.snapshot.accounts.filter { $0.kind.isAsset }, selection: $accountId)
+                    AccountPicker(title: "Kept in", accounts: store.snapshot.accounts.filter { $0.kind.holdsMoney }, selection: $accountId)
                 } footer: {
                     Text("Nothing moves: the money stays in the account and is just kept out of safe-to-spend.")
                 }

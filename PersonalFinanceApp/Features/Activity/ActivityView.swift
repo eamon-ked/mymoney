@@ -30,10 +30,6 @@ struct ActivityView: View {
                     filterChips
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
-                } footer: {
-                    if filter != .scheduled && !days.isEmpty {
-                        Text("Tap an entry to change or delete it.")
-                    }
                 }
 
                 if filter == .scheduled {
@@ -62,7 +58,10 @@ struct ActivityView: View {
             }
             .listStyle(.insetGrouped)
             .searchable(text: $search, prompt: "Search descriptions, categories, accounts")
+            .canvas()
             .navigationTitle("Activity")
+            // Nothing else lives in the top bar here, so the title takes that row instead of leaving it empty
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar { GlobalAddButton() }
             .sheet(item: $selected) { EntryDetailView(record: $0) }
             .sheet(item: $paying) { PayScheduledSheet(occurrence: $0) }
@@ -287,7 +286,8 @@ struct OccurrenceBadge: View {
         case .partiallyPaid: StatusBadge(text: "Part paid", color: .orange)
         case .paid: StatusBadge(text: "Paid", color: .green)
         case .skipped: StatusBadge(text: "Skipped")
-        case .scheduled: StatusBadge(text: isEstimate ? "Estimate" : "Scheduled", color: isEstimate ? .orange : .secondary)
+        // Scheduled is the normal state, so it says nothing; only an estimate is worth a word
+        case .scheduled: if isEstimate { StatusBadge(text: "Estimate", color: .orange) }
         }
     }
 }

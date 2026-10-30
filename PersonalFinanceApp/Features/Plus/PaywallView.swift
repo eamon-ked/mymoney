@@ -74,7 +74,13 @@ struct PaywallView: View {
             Label("Nokael Plus", systemImage: "star.circle.fill")
                 .font(.title2.bold())
                 .foregroundStyle(Palette.home)
-            Text("Everything in the free app, plus the tools that save you time and show what's coming.")
+            // Two reasons, not a list: the list of features follows
+            VStack(alignment: .leading, spacing: 6) {
+                Label("It does the work for you", systemImage: "wand.and.stars")
+                Label("It understands your money", systemImage: "sparkles")
+            }
+            .font(.headline)
+            Text("Purchases saved automatically, statements imported, and answers to anything you ask.")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
     }
@@ -251,8 +257,6 @@ struct PlusSection: View {
                 }
                 Button("Restore purchases") { Task { try? await plus.restore() } }
             }
-        } header: {
-            Text("Nokael Plus")
         } footer: {
             if plus.currentPlan == nil {
                 Text("Apple Pay and bank SMS capture, statement import, Apple Intelligence, Money ahead, reports, the widget, unlimited goals and more.")

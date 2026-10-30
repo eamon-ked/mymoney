@@ -16,8 +16,10 @@ struct EntryDetailView: View {
     @State private var editing = false
     @State private var confirmDelete = false
     @State private var error: String?
-    @State private var resplitting = false
     @State private var openBill: Occurrence?
+    @State private var payingDebt: LedgerAccountRecord?
+    @State private var namingPerson = false
+    @State private var personName = ""
 
     private var snapshot: FinanceSnapshot { store.snapshot }
 
@@ -64,6 +66,40 @@ struct EntryDetailView: View {
                     Section("Notes") { Text(record.notes) }
                 }
 
+                if !debtsItCouldPay.isEmpty {
+                    Section {
+                        Menu {
+                            ForEach(debtsItCouldPay, id: \.id) { debt in
+                                Button(debt.name) { payingDebt = debt }
+                            }
+                        } label: {
+                            Label("This was a loan or card payment", systemImage: "creditcard")
+                        }
+                        .accessibilityIdentifier("wasDebtPayment")
+                    } footer: {
+                        Text("Records it as a payment instead, so it lowers what you owe rather than counting as spending.")
+                    }
+                }
+
+                if canBeLending {
+                    Section {
+                        Menu {
+                            ForEach(people, id: \.id) { person in
+                                Button(person.name) { recordAsLending(person) }
+                            }
+                            Button("Someone new…") { personName = ""; namingPerson = true }
+                        } label: {
+                            Label(record.kind == .expense ? "I lent this to someone" : "This was money paid back to me",
+                                  systemImage: "person.crop.circle.badge.clock")
+                        }
+                        .accessibilityIdentifier("wasLending")
+                    } footer: {
+                        Text(record.kind == .expense
+                             ? "Records it as money they owe you, so it isn't counted as spending."
+                             : "Records it as a repayment, so it lowers what they owe you instead of counting as income.")
+                    }
+                }
+
                 if let occId = record.occurrenceId, let occ = snapshot.occurrences.first(where: { $0.id == occId }),
                    let item = snapshot.item(for: occ) {
                     Section {
@@ -101,16 +137,28 @@ struct EntryDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
-                if record.status == .posted && editable {
+                if record.status == .posted && (editable || correctable != nil) {
                     ToolbarItem(placement: .primaryAction) { Button("Edit") { editing = true } }
                 }
             }
+            .alert("Who did you lend it to?", isPresented: $namingPerson) {
+                TextField("Name", text: $personName).accessibilityIdentifier("personName")
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    do { recordAsLending(try store.lentAccount(named: personName)) }
+                    catch { self.error = StoreError.from(error).errorDescription }
+                }
+            }
             .sheet(item: $openBill) { PayScheduledSheet(occurrence: $0) }
-            .sheet(isPresented: $resplitting, onDismiss: { dismiss() }) {
-                if let parts = store.debtPaymentParts(record) { ResplitSheet(record: record, parts: parts) }
+            .sheet(item: $payingDebt, onDismiss: { if record.status == .void { dismiss() } }) {
+                PayDebtSheet(debt: $0, replacing: record)
             }
             .sheet(isPresented: $editing, onDismiss: { dismiss() }) {
-                EntryEditor(kind: addKind, editing: record)
+                switch correctable {
+                case .payment(let debt): PayDebtSheet(debt: debt, editing: record)
+                case .opening(let account): StartingAmountSheet(account: account)
+                case nil: EntryEditor(kind: addKind, editing: record)
+                }
             }
             .confirmationDialog("Delete this \(kindName.lowercased())?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
@@ -132,13 +180,12 @@ struct EntryDetailView: View {
             if parts.interest.isPositive { LabeledContent("Interest", value: parts.interest.formatted) }
             if parts.fees.isPositive { LabeledContent("Fees", value: parts.fees.formatted) }
             LabeledContent("You owe now", value: snapshot.owed(parts.debt.id).formatted)
-            Button("Change the split") { resplitting = true }
         } header: {
             Text("How this payment was split")
         } footer: {
             Text(parts.interest.isPositive
-                 ? "Part of every payment is the lender's interest, which counts as spending; the rest lowers what you owe. The interest here is one month at \(rate ?? "the loan's rate") on what you owed. If your bank's statement shows a different interest figure, tap Change the split."
-                 : "All of it lowered what you owe. If your bank charged interest on this payment, tap Change the split and enter it.")
+                 ? "Part of every payment is the lender's interest, which counts as spending; the rest lowers what you owe. The interest here is one month at \(rate ?? "the loan's rate") on what you owed. If your bank's statement shows a different interest figure, tap Edit."
+                 : "All of it lowered what you owe. If your bank charged interest on this payment, tap Edit and enter it.")
         }
     }
 
@@ -171,6 +218,42 @@ struct EntryDetailView: View {
 
     private func cardName(_ hint: String) -> String {
         hint.count == 4 && hint.allSatisfy(\.isNumber) ? "card ending \(hint)" : hint
+    }
+
+    private enum Correction { case payment(LedgerAccountRecord), opening(LedgerAccountRecord) }
+
+    /// Entries with their own editor: a card or loan payment, and the amount an account was added with
+    private var correctable: Correction? {
+        switch record.kind {
+        case .debtPayment: return store.debtPaymentParts(record).map { .payment($0.debt) }
+        case .openingBalance:
+            return record.lines.compactMap { store.account($0.accountId) }.first { $0.kind.isBalanceSheet }.map { .opening($0) }
+        default: return nil
+        }
+    }
+
+    /// An expense paid from a bank or cash account could have been a card or loan payment
+    private var debtsItCouldPay: [LedgerAccountRecord] {
+        guard record.status == .posted, record.kind == .expense,
+              record.lines.contains(where: { store.account($0.accountId)?.kind.isAsset == true }) else { return [] }
+        return snapshot.accounts.filter(\.kind.isLiability)
+    }
+
+    /// Spending or income through one of your own accounts could really be money lent or paid back
+    private var canBeLending: Bool {
+        record.status == .posted && (record.kind == .expense || (record.kind == .income && !people.isEmpty))
+            && record.lines.contains { store.account($0.accountId).map { $0.kind.isBalanceSheet && $0.kind != .lent } ?? false }
+    }
+
+    private var people: [LedgerAccountRecord] {
+        snapshot.accounts.filter { $0.kind == .lent && !$0.archived && (record.kind == .expense || snapshot.balance($0.id).isPositive) }
+    }
+
+    private func recordAsLending(_ person: LedgerAccountRecord) {
+        do {
+            try store.recordAsLending(record.id, person: person.id)
+            dismiss()
+        } catch { self.error = StoreError.from(error).errorDescription }
     }
 
     private var editable: Bool {

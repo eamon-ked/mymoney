@@ -7,88 +7,47 @@ import SwiftUI
 import StoreKit
 import NokaelCore
 
+/// Settings: what people change sits on the first page; the rest is one tap in
 struct SettingsView: View {
     @Environment(LedgerStore.self) private var store
-    @Environment(PlusStore.self) private var plus
     @Environment(\.dismiss) private var dismiss
-    @State private var confirmErase = false
-    @State private var paywall: PlusFeature?
     @State private var showingPlus = false
     @State private var managingPlan = false
-    @State private var exportURL: URL?
-    @State private var error: String?
 
     var body: some View {
-        let settings = store.settings
         NavigationStack {
             Form {
                 PlusSection(showingPaywall: $showingPlus, managing: $managingPlan)
-
-                Section("Money") {
-                    LabeledContent("Currency", value: settings.currency)
-                    Picker("Week starts on", selection: binding(\.firstWeekday)) {
-                        Text("Sunday").tag(1)
-                        Text("Monday").tag(2)
-                        Text("Saturday").tag(7)
-                    }
-                    Stepper("Balances count as out of date after \(settings.staleAfterDays) days",
-                            value: binding(\.staleAfterDays), in: 7...90, step: 7)
-                    NavigationLink("Categories") { CategoryListView() }
-                }
-
-                Section {
-                    Toggle("Lock with Face ID", isOn: binding(\.biometricLock))
-                } header: {
-                    Text("Privacy")
-                } footer: {
-                    Text("Asks for Face ID or your passcode when the app opens.")
-                }
 
                 Section {
                     NavigationLink { CaptureSetupView() } label: {
                         Label("Siri & automatic capture", systemImage: "wallet.pass")
                     }
-                } footer: {
-                    Text("Add by voice, and save Apple Pay purchases and bank SMS alerts as they happen.")
+                    NavigationLink { Form { BillRemindersSection() }.navigationTitle("Bill reminders") } label: {
+                        Label("Bill reminders", systemImage: "bell")
+                    }
+                    NavigationLink { Form { AppleIntelligenceSection() }.navigationTitle("Apple Intelligence") } label: {
+                        Label("Apple Intelligence", systemImage: "sparkles")
+                    }
+                    Toggle(isOn: settingsBinding(store, \.biometricLock)) {
+                        Label("Lock with Face ID", systemImage: "faceid")
+                    }
                 }
-
-                BillRemindersSection()
-
-                AppleIntelligenceSection()
 
                 BackupSection()
 
                 Section {
-                    Button { if plus.isPlus { export() } else { paywall = .export } } label: {
-                        HStack {
-                            Label("Export all entries (CSV)", systemImage: "square.and.arrow.up")
-                            if !plus.isPlus { Spacer(); PlusBadge() }
-                        }
+                    NavigationLink { MoneyPreferencesView() } label: {
+                        Label("Currency & categories", systemImage: "banknote")
                     }
-                    if let exportURL {
-                        ShareLink(item: exportURL) { Label("Share export", systemImage: "doc.text") }
+                    NavigationLink { YourDataView(close: { dismiss() }) } label: {
+                        Label("Your data", systemImage: "tray.full")
                     }
-                    NavigationLink("Change history") { AuditListView() }
-                } header: {
-                    Text("Your data")
                 } footer: {
-                    Text("A spreadsheet of every entry, for your own records. To move or recover your data, use a backup.")
-                }
-
-                Section {
-                    Button("Delete all data on this iPhone", role: .destructive) { confirmErase = true }
-                } footer: {
-                    Text("Removes every account, entry, budget and bill from this device. Without a backup, this can't be undone.")
-                }
-
-                if let error { Section { FieldError(message: error) } }
-
-                Section {
-                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
                 }
             }
             .navigationTitle("Settings")
-            .paywall($paywall)
             .sheet(isPresented: $showingPlus) { PaywallView() }
             .manageSubscriptionsSheet(isPresented: $managingPlan)
             .navigationBarTitleDisplayMode(.inline)
@@ -96,19 +55,82 @@ struct SettingsView: View {
                 ToolbarItem(placement: .topBarLeading) { HelpButton() }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .confirmationDialog("Delete all data?", isPresented: $confirmErase, titleVisibility: .visible) {
-                Button("Delete everything", role: .destructive) {
-                    do { try store.eraseAllData(); dismiss() } catch { self.error = StoreError.from(error).errorDescription }
-                }
-            } message: {
-                Text("This can't be undone.")
-            }
         }
     }
+}
 
-    private func binding<T>(_ path: ReferenceWritableKeyPath<SettingsRecord, T>) -> Binding<T> {
-        Binding(get: { store.settings[keyPath: path] },
-                set: { value in try? store.updateSettings { $0[keyPath: path] = value } })
+@MainActor
+private func settingsBinding<T>(_ store: LedgerStore, _ path: ReferenceWritableKeyPath<SettingsRecord, T>) -> Binding<T> {
+    Binding(get: { store.settings[keyPath: path] },
+            set: { value in try? store.updateSettings { $0[keyPath: path] = value } })
+}
+
+/// Currency, the week, when balances count as old, and the category list
+struct MoneyPreferencesView: View {
+    @Environment(LedgerStore.self) private var store
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Currency", value: store.settings.currency)
+                Picker("Week starts on", selection: settingsBinding(store, \.firstWeekday)) {
+                    Text("Sunday").tag(1)
+                    Text("Monday").tag(2)
+                    Text("Saturday").tag(7)
+                }
+            }
+            Section {
+                NavigationLink("Categories") { CategoryListView() }
+            }
+        }
+        .navigationTitle("Currency & categories")
+    }
+}
+
+/// Export, the change history, and erasing everything
+struct YourDataView: View {
+    @Environment(LedgerStore.self) private var store
+    @Environment(PlusStore.self) private var plus
+    let close: () -> Void
+    @State private var confirmErase = false
+    @State private var paywall: PlusFeature?
+    @State private var exportURL: URL?
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Button { if plus.isPlus { export() } else { paywall = .export } } label: {
+                    HStack {
+                        Label("Export all entries (CSV)", systemImage: "square.and.arrow.up")
+                        if !plus.isPlus { Spacer(); PlusBadge() }
+                    }
+                }
+                if let exportURL {
+                    ShareLink(item: exportURL) { Label("Share export", systemImage: "doc.text") }
+                }
+                NavigationLink("Change history") { AuditListView() }
+            } footer: {
+                Text("A spreadsheet of every entry, for your own records. To move or recover your data, use a backup.")
+            }
+
+            Section {
+                Button("Delete all data on this iPhone", role: .destructive) { confirmErase = true }
+            } footer: {
+                Text("Removes every account, entry, budget and bill from this device. Without a backup, this can't be undone.")
+            }
+
+            if let error { Section { FieldError(message: error) } }
+        }
+        .navigationTitle("Your data")
+        .paywall($paywall)
+        .confirmationDialog("Delete all data?", isPresented: $confirmErase, titleVisibility: .visible) {
+            Button("Delete everything", role: .destructive) {
+                do { try store.eraseAllData(); close() } catch { self.error = StoreError.from(error).errorDescription }
+            }
+        } message: {
+            Text("This can't be undone.")
+        }
     }
 
     private func export() {

@@ -2,8 +2,9 @@
 //  OnboardingView.swift
 //  Nokael Money
 //
-//  Four short, resumable steps to a first useful overview. Progress is saved
-//  after each step; income and bills can be skipped; nothing is invented.
+//  Five short, resumable steps to a first useful overview, ending with what's
+//  actually free to spend. Progress is saved after each step; income, bills and
+//  essentials can be skipped; nothing is invented.
 //
 
 import SwiftUI
@@ -21,16 +22,20 @@ struct OnboardingView: View {
                 case 1: CurrencyStep(next: { go(2) })
                 case 2: FirstAccountStep(next: { go(3) })
                 case 3: IncomeStep(next: { go(4) })
-                default: BillsStep(finish: finish)
+                case 4: BillsStep(next: { go(5) })
+                default: EssentialsStep(finish: finish)
                 }
             }
+            // The app's own colours from the very first screen
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .canvas()
             .toolbar {
                 if step > 0 {
                     ToolbarItem(placement: .topBarLeading) {
                         Button { go(step - 1) } label: { Label("Back", systemImage: "chevron.left") }
                     }
                     ToolbarItem(placement: .principal) {
-                        Text("Step \(step) of 4").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        Text("Step \(step) of 5").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -45,7 +50,7 @@ struct OnboardingView: View {
     }
 
     private func finish() {
-        try? store.updateSettings { $0.onboardingDone = true; $0.onboardingStep = 4 }
+        try? store.updateSettings { $0.onboardingDone = true; $0.onboardingStep = 5 }
     }
 }
 
@@ -87,10 +92,26 @@ private struct WelcomeStep: View {
 private struct CurrencyStep: View {
     @Environment(LedgerStore.self) private var store
     let next: () -> Void
-    @State private var currency = "AED"
+    @State private var currency = CurrencyStep.phoneCurrency
     @State private var starters = true
 
-    private let currencies = ["AED", "SAR", "QAR", "KWD", "BHD", "OMR", "USD", "EUR", "GBP", "INR", "PKR", "PHP"]
+    static var phoneCurrency: String { Locale.current.currency?.identifier ?? "USD" }
+
+    /// The phone's own currency first, then common ones; every other code is listed below them
+    private var suggested: [String] {
+        var list = [Self.phoneCurrency]
+        for code in ["USD", "EUR", "GBP", "INR", "AED", "SAR", "CAD", "AUD", "PKR", "PHP", "NGN", "BRL"] where !list.contains(code) { list.append(code) }
+        if !list.contains(currency) { list.insert(currency, at: 1) }
+        return list
+    }
+
+    private var others: [String] {
+        let shown = Set(suggested)
+        return Locale.commonISOCurrencyCodes.filter { !shown.contains($0) }
+            .sorted { name($0).localizedCaseInsensitiveCompare(name($1)) == .orderedAscending }
+    }
+
+    private func name(_ code: String) -> String { Locale.current.localizedString(forCurrencyCode: code) ?? code }
 
     var body: some View {
         Form {
@@ -101,8 +122,11 @@ private struct CurrencyStep: View {
             .listRowBackground(Color.clear)
             Section {
                 Picker("Currency", selection: $currency) {
-                    ForEach(currencies, id: \.self) { code in
-                        Text("\(code) · \(Locale.current.localizedString(forCurrencyCode: code) ?? code)").tag(code)
+                    Section {
+                        ForEach(suggested, id: \.self) { code in Text("\(code) · \(name(code))").tag(code) }
+                    }
+                    Section("All currencies") {
+                        ForEach(others, id: \.self) { code in Text("\(code) · \(name(code))").tag(code) }
                     }
                 }
                 .pickerStyle(.navigationLink)
@@ -114,7 +138,7 @@ private struct CurrencyStep: View {
             }
             Section {
                 Button("Continue") {
-                    try? store.updateSettings { $0.currency = currency; $0.localeIdentifier = currency == "AED" ? "en_AE" : Locale.current.identifier }
+                    try? store.updateSettings { $0.currency = currency; $0.localeIdentifier = Locale.current.identifier }
                     if starters { try? store.addStarterCategories() }
                     next()
                 }
@@ -123,7 +147,8 @@ private struct CurrencyStep: View {
                 .accessibilityIdentifier("continue")
             }
         }
-        .onAppear { currency = store.settings.currency }
+        // Until this step has been saved, the stored currency is only the record's default
+        .onAppear { if store.settings.onboardingStep > 1 { currency = store.settings.currency } }
     }
 }
 
@@ -238,7 +263,7 @@ private struct IncomeStep: View {
 
 private struct BillsStep: View {
     @Environment(LedgerStore.self) private var store
-    let finish: () -> Void
+    let next: () -> Void
     @State private var addingBill = false
     @State private var addingReserve = false
 
@@ -260,12 +285,128 @@ private struct BillsStep: View {
                 Button { addingReserve = true } label: { Label("Set money aside", systemImage: "lock") }
             }
             Section {
-                Button(snapshot.items.isEmpty && snapshot.reserves.isEmpty ? "Skip and finish" : "Finish", action: finish)
+                Button(snapshot.items.isEmpty && snapshot.reserves.isEmpty ? "Skip" : "Continue", action: next)
                     .bold().frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("finish")
+                    .accessibilityIdentifier("continue")
             }
         }
         .sheet(isPresented: $addingBill) { PlannedItemEditor(sheet: .new(.outflow)) }
         .sheet(isPresented: $addingReserve) { ReserveEditor() }
+    }
+}
+
+/// Plans the essentials for this month, then shows what's left and why
+private struct EssentialsStep: View {
+    @Environment(LedgerStore.self) private var store
+    let finish: () -> Void
+    @State private var amounts: [UUID: String] = [:]
+    @State private var error: String?
+
+    /// Starter essentials when they exist, otherwise the first few spending categories
+    private var categories: [LedgerAccountRecord] {
+        let all = store.snapshot.expenseCategories.sorted { $0.sortOrder < $1.sortOrder }
+        let essentials = all.filter { $0.group == "Essentials" }
+        return essentials.isEmpty ? Array(all.prefix(5)) : essentials
+    }
+
+    var body: some View {
+        let snapshot = store.snapshot
+        let month = snapshot.monthKey
+        let result = snapshot.safeToSpend()
+        let unplanned = snapshot.budget.availableToAllocate(month: month)
+        Form {
+            Section {
+                Text("Plan the essentials").font(.title2.bold())
+                Text("Roughly what you spend each month on the basics. Bills you added are already counted, so leave those empty.")
+                    .foregroundStyle(.secondary)
+            }
+            .listRowBackground(Color.clear)
+
+            Section {
+                ForEach(categories, id: \.id) { c in
+                    let line = snapshot.budget.line(c.id, month: month)
+                    HStack {
+                        Label(c.name, systemImage: c.icon).foregroundStyle(.primary)
+                        Spacer()
+                        if line.fromBills.isPositive {
+                            Text("\(line.fromBills.compact) in bills").foregroundStyle(.secondary).font(.subheadline)
+                        }
+                        TextField("0", text: binding(c.id, current: line.allocated))
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 90)
+                    }
+                }
+            } footer: {
+                Text("Amounts are in \(store.currency). You can change them any time in Budget.")
+            }
+
+            if let amount = result.amount {
+                Section {
+                    LabeledContent("In spending accounts", value: result.spendableTotal.compact)
+                    if result.obligationsTotal.isPositive {
+                        LabeledContent("Bills before \(result.periodEnd.formatted(.dateTime.day().month(.abbreviated)))", value: "−" + result.obligationsTotal.compact)
+                    }
+                    if result.categoryReservationsTotal.isPositive {
+                        LabeledContent("Planned for essentials", value: "−" + result.categoryReservationsTotal.compact)
+                    }
+                    if result.reservesTotal.isPositive {
+                        LabeledContent("Set aside", value: "−" + result.reservesTotal.compact)
+                    }
+                    if result.buffer.isPositive { LabeledContent("Buffer", value: "−" + result.buffer.compact) }
+                    LabeledContent {
+                        Text(amount.isNegative ? "Short by \(amount.magnitude.compact)" : amount.compact)
+                            .bold().foregroundStyle(amount.isNegative ? .orange : .primary)
+                    } label: {
+                        Text("Safe to spend").bold()
+                    }
+                } header: {
+                    Text("What's actually free")
+                } footer: {
+                    Text(amount.isNegative
+                         ? "Bills and plans need more than your spending accounts hold before payday. Home shows what to do about it."
+                         : "What you can spend on anything until payday, after bills and the essentials above. It's the big number on Home.")
+                }
+                if !unplanned.isZero {
+                    Section {
+                        LabeledContent("Not planned yet", value: unplanned.compact)
+                    } footer: {
+                        Text(unplanned.isNegative
+                             ? "You've planned more than you have this month. Lower an amount above, or adjust it later in Budget."
+                             : "Money no budget uses yet. It isn't extra cash: give it a budget later, or leave it.")
+                    }
+                }
+            }
+
+            if let error { Section { FieldError(message: error) } }
+
+            Section {
+                Button("Finish") { saveAll(); if error == nil { finish() } }
+                    .bold().frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("finish")
+            }
+        }
+    }
+
+    private func binding(_ id: UUID, current: Money) -> Binding<String> {
+        Binding(get: { amounts[id] ?? MoneyFormat.editable(current, emptyWhenZero: true) },
+                // Saved as typed, so the summary below follows along; mistakes are only reported on Finish
+                set: { amounts[id] = $0; save(id, quietly: true) })
+    }
+
+    private func save(_ id: UUID, quietly: Bool = false) {
+        guard let text = amounts[id] else { return }
+        guard let amount = MoneyFormat.parse(text.isEmpty ? "0" : text, currency: store.currency), !amount.isNegative else {
+            if !quietly { error = "Enter each amount as a number." }
+            return
+        }
+        if !quietly { error = nil }
+        do { try store.setAllocation(amount, categoryId: id, month: store.snapshot.monthKey) }
+        catch { self.error = StoreError.from(error).errorDescription }
+    }
+
+    private func saveAll() {
+        error = nil
+        for id in amounts.keys { save(id); if error != nil { return } }
     }
 }

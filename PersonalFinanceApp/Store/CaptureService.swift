@@ -139,6 +139,12 @@ enum CaptureService {
            let found = options.first(where: { $0.name == name }) {
             return found
         }
+        // Money sent to another person is spending on them, even before there's a category for it
+        if !income, CategoryRules.isSentToPeople(merchant) {
+            let people = store.peopleCategory
+            try? store.commit()
+            return people
+        }
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), !merchant.isEmpty, AppleIntelligence.isReady {
             let examples = history.prefix(40).compactMap { past in snapshot.account(past.categoryId).map { (past.memo, $0.name) } }

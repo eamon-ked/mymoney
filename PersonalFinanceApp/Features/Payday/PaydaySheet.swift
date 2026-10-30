@@ -177,30 +177,3 @@ struct PaydaySheet: View {
         }
     }
 }
-
-/// Home: shown when the salary in Plan is due and not recorded yet
-struct PaydayBanner: View {
-    @Environment(LedgerStore.self) private var store
-    let open: () -> Void
-
-    var body: some View {
-        if let due = PaydayPlan.dueSalary(store.snapshot) {
-            Section {
-                Button(action: open) {
-                    HStack(spacing: 14) {
-                        Image(systemName: "banknote.fill").font(.title2).foregroundStyle(.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Payday? Got your \(due.item.name.lowercased())?").font(.headline)
-                            Text("\(due.occurrence.remaining.compact) expected \(due.occurrence.dueDate.formatted(.dateTime.day().month(.abbreviated))). Tap to record it and plan the month.")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                    }
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}

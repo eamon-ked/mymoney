@@ -53,6 +53,7 @@ struct NokaelMoneyApp: App {
         _plus = State(initialValue: services.plus)
         UNUserNotificationCenter.current().delegate = NotificationRouter.shared
         NokaelShortcuts.updateAppShortcutParameters()
+        AmountFieldSelection.install()
     }
 
     var body: some Scene {
@@ -61,6 +62,31 @@ struct NokaelMoneyApp: App {
                 .environment(store)
                 .environment(plus)
                 .modelContainer(container)
+                #if DEBUG
+                // Screenshot helper: -appearance dark|light
+                .preferredColorScheme(["dark": .dark, "light": .light][UserDefaults.standard.string(forKey: "appearance") ?? ""])
+                #endif
+        }
+    }
+}
+
+/// Tapping an amount selects it, so typing replaces the old number rather than landing beside it
+@MainActor
+enum AmountFieldSelection {
+    private static var observer: NSObjectProtocol?
+    private static let numeric: Set<UIKeyboardType> = [.decimalPad, .numberPad, .numbersAndPunctuation]
+
+    static func install() {
+        guard observer == nil else { return }
+        observer = NotificationCenter.default.addObserver(forName: UITextField.textDidBeginEditingNotification,
+                                                          object: nil, queue: .main) { note in
+            nonisolated(unsafe) let object = note.object   // posted on the main queue
+            MainActor.assumeIsolated {
+                guard let field = object as? UITextField, numeric.contains(field.keyboardType),
+                      !(field.text ?? "").isEmpty else { return }
+                // After the tap has placed the cursor
+                DispatchQueue.main.async { field.selectAll(nil) }
+            }
         }
     }
 }

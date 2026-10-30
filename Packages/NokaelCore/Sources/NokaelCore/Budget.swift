@@ -126,10 +126,13 @@ public struct Budget: Sendable {
     public let saved: Money
     /// Bills due each month. A category is always planned at least enough to cover them.
     public let bills: [BudgetBill]
+    /// Which spending category each loan's payments belong to (loan id to category id)
+    public let loanCategories: [UUID: UUID]
 
     public init(ledger: Ledger, categories: [BudgetCategory], allocations: [Allocation], calendar: Calendar,
-                saved: Money? = nil, bills: [BudgetBill] = []) {
+                saved: Money? = nil, bills: [BudgetBill] = [], loanCategories: [UUID: UUID] = [:]) {
         self.ledger = ledger
+        self.loanCategories = loanCategories
         self.categories = categories
         self.allocations = allocations
         self.calendar = calendar
@@ -144,22 +147,15 @@ public struct Budget: Sendable {
     }
 
     /// Spending in a category during a month, counting only money from budget accounts.
-    /// A loan instalment counts in full against its interest category: the part that
+    /// A loan instalment counts in full against its loan's category: the part that
     /// paid the loan down left the budget too, so it can't still be "left" to spend.
     public func spent(_ categoryId: UUID, month: String) -> Money {
         guard let start = BudgetMonth.start(of: month, calendar: calendar),
               let end = BudgetMonth.end(of: month, calendar: calendar) else { return .zero(currency) }
         let ids = budgetAccountIds
-        // Loans only: a card's principal paid for purchases that were already counted
-        let loans = Set(ledger.accounts.values.filter { $0.kind == .loan }.map(\.id))
         return ledger.posted
             .filter { $0.date >= start && $0.date < end && $0.lines.contains { ids.contains($0.accountId) } }
-            .compactMap { entry -> Money? in
-                guard let charge = entry.amount(on: categoryId) else { return nil }
-                guard entry.kind == .debtPayment else { return charge }
-                let principal = entry.lines.filter { loans.contains($0.accountId) }.map(\.amount).sum(currency)
-                return charge + principal
-            }
+            .compactMap { ledger.spending(of: $0, on: categoryId, loanCategories: loanCategories) }
             .sum(currency)
     }
 
@@ -201,7 +197,9 @@ public struct Budget: Sendable {
     public func availableToAllocate(month: String) -> Money {
         guard let end = BudgetMonth.end(of: month, calendar: calendar) else { return .zero(currency) }
         let held = budgetAccountIds.map { ledger.balance(of: $0, asOf: end.addingTimeInterval(-0.001)) }.sum(currency)
-        let setAside = categories.map { line($0.id, month: month).remaining }.sum(currency)
+        // Only what's still left in categories is set aside. Overspending is already gone from
+        // the accounts, so counting it here as a negative would add spent money back as unplanned.
+        let setAside = categories.map { line($0.id, month: month).remaining }.filter(\.isPositive).sum(currency)
         let future = allocations.filter { $0.month > month }.map(\.amount).sum(currency)
         return held - setAside - future - saved
     }

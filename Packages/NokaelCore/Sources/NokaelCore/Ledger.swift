@@ -6,9 +6,13 @@ import Foundation
 /// accounts; income, expense and equity are the ledger's other side.
 public enum AccountKind: String, Codable, CaseIterable, Sendable {
     case cash, bank, savings, creditCard, loan, investment, otherAsset
+    /// Money lent to someone: theirs to pay back, so it's owned but can't be spent or planned
+    case lent
     case income, expense, equity
 
-    public var isAsset: Bool { [.cash, .bank, .savings, .investment, .otherAsset].contains(self) }
+    public var isAsset: Bool { [.cash, .bank, .savings, .investment, .otherAsset, .lent].contains(self) }
+    /// Money of your own to pay with; what someone owes you isn't, until they pay it back
+    public var holdsMoney: Bool { isAsset && self != .lent }
     public var isLiability: Bool { [.creditCard, .loan].contains(self) }
     public var isBalanceSheet: Bool { isAsset || isLiability }
     public var isCategory: Bool { self == .income || self == .expense }
@@ -261,6 +265,30 @@ public struct Ledger: Sendable {
             .compactMap { $0.amount(on: categoryId) }
             .sum(currency)
         return accounts[categoryId]?.kind == .income ? raw.negated : raw
+    }
+
+    /// What an entry spent from a spending category. A loan payment counts in full: its interest and
+    /// fees, plus the principal of each loan that belongs to the category (`loanCategories`, loan id to
+    /// category id). A loan with no category listed counts with whatever category its interest went to.
+    /// A card's principal never counts: it paid for purchases that were counted when they were made.
+    public func spending(of entry: Entry, on categoryId: UUID, loanCategories: [UUID: UUID] = [:]) -> Money? {
+        let charge = entry.amount(on: categoryId)
+        guard entry.kind == .debtPayment else { return charge }
+        let principal = entry.lines.filter { line in
+            guard accounts[line.accountId]?.kind == .loan else { return false }
+            if let assigned = loanCategories[line.accountId] { return assigned == categoryId }
+            return charge != nil
+        }.map(\.amount).sum(currency)
+        guard charge != nil || !principal.isZero else { return nil }
+        return (charge ?? .zero(currency)) + principal
+    }
+
+    /// Spending in a category over [start, end), loan payments in full (see `spending(of:on:loanCategories:)`)
+    public func spending(on categoryId: UUID, from start: Date, to end: Date, loanCategories: [UUID: UUID] = [:]) -> Money {
+        posted
+            .filter { $0.date >= start && $0.date < end }
+            .compactMap { spending(of: $0, on: categoryId, loanCategories: loanCategories) }
+            .sum(currency)
     }
 
     public func netWorth(asOf: Date? = nil) -> NetWorth {

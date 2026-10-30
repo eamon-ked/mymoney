@@ -141,6 +141,7 @@ final class LedgerStore {
             ("Shopping", "Lifestyle", "bag.fill", "#FF2D55"),
             ("Health", "Other", "heart.fill", "#FF3B30"),
             ("Interest & fees", "Other", "percent", "#8E8E93"),
+            ("Sent to people", "Other", "person.2.fill", "#FF9500"),
             ("Other spending", "Other", "ellipsis.circle.fill", "#8E8E93")
         ]
         for (i, c) in expenses.enumerated() where !existing.contains(c.0) {
@@ -317,6 +318,17 @@ final class LedgerStore {
     /// Edits keep history: the original is voided, a replacement posted, and both linked
     @discardableResult
     func replace(_ originalId: UUID, with replacement: Entry, notes: String = "") throws -> UUID {
+        guard let original = entryRecord(originalId) else { throw StoreError.notFound }
+        let before = original.entry
+        let fresh = try stageReplacement(originalId, with: replacement, notes: notes)
+        context.insert(AuditRecord(action: "entry.edited", subjectId: fresh.id,
+                                   summary: "Changed \"\(before.memo)\" (\(describe(before))) to \(describe(fresh))"))
+        try commit()
+        return fresh.id
+    }
+
+    /// Swaps an entry for its corrected version without saving, so several can be committed as one
+    private func stageReplacement(_ originalId: UUID, with replacement: Entry, notes: String) throws -> Entry {
         guard let original = entryRecord(originalId), original.status == .posted else { throw StoreError.notFound }
         do { try EntryFactory.validate(replacement) } catch { throw StoreError.from(error) }
         let before = original.entry
@@ -331,10 +343,7 @@ final class LedgerStore {
         record.sourceRaw = original.sourceRaw
         record.cardHint = original.cardHint
         if let occ = fresh.occurrenceId { applyPayment(of: fresh, to: occ) }
-        context.insert(AuditRecord(action: "entry.edited", subjectId: fresh.id,
-                                   summary: "Changed \"\(before.memo)\" (\(describe(before))) to \(describe(fresh))"))
-        try commit()
-        return fresh.id
+        return fresh
     }
 
     func void(_ entryId: UUID, reason: String? = nil) throws {
@@ -714,29 +723,69 @@ final class LedgerStore {
 
     /// Where interest and fees are recorded as spending; recreated if it was removed
     var interestCategory: LedgerAccountRecord {
-        systemCategory("Interest & fees", colorHex: "#8E8E93", icon: "percent", group: "Other", sortOrder: 99)
+        systemCategory("interest", name: "Interest & fees", colorHex: "#8E8E93", icon: "percent", group: "Other", sortOrder: 99)
     }
 
-    /// Where loan instalments are budgeted: the whole payment, interest and repayment together
+    /// Where loan instalments are budgeted unless a loan names its own category:
+    /// the whole payment, interest and repayment together
     var loanCategory: LedgerAccountRecord {
-        systemCategory("Loan payments", colorHex: "#5E5CE6", icon: "building.columns", group: "Bills", sortOrder: 98)
+        systemCategory("loanPayments", name: "Loan payments", colorHex: "#5E5CE6", icon: "building.columns", group: "Bills", sortOrder: 98)
     }
 
-    /// A loan is paid from its own line; card interest and fees stay in Interest & fees
+    /// A loan is paid from its own category (Loan payments unless it names another);
+    /// card interest and fees stay in Interest & fees
     func chargeCategory(for debt: LedgerAccountRecord) -> LedgerAccountRecord {
-        debt.kind == .loan ? loanCategory : interestCategory
+        guard debt.kind == .loan else { return interestCategory }
+        if let id = debt.debtCategoryId, let chosen = account(id), chosen.kind == .expense, !chosen.archived { return chosen }
+        return loanCategory
     }
 
-    private func systemCategory(_ name: String, colorHex: String, icon: String, group: String, sortOrder: Int) -> LedgerAccountRecord {
+    /// Found by its role, so a renamed one is still found; older stores are matched by name once
+    private func systemCategory(_ role: String, name: String, colorHex: String, icon: String, group: String, sortOrder: Int) -> LedgerAccountRecord {
         let raw = AccountKind.expense.rawValue
-        if let existing = fetch(LedgerAccountRecord.self, #Predicate { $0.kindRaw == raw && $0.name == name }).first {
+        let expenses = fetch(LedgerAccountRecord.self, #Predicate { $0.kindRaw == raw })
+        if let existing = expenses.first(where: { $0.systemRole == role })
+            ?? expenses.first(where: { $0.systemRole == nil && $0.name == name }) {
             if existing.archived { existing.archived = false }
+            existing.systemRole = role
             return existing
         }
         let record = LedgerAccountRecord(name: name, kind: .expense, currency: currency, colorHex: colorHex,
                                          icon: icon, group: group, sortOrder: sortOrder)
+        record.systemRole = role
         context.insert(record)
         return record
+    }
+
+    /// Puts a loan's payments in a spending category (nil for Loan payments). Several loans can share one;
+    /// the payments already made move with it, and the month's plan follows.
+    func setLoanCategory(_ categoryId: UUID?, for loanId: UUID) throws {
+        guard let loan = account(loanId), loan.kind == .loan else { throw StoreError.notFound }
+        if let categoryId {
+            guard let category = account(categoryId), category.kind == .expense, !category.archived else { throw StoreError.notFound }
+        }
+        let before = chargeCategory(for: loan)
+        loan.debtCategoryId = categoryId == loanCategory.id ? nil : categoryId
+        loan.updatedAt = now()
+        let after = chargeCategory(for: loan)
+        guard before.id != after.id else { try commit(); return }
+        context.insert(AuditRecord(action: "debt.category", subjectId: loanId, summary: "\(loan.name): payments under \(after.name)"))
+        try commit()
+        let movedMonths = try moveLoanPayments()
+        // Not paid yet this month: its instalment is no longer planned where it was, so free it there
+        if let monthly = loan.debtTerms?.monthlyPayment, !movedMonths.contains(snapshot.monthKey) {
+            let month = snapshot.monthKey
+            let planned = snapshot.budget.allocated(before.id, month: month)
+            let unspent = Money.max(planned - snapshot.budget.spent(before.id, month: month), .zero(currency))
+            let take = Money.min(monthly, unspent)
+            if take.isPositive { try setAllocation(planned - take, categoryId: before.id, month: month) }
+        }
+        try planInstalments(for: snapshot.monthKey, category: after)
+    }
+
+    /// Loans whose payments count under a category
+    func loans(in categoryId: UUID) -> [LedgerAccountRecord] {
+        fetch(LedgerAccountRecord.self).filter { $0.kind == .loan && !$0.archived && chargeCategory(for: $0).id == categoryId }
     }
 
     /// Saves a card's or loan's rate and monthly payment, or clears them with nil.
@@ -797,52 +846,57 @@ final class LedgerStore {
     }
 
     /// Instalments are money that was always going to go, so they're planned on their own: a budget line
-    /// is raised to cover what's been paid from it and, for Loan payments, every loan's monthly instalment.
+    /// is raised to cover what's been paid from it and the monthly instalment of every loan that belongs to it.
     private func planInstalments(for month: String, category: LedgerAccountRecord) throws {
         var needed = snapshot.budget.spent(category.id, month: month)
-        if category.id == loanCategory.id {
-            let monthly = fetch(LedgerAccountRecord.self).filter { $0.kind == .loan && !$0.archived }
-                .compactMap { $0.debtTerms?.monthlyPayment }.sum(currency)
-            needed = Money.max(needed, monthly)
-        }
+        let monthly = loans(in: category.id).compactMap { $0.debtTerms?.monthlyPayment }.sum(currency)
+        needed = Money.max(needed, monthly)
         let line = snapshot.budget.line(category.id, month: month)
         let shortfall = needed - line.allocated - line.carriedIn
         guard shortfall.isPositive else { return }
         try setAllocation(line.allocated + shortfall, categoryId: category.id, month: month)
     }
 
-    /// Moves loan instalments recorded under Interest & fees, and the money planned for them, to
-    /// Loan payments, then plans this month's instalments. Safe to run on every launch.
+    /// Moves loan payments recorded under another category (older ones under Interest & fees, or a loan
+    /// that changed category) to their loan's category, then plans this month's instalments. Safe to run on every launch.
     func tidyLoanPayments() throws {
-        let interest = interestCategory
-        let loans = fetch(LedgerAccountRecord.self).filter { $0.kind == .loan }
+        let loans = fetch(LedgerAccountRecord.self).filter { $0.kind == .loan && !$0.archived }
         guard !loans.isEmpty else { return }
-        let loanIds = Set(loans.map(\.id))
-        let target = loanCategory
-        let moved = fetch(EntryRecord.self).filter { record in
-            record.status == .posted && record.kind == .debtPayment
-                && record.entry.lines.contains { loanIds.contains($0.accountId) }
-                && record.entry.amount(on: interest.id) != nil
+        try moveLoanPayments()
+        var planned = Set<UUID>()
+        for loan in loans {
+            let category = chargeCategory(for: loan)
+            if planned.insert(category.id).inserted { try planInstalments(for: snapshot.monthKey, category: category) }
         }
-        var months = Set<String>()
-        for record in moved {
-            guard let parts = debtPaymentParts(record) else { continue }
+    }
+
+    /// Re-records each loan payment whose charge sits in a category other than its loan's, and moves
+    /// what was planned for it there too. Returns the months moved.
+    @discardableResult
+    private func moveLoanPayments() throws -> Set<String> {
+        struct Move: Hashable { let from: UUID, to: UUID, month: String }
+        var moved: [Move: Money] = [:]
+        for record in fetch(EntryRecord.self) where record.status == .posted && record.kind == .debtPayment {
+            guard let parts = debtPaymentParts(record), parts.debt.kind == .loan,
+                  let current = record.entry.lines.first(where: { account($0.accountId)?.kind == .expense })?.accountId else { continue }
+            let target = chargeCategory(for: parts.debt)
+            guard current != target.id else { continue }
             let entry = try EntryFactory.debtPayment(principal: parts.principal, interest: parts.interest, fees: parts.fees,
                                                      from: parts.funding.info, debt: parts.debt.info, interestCategory: target.info,
                                                      date: record.date, memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
             _ = try replace(record.id, with: entry, notes: record.notes)
-            months.insert(BudgetMonth.key(for: record.date, calendar: calendar))
+            let move = Move(from: current, to: target.id, month: BudgetMonth.key(for: record.date, calendar: calendar))
+            moved[move] = (moved[move] ?? .zero(currency)) + parts.total
         }
-        // What was planned for those instalments under Interest & fees goes with them
-        for month in months {
-            let spent = snapshot.budget.spent(target.id, month: month)
-            let planned = snapshot.budget.allocated(interest.id, month: month)
-            let take = Money.min(spent, planned)
+        // What was planned for those payments goes with them
+        for (move, amount) in moved {
+            let planned = snapshot.budget.allocated(move.from, month: move.month)
+            let take = Money.min(amount, planned)
             guard take.isPositive else { continue }
-            try setAllocation(planned - take, categoryId: interest.id, month: month)
-            try setAllocation(snapshot.budget.allocated(target.id, month: month) + take, categoryId: target.id, month: month)
+            try setAllocation(planned - take, categoryId: move.from, month: move.month)
+            try setAllocation(snapshot.budget.allocated(move.to, month: move.month) + take, categoryId: move.to, month: move.month)
         }
-        try planInstalments(for: snapshot.monthKey, category: target)
+        return Set(moved.keys.map(\.month))
     }
 
     /// Links income that arrived some other way (a statement import, a typed entry) to the expected
@@ -902,6 +956,264 @@ final class LedgerStore {
         let zero = Money.zero(fundingLine.amount.currency)
         return DebtPaymentParts(debt: debt, funding: funding, total: fundingLine.amount.negated, principal: debtLine.amount,
                                 interest: charges.first ?? zero, fees: charges.dropFirst().sum(zero.currency))
+    }
+
+    /// Corrects a payment recorded with the wrong amount, account or date. The original is
+    /// replaced, not changed, so the history shows both.
+    @discardableResult
+    func editDebtPayment(_ entryId: UUID, from fundingId: UUID, amount: Money, interest: Money, fees: Money,
+                         date: Date) throws -> UUID {
+        guard let record = entryRecord(entryId), record.status == .posted, let parts = debtPaymentParts(record),
+              let funding = account(fundingId) else { throw StoreError.notFound }
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        guard !interest.isNegative, !fees.isNegative else { throw StoreError.invalid("Interest and fees can't be negative.") }
+        guard !(amount < interest + fees) else { throw StoreError.invalid("Interest and fees can't be more than the payment.") }
+        let principal = amount - interest - fees
+        let owedBefore = snapshot.balance(parts.debt.id).negated + parts.principal
+        if owedBefore < principal {
+            throw StoreError.invalid("That's more than the \(MoneyFormat.string(Money.max(owedBefore, .zero(owedBefore.currency)))) you owed. Lower the payment or the principal.")
+        }
+        let oldMonth = BudgetMonth.key(for: record.date, calendar: snapshot.calendar)
+        let entry: Entry
+        do {
+            entry = try EntryFactory.debtPayment(principal: principal, interest: interest, fees: fees,
+                                                 from: funding.info, debt: parts.debt.info,
+                                                 interestCategory: chargeCategory(for: parts.debt).info, date: date,
+                                                 memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
+        } catch { throw StoreError.from(error) }
+        let id = try replace(entryId, with: entry, notes: record.notes)
+        let category = chargeCategory(for: parts.debt)
+        let newMonth = BudgetMonth.key(for: date, calendar: snapshot.calendar)
+        try planInstalments(for: newMonth, category: category)
+        if oldMonth != newMonth { try planInstalments(for: oldMonth, category: category) }
+        return id
+    }
+
+    /// The entry that set an account's balance when it was added
+    func openingEntry(for accountId: UUID) -> EntryRecord? {
+        snapshot.entryRecords.first { record in
+            record.kind == .openingBalance && record.status == .posted && record.lines.contains { $0.accountId == accountId }
+        }
+    }
+
+    /// Fixes the balance an account was added with, e.g. a loan entered as 36,000 that was really 63,000.
+    /// Everything recorded since stays as it is, so today's balance moves by the same difference.
+    func correctOpeningBalance(_ accountId: UUID, to balance: Money) throws {
+        guard let record = account(accountId) else { throw StoreError.notFound }
+        let current = snapshot.balance(accountId)
+        if let opening = openingEntry(for: accountId) {
+            let old = opening.entry.amount(on: accountId) ?? .zero(balance.currency)
+            guard balance != old else { return }
+            if record.kind.isLiability && (current - old + balance).isPositive {
+                throw StoreError.invalid("Payments since then already add up to more than that. Check the amount, or delete a payment that was recorded twice.")
+            }
+            if balance.isZero { try void(opening.id, reason: "Opening balance corrected to zero"); return }
+            let entry: Entry
+            do { entry = try EntryFactory.openingBalance(balance, for: record.info, equity: equityAccount.info, date: opening.date) }
+            catch { throw StoreError.from(error) }
+            try replace(opening.id, with: entry, notes: opening.notes)
+        } else {
+            guard !balance.isZero else { return }
+            if record.kind.isLiability && (current + balance).isPositive {
+                throw StoreError.invalid("Payments since then already add up to more than that.")
+            }
+            let date = snapshot.entries(touching: accountId).map(\.date).min() ?? now()
+            let entry: Entry
+            do { entry = try EntryFactory.openingBalance(balance, for: record.info, equity: equityAccount.info, date: date) }
+            catch { throw StoreError.from(error) }
+            _ = try post(entry)
+        }
+    }
+
+    // MARK: - Wrong account type
+
+    /// Entries on an account that could belong to another one instead: not what it was added with,
+    /// not a statement check, and not money moved between the two
+    func movableEntries(of accountId: UUID, to targetId: UUID?) -> [EntryRecord] {
+        snapshot.entries(touching: accountId).filter { record in
+            ![.openingBalance, .reconciliation].contains(record.kind)
+                && !record.lines.contains { $0.accountId == targetId }
+        }
+    }
+
+    /// Fixes an account saved as the wrong type, e.g. a loan added as a bank account. The amount it was
+    /// added with keeps its size but moves to the right side (money you have becomes money you owe),
+    /// and entries recorded on it by mistake can go to the account they really came from.
+    func changeAccountType(_ accountId: UUID, to kind: AccountKind, movingEntriesTo targetId: UUID? = nil) throws {
+        guard let record = account(accountId), !record.isSystem else { throw StoreError.notFound }
+        guard kind.isBalanceSheet else { throw StoreError.invalid("Choose an account type.") }
+        var target: LedgerAccountRecord?
+        if let targetId {
+            guard targetId != accountId, let t = account(targetId), t.kind.isBalanceSheet, !t.archived else {
+                throw StoreError.invalid("Choose another of your accounts to move the entries to.")
+            }
+            target = t
+        }
+        let moving = target.map { movableEntries(of: accountId, to: $0.id) } ?? []
+        guard kind != record.kind || !moving.isEmpty else { return }
+        if record.kind.isLiability && !kind.isLiability
+            && snapshot.entries(touching: accountId).contains(where: { $0.kind == .debtPayment && !moving.contains($0) }) {
+            throw StoreError.invalid("Payments to it are recorded as card or loan payments. Delete them first, or move them to another account.")
+        }
+
+        let zero = Money.zero(record.currency)
+        let opening = openingEntry(for: accountId)
+        let oldOpening = opening?.entry.amount(on: accountId) ?? zero
+        // What you owe is stored as a negative balance, what you have as a positive one
+        let newOpening = kind.isLiability ? oldOpening.magnitude.negated : oldOpening.magnitude
+        let moved = moving.compactMap { $0.entry.amount(on: accountId) }.sum(record.currency)
+        let after = snapshot.balance(accountId) - moved - oldOpening + newOpening
+        if kind.isLiability && after.isPositive {
+            throw StoreError.invalid("The money recorded coming in is more than it was added with, so it would show nothing owed. Move the entries that belong to another account, or correct the amount it was added with.")
+        }
+
+        if record.kind.isLiability && !kind.isLiability && record.debtTerms != nil {
+            try saveDebtTerms(nil, for: accountId, paidFrom: nil)
+        }
+        if let opening, newOpening != oldOpening {
+            let entry: Entry
+            do { entry = try EntryFactory.openingBalance(newOpening, for: record.info, equity: equityAccount.info, date: opening.date) }
+            catch { throw StoreError.from(error) }
+            _ = try stageReplacement(opening.id, with: entry, notes: opening.notes)
+        }
+        if let target {
+            for old in moving {
+                let e = old.entry
+                let lines = e.lines.map { Line(accountId: $0.accountId == accountId ? target.id : $0.accountId, amount: $0.amount) }
+                let entry = Entry(kind: e.kind, date: e.date, memo: e.memo, lines: lines, occurrenceId: e.occurrenceId)
+                _ = try stageReplacement(old.id, with: entry, notes: old.notes)
+            }
+        }
+
+        let before = AccountStyle.name(for: record.kind)
+        if record.colorHex == AccountColors.next(for: record.kind) { record.colorHex = AccountColors.next(for: kind) }
+        if record.icon == AccountStyle.icon(for: record.kind) { record.icon = AccountStyle.icon(for: kind) }
+        record.kindRaw = kind.rawValue
+        record.spendable = kind.defaultSpendable
+        record.onBudget = kind.defaultOnBudget
+        record.includeInNetWorth = true
+        if kind != .loan { record.debtCategoryId = nil }
+        record.updatedAt = now()
+        if !kind.defaultSpendable, settings.lastUsedAccountId == accountId {
+            settings.lastUsedAccountId = target.flatMap { $0.spendable ? $0.id : nil }
+                ?? snapshot.accounts.first { $0.spendable && $0.id != accountId }?.id
+        }
+        var summary = "Changed \(record.name) from \(before) to \(AccountStyle.name(for: kind))"
+        if let target, !moving.isEmpty { summary += " and moved \(moving.count) entries to \(target.name)" }
+        context.insert(AuditRecord(action: "account.typeChanged", subjectId: accountId, summary: summary))
+        try commit()
+    }
+
+    /// An expense that was really a card or loan payment (an EMI from a bank statement, say) is
+    /// recorded again as one, so it lowers what's owed instead of counting as spending
+    @discardableResult
+    func recordAsDebtPayment(_ entryId: UUID, debt debtId: UUID, from fundingId: UUID, amount: Money, interest: Money,
+                             fees: Money, date: Date, occurrenceId: UUID? = nil) throws -> UUID {
+        guard let record = entryRecord(entryId), record.status == .posted, record.kind == .expense,
+              let debt = account(debtId), debt.kind.isLiability,
+              let funding = account(fundingId), funding.kind.isAsset else { throw StoreError.notFound }
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        guard !interest.isNegative, !fees.isNegative else { throw StoreError.invalid("Interest and fees can't be negative.") }
+        guard !(amount < interest + fees) else { throw StoreError.invalid("Interest and fees can't be more than the payment.") }
+        let principal = amount - interest - fees
+        let owed = snapshot.balance(debtId).negated
+        if owed < principal {
+            throw StoreError.invalid("That's more than the \(MoneyFormat.string(Money.max(owed, .zero(owed.currency)))) you owe. Lower the payment or the principal.")
+        }
+        let oldMonth = BudgetMonth.key(for: record.date, calendar: snapshot.calendar)
+        let entry: Entry
+        do {
+            entry = try EntryFactory.debtPayment(principal: principal, interest: interest, fees: fees,
+                                                 from: funding.info, debt: debt.info, interestCategory: chargeCategory(for: debt).info,
+                                                 date: date, memo: record.memo, key: UUID(), occurrenceId: occurrenceId)
+        } catch { throw StoreError.from(error) }
+        let id = try replace(entryId, with: entry, notes: record.notes)
+        let category = chargeCategory(for: debt)
+        let newMonth = BudgetMonth.key(for: date, calendar: snapshot.calendar)
+        try planInstalments(for: newMonth, category: category)
+        if oldMonth != newMonth { try planInstalments(for: oldMonth, category: category) }
+        return id
+    }
+
+    // MARK: - Money lent to people
+
+    /// Where spending on other people goes when nothing better fits: money sent, or a loan they won't repay
+    var peopleCategory: LedgerAccountRecord {
+        systemCategory("people", name: "Sent to people", colorHex: "#FF9500", icon: "person.2.fill", group: "Other", sortOrder: 97)
+    }
+
+    /// Someone's own "Money lent" account, found by name or opened at nothing owed
+    func lentAccount(named name: String) throws -> LedgerAccountRecord {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { throw StoreError.invalid("Enter who you lent it to.") }
+        if let existing = fetch(LedgerAccountRecord.self).first(where: {
+            $0.kind == .lent && !$0.archived && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) { return existing }
+        return try createAccount(name: trimmed, kind: .lent, opening: .zero(currency), openingDate: snapshot.today,
+                                 colorHex: "#FF9500")
+    }
+
+    /// Money handed to someone who'll pay it back: it becomes what they owe you, not spending
+    @discardableResult
+    func lend(_ amount: Money, to personId: UUID, from accountId: UUID, date: Date, memo: String = "") throws -> UUID {
+        guard let person = account(personId), person.kind == .lent,
+              let from = account(accountId), from.kind.isAsset, from.kind != .lent else { throw StoreError.notFound }
+        do {
+            return try post(EntryFactory.transfer(amount, from: from.info, to: person.info, date: date,
+                                                  memo: memo.isEmpty ? "Lent to \(person.name)" : memo))
+        } catch { throw StoreError.from(error) }
+    }
+
+    /// Some or all of a loan to someone coming back
+    @discardableResult
+    func receiveRepayment(_ amount: Money, from personId: UUID, into accountId: UUID, date: Date, memo: String = "") throws -> UUID {
+        guard let person = account(personId), person.kind == .lent,
+              let into = account(accountId), into.kind.isBalanceSheet, into.kind != .lent else { throw StoreError.notFound }
+        try checkOwedBy(person, covers: amount)
+        do {
+            return try post(EntryFactory.transfer(amount, from: person.info, to: into.info, date: date,
+                                                  memo: memo.isEmpty ? "Paid back by \(person.name)" : memo))
+        } catch { throw StoreError.from(error) }
+    }
+
+    /// What someone won't pay back stops counting as theirs and becomes money spent on them
+    @discardableResult
+    func forgive(_ amount: Money, owedBy personId: UUID, date: Date) throws -> UUID {
+        guard let person = account(personId), person.kind == .lent else { throw StoreError.notFound }
+        try checkOwedBy(person, covers: amount)
+        do {
+            return try post(EntryFactory.expense(amount, from: person.info, category: peopleCategory.info, date: date,
+                                                 memo: "Not paid back by \(person.name)"))
+        } catch { throw StoreError.from(error) }
+    }
+
+    /// Money sent to someone that was recorded as spending (or money back recorded as income) is
+    /// recorded again as lent (or repaid), so it moves what they owe you instead
+    @discardableResult
+    func recordAsLending(_ entryId: UUID, person personId: UUID) throws -> UUID {
+        guard let record = entryRecord(entryId), record.status == .posted, [.expense, .income].contains(record.kind),
+              let person = account(personId), person.kind == .lent,
+              let line = record.lines.first(where: { account($0.accountId).map { $0.kind.isBalanceSheet && $0.kind != .lent } ?? false }),
+              let own = account(line.accountId) else { throw StoreError.notFound }
+        let amount = Money(minorUnits: line.minorUnits, currency: line.currency).magnitude
+        let entry: Entry
+        do {
+            if record.kind == .expense {
+                entry = try EntryFactory.transfer(amount, from: own.info, to: person.info, date: record.date, memo: record.memo)
+            } else {
+                try checkOwedBy(person, covers: amount)
+                entry = try EntryFactory.transfer(amount, from: person.info, to: own.info, date: record.date, memo: record.memo)
+            }
+        } catch let error as StoreError { throw error } catch { throw StoreError.from(error) }
+        return try replace(entryId, with: entry, notes: record.notes)
+    }
+
+    private func checkOwedBy(_ person: LedgerAccountRecord, covers amount: Money) throws {
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        let owed = snapshot.balance(person.id)
+        if owed < amount {
+            throw StoreError.invalid("\(person.name) owes you \(MoneyFormat.string(Money.max(owed, .zero(owed.currency)))). Lower the amount.")
+        }
     }
 
     /// Re-splits a recorded payment with the interest and fees from the lender's statement

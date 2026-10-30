@@ -31,7 +31,7 @@ enum AddKind: String, Identifiable, CaseIterable {
     }
 }
 
-enum AppTab: Hashable { case home, budget, activity, accounts, plan }
+enum AppTab: Hashable { case home, budget, activity, accounts, reports }
 
 struct RootView: View {
     @Environment(LedgerStore.self) private var store
@@ -43,11 +43,12 @@ struct RootView: View {
     @AppStorage("seenTour") private var seenTour = false
     @State private var showingTour = false
     @State private var unlocked = false
+    @State private var showingBills = false
 
     var body: some View {
         Group {
             if !store.settings.onboardingDone {
-                OnboardingView()
+                OnboardingView().tint(Palette.brand)
             } else if store.settings.biometricLock && !unlocked {
                 LockView(unlock: authenticate)
             } else {
@@ -56,7 +57,7 @@ struct RootView: View {
                 if UserDefaults.standard.string(forKey: "screen") == "forecast" {
                     NavigationStack { ForecastView() }
                 } else if UserDefaults.standard.string(forKey: "screen") == "reports" {
-                    NavigationStack { ReportsView() }
+                    ReportsView()
                 } else if UserDefaults.standard.string(forKey: "screen") == "payday" {
                     PaydaySheet()
                 } else if UserDefaults.standard.string(forKey: "screen") == "tour" {
@@ -99,12 +100,12 @@ struct RootView: View {
         }
         .onChange(of: plus.isPlus) { _, isPlus in WidgetSync.update(store.snapshot, isPlus: isPlus) }
         .onAppear {
-            NotificationRouter.openPlan = { tab = .plan }
+            NotificationRouter.openPlan = { tab = .home; showingBills = true }
             store.extendSchedules()
             #if DEBUG
-            // Screenshot helper: -tab budget|activity|accounts|plan
+            // Screenshot helper: -tab budget|activity|accounts|reports
             if let t = UserDefaults.standard.string(forKey: "tab") {
-                tab = ["budget": .budget, "activity": .activity, "accounts": .accounts, "plan": .plan][t] ?? .home
+                tab = ["budget": .budget, "activity": .activity, "accounts": .accounts, "reports": .reports][t] ?? .home
             }
             // Capture helper: -captureSMS "<message>" and -captureApplePay "card|merchant|amount"
             Task { await debugCaptures() }
@@ -126,9 +127,10 @@ struct RootView: View {
                 .tabItem { Label("Activity", systemImage: "list.bullet.rectangle.fill") }
             AccountsView().tag(AppTab.accounts)
                 .tabItem { Label("Accounts", systemImage: "building.columns.fill") }
-            PlanView().tag(AppTab.plan)
-                .tabItem { Label("Plan", systemImage: "calendar") }
+            ReportsView().tag(AppTab.reports)
+                .tabItem { Label("Reports", systemImage: "chart.bar.xaxis") }
         }
+        .tint(Palette.brand)
         .environment(\.addEntry, AddEntryAction { adding = $0 })
         .environment(\.chooseAdd, ChooseAddAction { choosing = ChooseRequest(focus: $0) })
         .environment(\.selectTab, SelectTabAction { tab = $0 })
@@ -138,6 +140,7 @@ struct RootView: View {
         .sheet(item: $choosing) { request in
             AddChooser(focus: request.focus)
         }
+        .sheet(isPresented: $showingBills) { NavigationStack { BillsView() } }
         .sheet(isPresented: $showingTour, onDismiss: { seenTour = true }) { WelcomeTour() }
         .onAppear {
             let args = CommandLine.arguments
@@ -228,18 +231,17 @@ extension EnvironmentValues {
     @Entry var chooseAdd = ChooseAddAction { _ in }
 }
 
-/// The Add button in every tab's toolbar: asks what happened
+/// One Add, floating above the tab bar on iOS 26; in the toolbar before that
+/// Add, top right on every main screen: one place to put money in or out
 struct GlobalAddButton: ToolbarContent {
     @Environment(\.chooseAdd) private var chooseAdd
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Button { chooseAdd() } label: {
-                Text("\(Image(systemName: "plus")) Add").font(.body.weight(.semibold))
-            }
-            .accessibilityLabel("Add")
-            .accessibilityHint("Add money spent, received, a loan payment and more")
-            .accessibilityIdentifier("globalAdd")
+            Button { chooseAdd() } label: { Image(systemName: "plus").font(.body.weight(.semibold)) }
+                .accessibilityLabel("Add")
+                .accessibilityHint("Add money spent, received, a loan payment and more")
+                .accessibilityIdentifier("globalAdd")
         }
     }
 }

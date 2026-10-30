@@ -187,6 +187,19 @@ struct CaptureTests {
         #expect(CaptureMatcher.duplicate(of: capture(.applePay, 18, "Tim Hortons"), in: [coffee]) == nil)
     }
 
+    @Test func aGuessedAmountMustBeInTheMessage() {
+        #expect(AlertParser.mentions(Money(Decimal(string: "12.345")!, currency: "KWD"), in: "KWD 12.345 spent at Sultan Center"))
+        #expect(AlertParser.mentions(Money(Decimal(string: "12.3")!, currency: "KWD"), in: "KWD 12.300 spent"))
+        #expect(AlertParser.mentions(Money(45, currency: "AED"), in: "AED 45.00 at Carrefour"))
+        #expect(AlertParser.mentions(Money(45, currency: "AED"), in: "AED 45 at Carrefour"))
+        #expect(AlertParser.mentions(Money(Decimal(string: "45.5")!, currency: "EUR"), in: "45,50 € bei REWE"))
+        #expect(AlertParser.mentions(Money(1500, currency: "JPY"), in: "¥1,500 のご利用"))
+        #expect(AlertParser.mentions(Money(Decimal(string: "0.5")!, currency: "USD"), in: "$0.50 at Apple"))
+        #expect(AlertParser.mentions(Money(120, currency: "AED"), in: "مبلغ ١٢٠ درهم"))
+        #expect(!AlertParser.mentions(Money(Decimal(string: "12.345")!, currency: "KWD"), in: "KWD 12.346 spent"))
+        #expect(!AlertParser.mentions(Money(99, currency: "AED"), in: "AED 45.00 at Carrefour"))
+    }
+
     @Test func aTypedEntryMatchesOnTheSameDayAndShop() {
         let typed = entry(nil, 120, "Dewa", minutes: -240)
         #expect(CaptureMatcher.duplicate(of: capture(.sms, 120, "DEWA SMART PAYMENT"), in: [typed]) == typed.id)

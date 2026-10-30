@@ -182,6 +182,20 @@ public enum AlertParser {
         })
     }
 
+    /// Whether the amount's digits appear in the message, at the currency's
+    /// own decimals and without trailing zeros, so a guessed amount can be
+    /// checked against what the bank wrote (KWD 12.345, AED 45, JPY 1500).
+    public static func mentions(_ money: Money, in text: String) -> Bool {
+        let digits = westernDigits(text).filter { $0.isASCII && $0.isNumber }
+        let scale = Currency.scale(of: money.currency)
+        let units = String(abs(money.minorUnits))
+        let padded = String(repeating: "0", count: max(0, scale + 1 - units.count)) + units
+        let whole = padded.dropLast(scale)
+        var fraction = padded.suffix(scale)
+        while fraction.last == "0" { fraction.removeLast() }
+        return digits.contains(whole + fraction)
+    }
+
     /// Every amount that has a currency next to it and isn't a balance or limit.
     /// Reads "1,234.56", "1.234,56", "1 234,56" and "1'234.56".
     static func amounts(in text: String, homeCurrency: String) -> [Money] {

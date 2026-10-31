@@ -87,36 +87,67 @@ extension Redesign {
 
     struct AccountRow: View {
         @Environment(AppModel.self) private var app
+        @Environment(\.dynamicTypeSize) private var typeSize
         let account: Account
         var compact = false
 
         var body: some View {
             Button { app.open(.account(account.id)) } label: {
                 HStack(alignment: compact ? .center : .top, spacing: 12) {
-                    IconBox(symbol: Redesign.kindSymbol(account.kind), small: true)
+                    if compact { IconBox(symbol: Redesign.kindSymbol(account.kind), small: true) }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(app.accountLabel(account.id)).rdText(.cardTitle).lineLimit(1)
                         Text(app.reference(of: account) + (compact && account.isLiability ? " · Owed" : ""))
-                            .rdText(.caption).tracking(0.7).foregroundStyle(Theme.muted)
+                            .rdText(.caption).tracking(0.7).foregroundStyle(muted)
                         if !compact {
                             app.amount(account.shown).rdText(.figure)
                                 .padding(.top, 6)
                             Text(account.isLiability ? "Outstanding balance" : account.caption)
-                                .rdText(.caption).foregroundStyle(Theme.muted)
+                                .rdText(.caption).foregroundStyle(muted)
                         }
                     }
                     Spacer(minLength: 8)
                     if compact {
                         app.amount(account.shown).rdText(.amount)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.muted)
+                    } else if !typeSize.isAccessibilitySize {
+                        Image(Redesign.kindArtwork(account.kind))
+                            .resizable().scaledToFit()
+                            .frame(width: 92, height: 92)
+                            .padding(.vertical, -6)
+                            .accessibilityHidden(true)
                     }
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.muted)
-                        .padding(.top, compact ? 0 : 30)
                 }
                 .padding(.vertical, compact ? 13 : 0)
                 .contentShape(Rectangle())
-                .modifier(Card(on: !compact))
+                .modifier(Face(kind: account.kind, on: !compact))
             }
             .buttonStyle(.plain)
+        }
+
+        private var muted: Color { compact ? Theme.muted : .white.opacity(0.65) }
+
+        /// The account on a coloured card of its own, like the credit card on the card's page
+        struct Face: ViewModifier {
+            let kind: AccountKind
+            let on: Bool
+
+            func body(content: Content) -> some View {
+                if on {
+                    let colors = Redesign.kindColors(kind)
+                    content
+                        .foregroundStyle(.white)
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LinearGradient(colors: [Color(hex: colors.0), Color(hex: colors.1)],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.1)))
+                        .shadow(color: Color(hex: colors.1, opacity: 0.08), radius: 10, y: 8)
+                } else {
+                    content
+                }
+            }
         }
     }
 

@@ -154,6 +154,34 @@ extension Redesign {
         }
     }
 
+    /// The illustration on an account's card, from the asset catalog
+    static func kindArtwork(_ kind: AccountKind) -> String {
+        switch kind {
+        case .cash: "accountCash"
+        case .savings: "accountSavings"
+        case .creditCard: "accountCreditCard"
+        case .loan: "accountLoan"
+        case .investment: "accountInvestment"
+        case .otherAsset: "accountOtherAsset"
+        case .lent: "accountPerson"
+        default: "accountCurrent"
+        }
+    }
+
+    /// The two ends of an account card's gradient: muted tones that sit with the ivory and gold artwork
+    static func kindColors(_ kind: AccountKind) -> (UInt32, UInt32) {
+        switch kind {
+        case .cash: (0x7A7D5A, 0x474B33)
+        case .savings: (0x4F6A62, 0x2A423D)
+        case .creditCard: (0x576750, 0x24392E)
+        case .loan: (0x6E5C4D, 0x3C3028)
+        case .investment: (0x4E5B69, 0x29323D)
+        case .otherAsset: (0x7B6A4B, 0x473C2A)
+        case .lent: (0x735F5C, 0x413432)
+        default: (0x5D6B55, 0x33452F)
+        }
+    }
+
     /// What the floating + does where the person is: one button, its action set by the screen
     enum CreateAction: Equatable {
         case transaction, account, category, bill

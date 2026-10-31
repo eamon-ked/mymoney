@@ -35,7 +35,7 @@ enum AccountStyle {
         case .loan: return "Loan"
         case .investment: return "Investment"
         case .otherAsset: return "Other asset"
-        case .lent: return "Money lent"
+        case .lent: return "Person"
         case .income: return "Income"
         case .expense: return "Spending"
         case .equity: return "Adjustments"

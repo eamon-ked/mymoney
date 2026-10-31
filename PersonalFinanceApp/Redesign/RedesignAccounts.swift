@@ -3,7 +3,7 @@
 //  Nokael Money
 //
 //  An account's page, in three shapes: money you hold, a card or loan you
-//  owe, and money lent to someone. Adding accounts, cards and loans; paying
+//  owe, and a person: money lent to them or borrowed from them. Adding accounts, cards and loans; paying
 //  a card or loan with the interest split off; and the account's tools:
 //  checking against a statement, changing its type, fixing what it started
 //  with, and its settings.
@@ -36,8 +36,8 @@ extension Redesign {
                             Text(app.reference(of: account) + (account.archived ? " · Archived" : "")).rdText(.caption).tracking(1).foregroundStyle(Theme.muted)
                         }
                     }
-                    app.amount(account.balance).rdText(.balance).padding(.top, 24)
-                    Text(account.isLiability ? "You owe" : account.kind == .lent ? "Owes you" : "Balance")
+                    app.amount(account.shown).rdText(.balance).padding(.top, 24)
+                    Text(account.caption)
                         .rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 4)
                     if let record { Text(checkedLine(record)).rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 2) }
                     if !account.isLiability && account.kind != .lent && record?.spendable == true {
@@ -53,10 +53,16 @@ extension Redesign {
                             action("Payment", "arrow.up.right", id: "payDebt") { app.open(.payDebt(account.id, occurrence: nil)) }
                                 .disabled(account.balance <= 0)
                             action("Terms", "percent", id: "editDebt") { app.open(.debtTerms(account.id)) }
+                        } else if account.kind == .lent && account.youOwe {
+                            action("Pay back", "arrow.up.right", id: "payBack") { app.open(.lend(account.id, .payBack)) }
+                            action("Borrow more", "arrow.down.left", id: "borrowMore") { app.open(.lend(account.id, .borrow)) }
                         } else if account.kind == .lent {
-                            action("Lend more", "arrow.up.right", id: "lendMore") { app.open(.lend(account.id, .lend)) }
-                            action("Paid back", "arrow.down.left", id: "paidBack") { app.open(.lend(account.id, .repaid)) }
-                                .disabled(account.balance <= 0)
+                            action(account.balance > 0 ? "Lend more" : "Lend", "arrow.up.right", id: "lendMore") { app.open(.lend(account.id, .lend)) }
+                            if account.balance > 0 {
+                                action("Paid back", "arrow.down.left", id: "paidBack") { app.open(.lend(account.id, .repaid)) }
+                            } else {
+                                action("Borrow", "arrow.down.left", id: "borrowMore") { app.open(.lend(account.id, .borrow)) }
+                            }
                         } else {
                             action("Transfer", "arrow.up.arrow.down", id: "transfer") { app.open(.entry(.transfer)) }
                             action("Check", "checkmark.seal", id: "reconcile") { app.open(.reconcile(account.id)) }
@@ -141,6 +147,7 @@ extension Redesign {
                     if let bank = r.institution, !bank.isEmpty { DetailRow(label: "Bank", value: app.hidesAccountNames ? "Hidden" : bank) }
                     DetailRow(label: "Currency", value: r.currency)
                 }
+                if r.kind == .lent { PayBackBy(person: r) }
                 ToggleRow(title: "Counts in net worth", isOn: setting(r, \.includeInNetWorth))
                 if r.kind.isAsset && r.kind != .lent {
                     ToggleRow(title: "Money I can spend", detail: "Counts towards safe to spend.", isOn: setting(r, \.spendable))
@@ -311,6 +318,7 @@ extension Redesign {
         @State private var dueDay: Int?
         @State private var fundingId: UUID?
         @State private var categoryId: UUID?
+        @State private var iOwe = false
         @State private var problem: String?
 
         private let kinds: [AccountKind] = [.bank, .cash, .savings, .creditCard, .loan, .investment, .lent, .otherAsset]
@@ -320,12 +328,16 @@ extension Redesign {
                 Field(label: "Type") {
                     Choice(value: $kind, options: kinds) { Redesign.kindName($0) }
                 }
-                Field(label: kind == .lent ? "Who did you lend to?" : "Name") {
+                if kind == .lent {
+                    Pills(options: ["They owe me", "I owe them"], selection: Binding(get: { iOwe ? "I owe them" : "They owe me" },
+                                                                                   set: { iOwe = $0 == "I owe them" }))
+                }
+                Field(label: kind == .lent ? "Their name" : "Name") {
                     TextField(kind == .loan ? "e.g. Car loan" : kind == .creditCard ? "e.g. Cashback card" : kind == .cash ? "e.g. Wallet"
                               : kind == .lent ? "e.g. Sam" : "e.g. Everyday account", text: $name)
                         .accessibilityIdentifier(kind.isLiability ? "loanName" : "accountName")
                 }
-                AmountBox(label: kind.isLiability ? "Owed today in \(app.currency)" : kind == .lent ? "They owe you, in \(app.currency)"
+                AmountBox(label: kind.isLiability ? "Owed today in \(app.currency)" : kind == .lent ? (iOwe ? "You owe them, in \(app.currency)" : "They owe you, in \(app.currency)")
                           : "Current balance in \(app.currency)", text: $balance, identifier: kind.isLiability ? "loanOwed" : "openingBalance")
                 if kind != .cash && kind != .lent {
                     Field(label: kind.isLiability ? "Bank or lender, with the last four digits (optional)" : "Bank, with the last four digits (optional)") {
@@ -365,7 +377,7 @@ extension Redesign {
             switch kind {
             case .loan: "Not the original loan: what's left to pay. A loan is money you owe, never counted as cash. With a payment day, the payment joins your bills and is kept aside in safe to spend."
             case .creditCard: "The balance from your banking app or statement. Card spending counts as spending; paying the card is a transfer, not new spending."
-            case .lent: "Money someone owes you. It counts in your net worth, not in what you can spend."
+            case .lent: "A friend or family member: what they owe you, or what you owe them. It counts in your net worth, not in safe to spend."
             case .savings, .investment, .otherAsset: "Counts in your net worth. Savings aren't safe to spend unless you choose that on the account."
             default: "This balance is added to your total cash and safe to spend."
             }
@@ -385,8 +397,8 @@ extension Redesign {
             }
             let kind = kind
             problem = app.attempt(kind.isLiability ? "\(kind == .loan ? "Loan" : "Card") added. It isn't counted as cash."
-                                  : kind == .lent ? "Added to money owed to you." : "Account added.") {
-                let r = try app.store.addAccount(name: title, kind: kind, balance: owed, openingDate: Date(),
+                                  : kind == .lent ? "Added to People." : "Account added.") {
+                let r = try app.store.addAccount(name: title, kind: kind, balance: kind == .lent && iOwe ? owed.negated : owed, openingDate: Date(),
                                                  institution: institution.isEmpty ? nil : institution)
                 if kind == .loan, categoryId != nil { try app.store.setLoanCategory(categoryId, for: r.id) }
                 if kind.isLiability, let monthly {
@@ -772,50 +784,132 @@ extension Redesign {
         }
     }
 
-    /// Money lent to someone: lending more, being paid back, or letting it go
+    /// Money with a person, either way: lending, being paid back, borrowing, paying back, or letting it go.
+    /// With no person given (from What happened? or +), it asks who, and a new name opens their account.
     struct LendForm: View {
-        let person: LedgerAccountRecord
+        let person: LedgerAccountRecord?
         let action: LendAction
         @Environment(AppModel.self) private var app
+        @State private var personId: UUID?
+        @State private var newName = ""
         @State private var amount = ""
         @State private var accountId: UUID?
         @State private var date = Date()
+        @State private var hasDueDate = false
+        @State private var dueDate = Date()
         @State private var problem: String?
 
+        private var chosen: LedgerAccountRecord? { person ?? app.record(personId) }
+        /// Who can be picked: anyone for new money, only those who owe for a repayment
+        private var people: [Account] {
+            app.lent.filter { action == .repaid ? $0.balance > 0 : action == .payBack ? $0.youOwe : true }
+        }
+        private var accounts: [Account] {
+            // Money going out can come off a card; money coming in lands in an account you hold
+            action.isOut ? app.accounts.filter { ($0.kind.holdsMoney || $0.kind == .creditCard) && !$0.archived } : app.moneyAccounts
+        }
+
         var body: some View {
-            let owed = app.snapshot.balance(person.id)
+            let balance = chosen.map { app.snapshot.balance($0.id) }
+            let owed = action == .payBack ? balance?.negated : balance
             VStack(alignment: .leading, spacing: 16) {
-                AmountBox(label: "Amount in \(app.currency)", text: $amount, owed: action == .lend ? nil : owed.decimal, identifier: "lentAmount")
+                if person == nil {
+                    Field(label: action.isOut && action == .lend ? "Who did you lend to?" : action == .borrow ? "Who lent it to you?" : "Who?") {
+                        Choice(value: $personId, options: [nil] + people.map { Optional($0.id) }) { id in
+                            id.flatMap { app.account($0) }.map { app.accountLabel($0.id) } ?? "Someone new"
+                        }
+                    }
+                    if personId == nil {
+                        Field(label: "Their name") {
+                            TextField("e.g. Sam", text: $newName).accessibilityIdentifier("personName")
+                        }
+                    }
+                }
+                AmountBox(label: "Amount in \(app.currency)", text: $amount,
+                          owed: [.repaid, .payBack, .forgive].contains(action) ? owed?.decimal : nil, identifier: "lentAmount")
                 if action != .forgive {
-                    AccountChoice(label: action == .lend ? "From" : "Into", selection: $accountId, accounts: app.moneyAccounts)
+                    AccountChoice(label: action.isOut ? "From" : "Into", selection: $accountId, accounts: accounts)
                 }
                 Field(label: "Date") { DatePicker("", selection: $date, in: ...Date(), displayedComponents: .date).labelsHidden() }
-                Redesign.footnote(action == .lend ? "Moves money from your account to what \(app.accountLabel(person.id)) owes you. It isn't spending."
-                                  : action == .repaid ? "Moves what they paid back into your account."
-                                  : "What they still owe becomes spending, under \(app.store.peopleCategory.name).")
+                if action == .lend || action == .borrow {
+                    Toggle(isOn: $hasDueDate.animation(.snappy)) {
+                        Text(action == .lend ? "They'll pay it back by a date" : "I'll pay it back by a date").rdText(.detail)
+                    }
+                    .tint(Theme.primary)
+                    if hasDueDate {
+                        DatePicker("Pay back by", selection: $dueDate, in: Date()..., displayedComponents: .date).rdText(.detail)
+                    }
+                }
+                Redesign.footnote(footnote)
                 Problem(text: problem)
                 Button("Save", action: save).buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("saveLent")
             }
             .onAppear {
-                accountId = app.moneyAccounts.first { $0.id == app.store.settings.lastUsedAccountId }?.id ?? app.moneyAccounts.first?.id
-                if action == .forgive { amount = MoneyFormat.editable(owed) }
+                accountId = accounts.first { $0.id == app.store.settings.lastUsedAccountId }?.id ?? accounts.first?.id
+                if person == nil { personId = people.first?.id }
+                if let due = person?.owedBackBy, due >= app.today { hasDueDate = true; dueDate = due }
+                if action == .forgive, let owed { amount = MoneyFormat.editable(owed) }
+            }
+        }
+
+        private var footnote: String {
+            let who = chosen.map { app.accountLabel($0.id) } ?? "they"
+            switch action {
+            case .lend: return "Moves money from your account to what \(who) owes you. It isn't spending, and it's left out of safe to spend until it's paid back."
+            case .repaid: return "Moves what they paid back into your account. It isn't income."
+            case .borrow: return "The money lands in your account and becomes what you owe \(who). It isn't income, and it's left out of safe to spend."
+            case .payBack: return "Moves money from your account to settle what you owe. It isn't spending."
+            case .forgive: return "What they still owe becomes spending, under \(app.store.peopleCategory.name)."
             }
         }
 
         private func save() {
             guard let value = app.parse(amount), value.isPositive else { problem = "Enter the amount."; return }
+            let name = newName.trimmingCharacters(in: .whitespaces)
+            if chosen == nil && name.isEmpty { problem = "Add their name."; return }
             problem = app.attempt("Saved.") {
+                let p = try chosen ?? app.store.lentAccount(named: name)
                 switch action {
-                case .lend:
+                case .lend, .payBack, .repaid, .borrow:
                     guard let accountId else { throw StoreError.invalid("Choose the account.") }
-                    try app.store.lend(value, to: person.id, from: accountId, date: date)
-                case .repaid:
-                    guard let accountId else { throw StoreError.invalid("Choose the account.") }
-                    try app.store.receiveRepayment(value, from: person.id, into: accountId, date: date)
+                    switch action {
+                    case .lend: try app.store.lend(value, to: p.id, from: accountId, date: date)
+                    case .payBack: try app.store.payBack(value, to: p.id, from: accountId, date: date)
+                    case .repaid: try app.store.receiveRepayment(value, from: p.id, into: accountId, date: date)
+                    default: try app.store.borrow(value, from: p.id, into: accountId, date: date)
+                    }
                 case .forgive:
-                    try app.store.forgive(value, owedBy: person.id, date: date)
+                    try app.store.forgive(value, owedBy: p.id, date: date)
+                }
+                if action == .lend || action == .borrow { try app.store.setOwedBackBy(hasDueDate ? dueDate : nil, for: p.id) }
+                // Settled in full: there's nothing left to be reminded about
+                if app.store.snapshot.balance(p.id).isZero { try app.store.setOwedBackBy(nil, for: p.id) }
+            }
+        }
+    }
+
+    /// When a person said they'd pay back, or you said you would; nudges on Home once it passes
+    struct PayBackBy: View {
+        let person: LedgerAccountRecord
+        @Environment(AppModel.self) private var app
+
+        var body: some View {
+            let on = Binding(get: { person.owedBackBy != nil }, set: { set($0 ? (person.owedBackBy ?? week) : nil) })
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: on.animation(.snappy)) { Text("Pay back by a date").rdText(.detail) }.tint(Theme.primary)
+                if let due = person.owedBackBy {
+                    DatePicker("Pay back by", selection: Binding(get: { due }, set: { set($0) }), displayedComponents: .date)
+                        .rdText(.detail)
                 }
             }
+            .rdPanel(padding: 14)
+        }
+
+        private var week: Date { app.calendar.date(byAdding: .day, value: 7, to: app.today) ?? app.today }
+
+        private func set(_ date: Date?) {
+            app.attempt(closing: false) { try app.store.setOwedBackBy(date, for: person.id) }
+                .map { app.toast = Toast(message: $0, isError: true) }
         }
     }
 }

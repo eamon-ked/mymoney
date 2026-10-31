@@ -27,7 +27,7 @@ The screens can be redrawn without touching what's below them.
 | `RedesignTabs.swift` | Home, Accounts, Budget, Bills, and the rows they share. Activity is a page, not a tab. |
 | `RedesignSheets.swift` | The sheet router, the form parts (`AmountBox`, `Field`, `Choice`, `AccountChoice`, `CategoryChoice`, `ToggleRow`), the safe-to-spend breakdown and "What happened?". |
 | `RedesignEntry.swift` | Add and edit entries (one form, through `EntryForm`) and the transaction page. |
-| `RedesignAccounts.swift` | Account pages, cards and loans, paying debts, terms, reconcile, type, starting amount, lending. |
+| `RedesignAccounts.swift` | Account pages, cards and loans, paying debts, terms, reconcile, type, starting amount, and People: one `.lent` account per person that goes both ways (positive, they owe you; negative, you owe them). `Account.shown` and `caption` show it as a positive amount with "Owes you" or "You owe". |
 | `RedesignBills.swift` | Bill pages, linking payments, the bill form and schedules. |
 | `RedesignBudget.swift` | Category pages, the category form, moving money, goals and set-asides. |
 | `RedesignMore.swift` | More and its pages: profile, settings, reminders, privacy, backup and data, history, categories, Plus and the paywall. |

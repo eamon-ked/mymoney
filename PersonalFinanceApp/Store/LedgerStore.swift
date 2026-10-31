@@ -1215,7 +1215,7 @@ final class LedgerStore {
     @discardableResult
     func lend(_ amount: Money, to personId: UUID, from accountId: UUID, date: Date, memo: String = "") throws -> UUID {
         guard let person = account(personId), person.kind == .lent,
-              let from = account(accountId), from.kind.isAsset, from.kind != .lent else { throw StoreError.notFound }
+              let from = account(accountId), from.kind.isBalanceSheet, from.kind != .lent else { throw StoreError.notFound }
         do {
             return try post(EntryFactory.transfer(amount, from: from.info, to: person.info, date: date,
                                                   memo: memo.isEmpty ? "Lent to \(person.name)" : memo))
@@ -1232,6 +1232,41 @@ final class LedgerStore {
             return try post(EntryFactory.transfer(amount, from: person.info, to: into.info, date: date,
                                                   memo: memo.isEmpty ? "Paid back by \(person.name)" : memo))
         } catch { throw StoreError.from(error) }
+    }
+
+    /// Money someone lends you: it lands in your account and becomes what you owe them
+    @discardableResult
+    func borrow(_ amount: Money, from personId: UUID, into accountId: UUID, date: Date, memo: String = "") throws -> UUID {
+        guard let person = account(personId), person.kind == .lent,
+              let into = account(accountId), into.kind.isBalanceSheet, into.kind != .lent else { throw StoreError.notFound }
+        do {
+            return try post(EntryFactory.transfer(amount, from: person.info, to: into.info, date: date,
+                                                  memo: memo.isEmpty ? "Borrowed from \(person.name)" : memo))
+        } catch { throw StoreError.from(error) }
+    }
+
+    /// Some or all of what you owe someone, paid back
+    @discardableResult
+    func payBack(_ amount: Money, to personId: UUID, from accountId: UUID, date: Date, memo: String = "") throws -> UUID {
+        guard let person = account(personId), person.kind == .lent,
+              let from = account(accountId), from.kind.isBalanceSheet, from.kind != .lent else { throw StoreError.notFound }
+        guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        let owe = -snapshot.balance(person.id)
+        if owe < amount {
+            throw StoreError.invalid("You owe \(person.name) \(MoneyFormat.string(Money.max(owe, .zero(owe.currency)))). Lower the amount.")
+        }
+        do {
+            return try post(EntryFactory.transfer(amount, from: from.info, to: person.info, date: date,
+                                                  memo: memo.isEmpty ? "Paid back to \(person.name)" : memo))
+        } catch { throw StoreError.from(error) }
+    }
+
+    /// When someone said they'd pay back, or you said you would
+    func setOwedBackBy(_ date: Date?, for personId: UUID) throws {
+        guard let person = account(personId), person.kind == .lent else { throw StoreError.notFound }
+        person.owedBackBy = date
+        person.updatedAt = now()
+        try commit()
     }
 
     /// What someone won't pay back stops counting as theirs and becomes money spent on them
@@ -1259,7 +1294,7 @@ final class LedgerStore {
             if record.kind == .expense {
                 entry = try EntryFactory.transfer(amount, from: own.info, to: person.info, date: record.date, memo: record.memo)
             } else {
-                try checkOwedBy(person, covers: amount)
+                // More than they owed means they lent you the rest
                 entry = try EntryFactory.transfer(amount, from: person.info, to: own.info, date: record.date, memo: record.memo)
             }
         } catch let error as StoreError { throw error } catch { throw StoreError.from(error) }

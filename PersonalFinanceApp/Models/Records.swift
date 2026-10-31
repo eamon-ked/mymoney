@@ -37,6 +37,8 @@ final class LedgerAccountRecord {
     var debtCategoryId: UUID? = nil
     /// Built-in categories only ("loanPayments", "interest"), so renaming one doesn't create another
     var systemRole: String? = nil
+    /// People only: when they said they'd pay back (or you said you would)
+    var owedBackBy: Date? = nil
     // Category settings (expense categories only)
     var group: String
     var policyRaw: String

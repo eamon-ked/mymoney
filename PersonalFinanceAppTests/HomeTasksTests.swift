@@ -38,6 +38,7 @@ struct HomeTasksTests {
         case .noBudget: "noBudget"
         case .review: "review"
         case .unplanned: "unplanned"
+        case .person: "person"
         case .stale: "stale"
         case .backup: "backup"
         }

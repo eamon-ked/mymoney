@@ -99,15 +99,15 @@ extension Redesign {
                         Text(app.reference(of: account) + (compact && account.isLiability ? " · Owed" : ""))
                             .rdText(.caption).tracking(0.7).foregroundStyle(Theme.muted)
                         if !compact {
-                            app.amount(account.balance).rdText(.figure)
+                            app.amount(account.shown).rdText(.figure)
                                 .padding(.top, 6)
-                            Text(account.isLiability ? "Outstanding balance" : account.kind == .lent ? "Owed to you" : "Balance")
+                            Text(account.isLiability ? "Outstanding balance" : account.caption)
                                 .rdText(.caption).foregroundStyle(Theme.muted)
                         }
                     }
                     Spacer(minLength: 8)
                     if compact {
-                        app.amount(account.balance).rdText(.amount)
+                        app.amount(account.shown).rdText(.amount)
                     }
                     Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.muted)
                         .padding(.top, compact ? 0 : 30)
@@ -400,6 +400,19 @@ extension Redesign {
                 return m.isNegative
                     ? ("exclamationmark.circle", .alert, "You've planned \(app.money(m.magnitude)) more than you have", "Lower a budget so the plan fits your money.")
                     : ("leaf", .green, "\(app.money(m)) not planned yet", "Give it a job in your budget, or keep it as spare.")
+            case .person(let p, let balance, let due):
+                let name = app.accountLabel(p.id)
+                let amount = app.money(balance.magnitude)
+                if balance.isNegative {
+                    return ("person.2", .alert, "Pay \(name) back \(amount)",
+                            "You planned to by \(due.map { $0.formatted(.dateTime.day().month()) } ?? "now"). Record it once you have, or pick a new date.")
+                }
+                if let due {
+                    return ("person.2", .alert, "\(name) owes you \(amount)",
+                            "They were due to pay it back by \(due.formatted(.dateTime.day().month())). A reminder might help.")
+                }
+                let since = app.snapshot.lastConfirmed[p.id].map { $0.formatted(.relative(presentation: .named)) } ?? "a while"
+                return ("person.2", .green, "\(name) owes you \(amount)", "Nothing has been paid back since \(since).")
             case .stale(let a):
                 return ("checkmark.seal", .green, "Check \(app.accountLabel(a.id))'s balance",
                         "It hasn't been checked for a while. Compare it with your bank so safe to spend stays right.")
@@ -417,6 +430,7 @@ extension Redesign {
             case .overspent(let c, _): app.open(.category(c.id))
             case .noBudget, .unplanned: app.go(.budget)
             case .review: app.open(.review)
+            case .person(let p, _, _): app.open(.account(p.id))
             case .stale(let a): app.open(.reconcile(a.id))
             case .backup: app.show(.data)
             }
@@ -527,7 +541,7 @@ extension Redesign {
                         }
                     }
                     if filter == "All" && !app.lent.isEmpty {
-                        Redesign.overline("Owed to you").padding(.top, 16)
+                        Redesign.overline("People").padding(.top, 16)
                         VStack(spacing: 8) { ForEach(app.lent) { AccountRow(account: $0) } }
                     }
                     if filter == "All" && !app.archivedAccounts.isEmpty {

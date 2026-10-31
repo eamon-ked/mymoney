@@ -54,6 +54,8 @@ struct EntryForm {
     var frequency: Frequency = .monthly(every: 1)
     /// The bill or expected income this pays
     var occurrenceId: UUID?
+    /// Expenses only: the people who owe part of it back, and how much each
+    var shares: [(personId: UUID, amount: Money)] = []
     /// One per form: a double tap or a retry can't save it twice
     var key = UUID()
 
@@ -81,8 +83,12 @@ struct EntryForm {
         switch kind {
         case .expense:
             guard let category = snapshot.account(categoryId)?.info else { throw StoreError.invalid("Choose what it was for.") }
-            entry = try EntryFactory.expense(amount, from: account, category: category, date: date,
-                                             memo: title.isEmpty ? category.name : title, key: key)
+            let people = try shares.map { share in
+                guard let person = snapshot.account(share.personId)?.info else { throw StoreError.notFound }
+                return (person: person, amount: share.amount)
+            }
+            entry = try EntryFactory.splitExpense(amount, from: account, category: category, shares: people, date: date,
+                                                  memo: title.isEmpty ? category.name : title, key: key)
         case .income:
             guard let category = snapshot.account(categoryId)?.info else { throw StoreError.invalid("Choose the kind of income.") }
             entry = try EntryFactory.income(amount, to: account, category: category, date: date,

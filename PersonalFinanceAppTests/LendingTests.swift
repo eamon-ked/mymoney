@@ -101,4 +101,88 @@ struct LendingTests {
         let found = try await CaptureService.category(for: "UPI transfer 8812", income: false, snapshot: store.snapshot, store: store)
         #expect(found.id == people.id)
     }
+
+    // MARK: Both ways, splits and reminders
+
+    @Test func borrowingIsNotIncomeAndPayingBackIsNotSpending() throws {
+        let sam = try store.lentAccount(named: "Sam")
+        try store.borrow(Self.aed(500), from: sam.id, into: current.id, date: today)
+        var s = store.snapshot
+        #expect(s.balance(sam.id) == Self.aed(-500))
+        #expect(s.balance(current.id) == Self.aed(10_500))
+        #expect(s.netWorth.total == Self.aed(10_000))
+        #expect(s.incomeCategories.allSatisfy { s.budget.spent($0.id, month: month).isZero })
+        #expect(throws: StoreError.self) { try store.payBack(Self.aed(501), to: sam.id, from: current.id, date: today) }
+        try store.payBack(Self.aed(500), to: sam.id, from: current.id, date: today)
+        s = store.snapshot
+        #expect(s.balance(sam.id).isZero)
+        #expect(s.expenseCategories.allSatisfy { spent($0).isZero })
+    }
+
+    @Test func lendingOnACard() throws {
+        let card = try store.addAccount(name: "Card", kind: .creditCard, balance: Self.aed(0), openingDate: today)
+        let sam = try store.lentAccount(named: "Sam")
+        try store.lend(Self.aed(200), to: sam.id, from: card.id, date: today)
+        #expect(store.snapshot.balance(sam.id) == Self.aed(200))
+        #expect(store.snapshot.owed(card.id) == Self.aed(200))
+    }
+
+    @Test func moneyFromSomeoneWhoOwedNothingIsBorrowed() throws {
+        let sara = try store.lentAccount(named: "Sara")
+        let other = try #require(store.snapshot.incomeCategories.first { $0.name == "Other income" })
+        let id = try store.post(EntryFactory.income(Self.aed(300), to: current.info, category: other.info, date: today, memo: "TRF FROM SARA"))
+        try store.recordAsLending(id, person: sara.id)
+        #expect(store.snapshot.balance(sara.id) == Self.aed(-300))
+    }
+
+    @Test func aSplitBillCountsOnlyYourShare() throws {
+        let food = try #require(store.snapshot.expenseCategories.first { $0.name == "Dining out" } ?? store.snapshot.expenseCategories.first)
+        let sam = try store.lentAccount(named: "Sam")
+        let alex = try store.lentAccount(named: "Alex")
+        var form = EntryForm(kind: .expense, amount: Self.aed(300), accountId: current.id, categoryId: food.id, memo: "Dinner", date: today)
+        form.shares = [(sam.id, Self.aed(100)), (alex.id, Self.aed(100))]
+        let id = try store.save(form)
+        let s = store.snapshot
+        #expect(spent(food) == Self.aed(100))
+        #expect(s.balance(sam.id) == Self.aed(100))
+        #expect(s.balance(alex.id) == Self.aed(100))
+        #expect(s.balance(current.id) == Self.aed(9700))
+        // The list shows what left the account
+        let app = Redesign.AppModel(store: store, plus: PlusStore())
+        let t = try #require(app.transaction(id))
+        #expect(t.amount == 300)
+        #expect(t.accountId == current.id)
+    }
+
+    @Test func aBillAFriendPaidIsYourSpendingAndWhatYouOweThem() throws {
+        let food = try #require(store.snapshot.expenseCategories.first)
+        let sam = try store.lentAccount(named: "Sam")
+        let id = try store.save(EntryForm(kind: .expense, amount: Self.aed(80), accountId: sam.id, categoryId: food.id, date: today))
+        #expect(spent(food) == Self.aed(80))
+        #expect(store.snapshot.balance(sam.id) == Self.aed(-80))
+        #expect(store.snapshot.balance(current.id) == Self.aed(10_000))
+        let t = try #require(Redesign.AppModel(store: store, plus: PlusStore()).transaction(id))
+        #expect(t.amount == 80)
+        #expect(t.flow == .out)
+    }
+
+    @Test func peopleNeedYouWhenPastTheirDateOrQuietForAMonth() throws {
+        let sam = try store.lentAccount(named: "Sam")
+        let old = LedgerStoreTests.date(2026, 9, 1)
+        try store.lend(Self.aed(200), to: sam.id, from: current.id, date: old)
+        #expect(HomeTask.people(store.snapshot).count == 1)
+        // A date still ahead holds the reminder back; once it passes, it's due either way
+        try store.setOwedBackBy(LedgerStoreTests.date(2026, 11, 5), for: sam.id)
+        #expect(HomeTask.people(store.snapshot).isEmpty)
+        let alex = try store.lentAccount(named: "Alex")
+        try store.borrow(Self.aed(50), from: alex.id, into: current.id, date: today)
+        #expect(HomeTask.people(store.snapshot).isEmpty)
+        try store.setOwedBackBy(LedgerStoreTests.date(2026, 10, 20), for: alex.id)
+        let tasks = HomeTask.people(store.snapshot)
+        #expect(tasks.count == 1)
+        if case .person(let p, let balance, _) = tasks.first { #expect(p.id == alex.id); #expect(balance == Self.aed(-50)) }
+        // The date survives a backup
+        let backup = try LedgerStore.readBackup(try store.backupData())
+        #expect(backup.accounts.first { $0.id == alex.id }?.owedBackBy != nil)
+    }
 }

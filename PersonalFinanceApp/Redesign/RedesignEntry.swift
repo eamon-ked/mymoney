@@ -36,13 +36,24 @@ extension Redesign {
         @State private var sentence = ""
         @State private var reading = false
         @State private var readNote: String?
+        @State private var splitting = false
+        @State private var shares: [ShareRow] = []
+
+        /// Someone's part of a split bill: a person already in People, or a new name
+        struct ShareRow: Identifiable {
+            let id = UUID()
+            var personId: UUID?
+            var name = ""
+            var amount = ""
+        }
 
         init(kind: FormKind) {
             _kind = State(initialValue: kind)
             editing = nil
         }
 
-        init(editing record: EntryRecord) {
+        init(editing record: EntryRecord, splitting: Bool = false) {
+            _splitting = State(initialValue: splitting)
             let kind: FormKind = switch record.kind {
             case .income: .income
             case .transfer: .transfer
@@ -64,6 +75,9 @@ extension Redesign {
 
         private var money: Money? { app.parse(amount) }
         private var fromAccounts: [Account] { app.accounts.filter { $0.kind != .lent } }
+        /// An expense can also be one a friend paid for you
+        private var payers: [Account] { kind == .expense ? fromAccounts + app.lent : fromAccounts }
+        private var friendPaid: Bool { kind == .expense && app.account(accountId)?.kind == .lent }
 
         var body: some View {
             VStack(alignment: .leading, spacing: 16) {
@@ -91,7 +105,11 @@ extension Redesign {
                     .accessibilityIdentifier("useSavedSalary")
                 }
                 AccountChoice(label: kind == .transfer ? "From account" : kind == .income ? "Paid into" : kind == .adjustment ? "Account" : "Paid from",
-                              selection: $accountId, accounts: fromAccounts)
+                              selection: $accountId, accounts: payers)
+                if friendPaid {
+                    Redesign.explainer("\(app.accountLabel(accountId)) paid. It counts as your spending, and you'll owe them this amount.")
+                }
+                if kind == .expense && !friendPaid { split }
                 if kind == .transfer {
                     AccountChoice(label: "To account", selection: $toAccountId, accounts: app.accounts.filter { $0.id != accountId })
                     Redesign.explainer("Money moves between your own accounts. Total cash and safe to spend stay the same. Paying a card or a loan, or money lent and paid back, counts here too. This is a record only, not a bank transfer.")
@@ -251,6 +269,80 @@ extension Redesign {
             }
         }
 
+        // MARK: Splitting
+
+        /// Part of a bill others will pay back: their shares become what they owe you; only your share is spending
+        @ViewBuilder private var split: some View {
+            ToggleRow(title: "Split with others", detail: splitting ? nil : "Others will pay you back their part.",
+                      isOn: Binding(get: { splitting }, set: { on in
+                          withAnimation(.snappy) {
+                              splitting = on
+                              if on && shares.isEmpty { shares = [ShareRow(personId: app.lent.first?.id)] }
+                          }
+                      }))
+                .accessibilityIdentifier("splitToggle")
+            if splitting {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach($shares) { $row in
+                        HStack(alignment: .bottom, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Choice(value: $row.personId, options: app.lent.map { Optional($0.id) } + [nil]) { id in
+                                    id.map { app.accountLabel($0) } ?? "Someone new"
+                                }
+                                if row.personId == nil {
+                                    TextField("Their name", text: $row.name).accessibilityIdentifier("shareName")
+                                }
+                            }
+                            TextField("0", text: $row.amount).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                                .frame(width: 96).accessibilityIdentifier("shareAmount")
+                            Button { withAnimation(.snappy) { shares.removeAll { $0.id == row.id }; if shares.isEmpty { splitting = false } } } label: {
+                                Image(systemName: "minus.circle").foregroundStyle(Theme.muted)
+                            }
+                            .buttonStyle(.plain).accessibilityLabel("Remove")
+                        }
+                        Redesign.hairline
+                    }
+                    HStack {
+                        Button("Add person") { withAnimation(.snappy) { shares.append(ShareRow()) } }
+                            .accessibilityIdentifier("addShare")
+                        Spacer()
+                        Button("Split evenly", action: splitEvenly).accessibilityIdentifier("splitEvenly")
+                    }
+                    .rdText(.captionStrong).foregroundStyle(Theme.primary).buttonStyle(.plain)
+                    if let mine = myShare {
+                        Text(private: "Your share \(app.money(mine)). Only this counts as spending.")
+                            .rdText(.caption).foregroundStyle(mine.isPositive ? Theme.muted : Theme.destructive)
+                    }
+                }
+                .rdPanel(padding: 14)
+            }
+        }
+
+        private var myShare: Money? {
+            guard let total = money else { return nil }
+            return total - shares.compactMap { app.parse($0.amount) }.sum(total.currency)
+        }
+
+        /// The total shared between you and everyone listed; any odd cent stays with you
+        private func splitEvenly() {
+            guard let total = money, total.isPositive, !shares.isEmpty else { problem = "Enter the amount first."; return }
+            let each = total.minorUnits / Int64(shares.count + 1)
+            for i in shares.indices { shares[i].amount = MoneyFormat.editable(Money(minorUnits: each, currency: total.currency)) }
+        }
+
+        /// People's shares, opening an account for anyone new; throws a message for the form
+        private func resolvedShares() throws -> [(personId: UUID, amount: Money)] {
+            guard kind == .expense, splitting, !friendPaid else { return [] }
+            return try shares.compactMap { row in
+                guard !row.amount.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+                guard let value = app.parse(row.amount), value.isPositive else { throw StoreError.invalid("Enter each person's share as a number.") }
+                if let id = row.personId { return (id, value) }
+                let name = row.name.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { throw StoreError.invalid("Add a name for each person.") }
+                return (try app.store.lentAccount(named: name).id, value)
+            }
+        }
+
         // MARK: Loading and suggestions
 
         private func load() {
@@ -272,7 +364,14 @@ extension Redesign {
                         accountId = sheet.first { $0.amount.isNegative }?.accountId
                         toAccountId = sheet.first { $0.amount.isPositive }?.accountId
                     } else {
-                        accountId = sheet.first?.accountId
+                        // A split bill: your account paid, and people's lines are what they owe back
+                        let people = sheet.filter { s.account($0.accountId)?.kind == .lent && $0.amount.isPositive }
+                        accountId = sheet.first { !people.map(\.accountId).contains($0.accountId) }?.accountId
+                        if kind == .expense && !people.isEmpty {
+                            shares = people.map { ShareRow(personId: $0.accountId, amount: MoneyFormat.editable($0.amount)) }
+                            splitting = true
+                        }
+                        if splitting && shares.isEmpty { shares = [ShareRow(personId: app.lent.first?.id)] }
                     }
                 }
                 memo = editing.memo
@@ -319,12 +418,16 @@ extension Redesign {
 
         private func submit() {
             problem = nil
-            let form = EntryForm(kind: addKind, amount: money, accountId: accountId, toAccountId: toAccountId, categoryId: categoryId,
+            var form = EntryForm(kind: addKind, amount: money, accountId: accountId, toAccountId: toAccountId, categoryId: categoryId,
                                  memo: memo, notes: kind == .adjustment ? "" : notes, date: date, reason: reason,
                                  repeats: editing == nil && repeats, frequency: frequency,
                                  occurrenceId: paysBill ? candidate?.occurrence.id : (editing?.occurrenceId), key: key)
             do { _ = try form.checkedAmount() } catch { problem = error.localizedDescription; return }
+            if splitting && !friendPaid, let mine = myShare, !mine.isPositive {
+                problem = "Others' shares must add up to less than the total. To lend all of it, use I lent someone money."; return
+            }
             guard !saving else { return }
+            do { form.shares = try resolvedShares() } catch { problem = error.localizedDescription; return }
             saving = true
             problem = app.save(form, replacing: editing?.id)
             if problem != nil { saving = false }
@@ -374,9 +477,21 @@ extension Redesign {
             } else {
                 DetailCard {
                     DetailRow(label: "Date", value: app.fullDay(t.date))
-                    DetailRow(label: t.kind == .transfer ? "From" : "Account", value: app.accountLabel(t.accountId))
+                    let paidByFriend = app.account(t.accountId)?.kind == .lent && t.kind == .expense
+                    DetailRow(label: t.kind == .transfer ? "From" : paidByFriend ? "Paid by" : "Account", value: app.accountLabel(t.accountId))
                     if t.kind == .transfer { DetailRow(label: "To", value: app.accountLabel(t.destinationId)) }
                     else { DetailRow(label: "Category", value: app.category(of: t)) }
+                    if let record, t.kind == .expense {
+                        // A split bill: your share is the spending, the rest is owed back
+                        let lines = record.entry.lines
+                        let people = lines.filter { app.record($0.accountId)?.kind == .lent && $0.amount.isPositive }
+                        if !people.isEmpty, let mine = lines.first(where: { app.record($0.accountId)?.kind == .expense }) {
+                            DetailRow(label: "Your share", value: app.money(mine.amount))
+                            ForEach(people, id: \.accountId) { line in
+                                DetailRow(label: "\(app.accountLabel(line.accountId)) owes", value: app.money(line.amount))
+                            }
+                        }
+                    }
                 }
             }
             if t.kind == .transfer {
@@ -466,23 +581,29 @@ extension Redesign {
         @ViewBuilder private func more(_ record: EntryRecord) -> some View {
             let s = app.snapshot
             let throughOwn = record.lines.contains { app.record($0.accountId).map { $0.kind.isBalanceSheet && $0.kind != .lent } ?? false }
-            let people = s.accounts.filter { $0.kind == .lent && (record.kind == .expense || s.balance($0.id).isPositive) }
+            let people = s.accounts.filter { $0.kind == .lent && !$0.archived }
             let couldPayDebt = record.kind == .expense && !s.debts.isEmpty
                 && record.lines.contains { app.record($0.accountId)?.kind.isAsset == true }
-            let couldLend = throughOwn && (record.kind == .expense || (record.kind == .income && !people.isEmpty))
+            let couldLend = throughOwn && (record.kind == .expense || record.kind == .income)
+            let couldSplit = throughOwn && record.kind == .expense
             if couldPayDebt || couldLend {
                 Menu {
+                    if couldSplit {
+                        Button("Split it with others") { app.open(.splitEntry(record.id)) }
+                    }
                     if couldPayDebt {
                         Button("This was a loan or card payment") { app.open(.entryAsDebtPayment(record.id)) }
                     }
                     if couldLend {
-                        Section(record.kind == .expense ? "I lent this to" : "This was paid back by") {
+                        Section(record.kind == .expense ? "I lent all of it to" : "It came from a person") {
                             ForEach(people) { p in
                                 Button(app.accountLabel(p.id)) {
-                                    problem = app.attempt("Recorded as money lent.") { try app.store.recordAsLending(record.id, person: p.id) }
+                                    problem = app.attempt(record.kind == .expense ? "Recorded as money lent." : "Recorded as money from \(app.accountLabel(p.id)).") {
+                                        try app.store.recordAsLending(record.id, person: p.id)
+                                    }
                                 }
                             }
-                            if record.kind == .expense { Button("Someone new…") { askingName = true } }
+                            Button("Someone new…") { askingName = true }
                         }
                     }
                 } label: {
@@ -492,14 +613,14 @@ extension Redesign {
                         .overlay(Capsule().stroke(Theme.border.opacity(0.6)))
                 }
                 .accessibilityIdentifier(couldPayDebt ? "wasDebtPayment" : "wasLending")
-                .alert("Who did you lend it to?", isPresented: $askingName) {
+                .alert(record.kind == .expense ? "Who did you lend it to?" : "Who was it from?", isPresented: $askingName) {
                     TextField("Name", text: $personName).accessibilityIdentifier("personName")
                     Button("Cancel", role: .cancel) { personName = "" }
                     Button("Save") {
                         let name = personName.trimmingCharacters(in: .whitespaces)
                         personName = ""
                         guard !name.isEmpty else { return }
-                        problem = app.attempt("Recorded as money lent to \(name).") {
+                        problem = app.attempt(record.kind == .expense ? "Recorded as money lent to \(name)." : "Recorded as money from \(name).") {
                             let person = try app.store.lentAccount(named: name)
                             try app.store.recordAsLending(record.id, person: person.id)
                         }

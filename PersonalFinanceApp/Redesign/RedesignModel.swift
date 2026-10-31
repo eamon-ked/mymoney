@@ -116,6 +116,11 @@ extension Redesign {
         let kind: AccountKind
         let archived: Bool
         var isLiability: Bool { kind.isLiability }
+        /// A person you owe, rather than one who owes you
+        var youOwe: Bool { kind == .lent && balance < 0 }
+        /// What to show: people's balances are positive either way, with "Owes you" or "You owe" beside them
+        var shown: Decimal { kind == .lent ? abs(balance) : balance }
+        var caption: String { isLiability ? "You owe" : kind == .lent ? (youOwe ? "You owe" : "Owes you") : "Balance" }
         var reference: String { number.isEmpty ? Redesign.kindName(kind) : "•••• \(number)" }
     }
 
@@ -128,7 +133,7 @@ extension Redesign {
         case .loan: "Loan"
         case .investment: "Investment"
         case .otherAsset: "Other asset"
-        case .lent: "Money lent"
+        case .lent: "Person"
         case .income: "Income"
         case .expense: "Spending"
         case .equity: "Opening balances"
@@ -166,15 +171,19 @@ extension Redesign {
     /// The kinds of entry the add form makes
     enum FormKind: Hashable { case expense, income, transfer, adjustment, bill, expectedIncome }
 
-    enum LendAction: Hashable { case lend, repaid, forgive }
+    /// Money with a person: you lend or pay back (out), they pay back or lend you (in), or it's let go
+    enum LendAction: Hashable {
+        case lend, repaid, forgive, borrow, payBack
+        var isOut: Bool { self == .lend || self == .payBack }
+    }
 
     /// Everything a sheet can show; pushing one inside a sheet goes deeper
     enum Sheet: Hashable, Identifiable {
         case breakdown, whatHappened, review, schedules
-        case entry(FormKind), editEntry(UUID), editBill(UUID)
+        case entry(FormKind), editEntry(UUID), splitEntry(UUID), editBill(UUID)
         case account(UUID), bill(UUID), link(UUID), category(UUID), transaction(UUID)
         case payDebt(UUID, occurrence: UUID?), editDebtPayment(UUID), entryAsDebtPayment(UUID)
-        case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), lend(UUID, LendAction)
+        case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), lend(UUID?, LendAction)
         case importStatement(UUID?), newAccount(loan: Bool), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
         case loansInCategory(UUID), goal(UUID), reserve(UUID?, goal: Bool), goalMoney(UUID, adding: Bool)
         case payday, help, intelligence, ask, paywall(PlusFeature), billLink(UUID)
@@ -394,11 +403,15 @@ extension Redesign {
                 from = assets.first?.record.id
                 to = sheet.first { $0.record.kind.isLiability }?.record.id
             default:
-                let change = sheet.map(\.amount).sum(s.currency)
+                // A split bill's people only owe part back: what left your account is the amount.
+                // With no account of yours, a friend paid
+                let own = sheet.filter { $0.record.kind != .lent }
+                let paying = own.isEmpty ? sheet : own
+                let change = paying.map(\.amount).sum(s.currency)
                 amount = change.magnitude
                 flow = change.isNegative ? .out : .in
-                if record.kind == .expense, sheet.first?.record.kind.isLiability == true { flow = .out }
-                from = sheet.first?.record.id
+                if record.kind == .expense, paying.first?.record.kind.isLiability == true { flow = .out }
+                from = paying.first?.record.id
             }
             let (symbol, tone) = category.map(Self.look) ?? (record.kind == .transfer ? ("arrow.up.arrow.down", .green)
                 : record.kind == .debtPayment ? ("creditcard", .green) : ("slider.horizontal.3", .green))
@@ -668,7 +681,9 @@ extension Redesign {
                 else { "Transaction saved." }
             let problem = attempt(message, undo: original == nil ? { [store] in if let id { try store.void(id) } } : nil) {
                 id = try store.save(form, replacing: original)
-                if let account = form.accountId { try store.updateSettings { $0.lastUsedAccountId = account } }
+                if let account = form.accountId, snapshot.account(account)?.kind != .lent {
+                    try store.updateSettings { $0.lastUsedAccountId = account }
+                }
             }
             return problem
         }

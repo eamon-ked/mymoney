@@ -23,6 +23,9 @@ enum HomeTask: Identifiable {
     case review(count: Int)
     /// Budget money with no job yet, or planned beyond what there is when negative
     case unplanned(Money)
+    /// Money with a person that's past its pay-back date, or owed to you untouched for a month.
+    /// `balance` is theirs: positive when they owe you, negative when you owe them
+    case person(LedgerAccountRecord, balance: Money, due: Date?)
     case stale(LedgerAccountRecord)
     case backup(neverSaved: Bool)
 
@@ -35,6 +38,7 @@ enum HomeTask: Identifiable {
         case .noBudget: "noBudget"
         case .review: "review"
         case .unplanned: "unplanned"
+        case .person(let p, _, _): "person-\(p.id)"
         case .stale(let a): "stale-\(a.id)"
         case .backup: "backup"
         }
@@ -68,6 +72,8 @@ enum HomeTask: Identifiable {
             if !unplanned.isZero { tasks.append(.unplanned(unplanned)) }
         }
 
+        tasks += people(snapshot)
+
         tasks += snapshot.accounts.filter { a in
             guard a.kind.defaultSpendable || a.spendable else { return false }
             guard let d = snapshot.lastConfirmed[a.id] else { return true }
@@ -76,6 +82,27 @@ enum HomeTask: Identifiable {
 
         if needsBackup(snapshot) { tasks.append(.backup(neverSaved: snapshot.settings.lastBackupAt == nil)) }
         return tasks
+    }
+
+    /// Days without movement before money someone owes you gets a nudge
+    static let quietDays = 30
+
+    @MainActor static func people(_ snapshot: FinanceSnapshot) -> [HomeTask] {
+        snapshot.accounts.filter { $0.kind == .lent && !$0.archived }.compactMap { p in
+            let balance = snapshot.balance(p.id)
+            guard !balance.isZero else { return nil }
+            if let due = p.owedBackBy {
+                return snapshot.calendar.startOfDay(for: due) < snapshot.calendar.startOfDay(for: snapshot.today)
+                    ? .person(p, balance: balance, due: due) : nil
+            }
+            // The empty opening entry a new person gets isn't a movement
+            let last = snapshot.entryRecords.first {
+                $0.status == .posted && $0.kind != .openingBalance && $0.lines.contains { $0.accountId == p.id }
+            }?.date
+            guard balance.isPositive, let last,
+                  (snapshot.calendar.dateComponents([.day], from: last, to: snapshot.today).day ?? 0) > quietDays else { return nil }
+            return .person(p, balance: balance, due: nil)
+        }
     }
 
     /// Once there's real data, remind until a backup is saved, then monthly

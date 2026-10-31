@@ -52,6 +52,7 @@ extension Redesign {
             case .entry(.bill): "Add bill"
             case .entry(.expectedIncome): "Expected income"
             case .editEntry: "Edit transaction"
+            case .splitEntry: "Split it with others"
             case .editBill: "Edit"
             case .account(let id): app.accountLabel(id)
             case .category(let id): app.hidesDetails ? "Category" : app.category(id)?.name ?? "Category"
@@ -66,9 +67,13 @@ extension Redesign {
             case .reconcile: "Check against a statement"
             case .accountType: "Change type"
             case .startingAmount: "Starting amount"
+            case .lend(nil, .lend): "Lend money"
             case .lend(_, .lend): "Lend more"
-            case .lend(_, .repaid): "They paid some back"
+            case .lend(_, .repaid): "They paid you back"
             case .lend(_, .forgive): "They won't pay it back"
+            case .lend(nil, .borrow): "Someone lent you money"
+            case .lend(_, .borrow): "Borrow more"
+            case .lend(_, .payBack): "Pay them back"
             case .importStatement: "Import a statement"
             case .newAccount(let loan): loan ? "Add a loan or card" : "Add account"
             case .newCash: "Add cash"
@@ -97,6 +102,7 @@ extension Redesign {
             case .entry(.expectedIncome): BillForm(direction: .inflow, editing: nil)
             case .entry(let kind): EntryFormView(kind: kind)
             case .editEntry(let id): if let r = app.entry(id) { EntryFormView(editing: r) }
+            case .splitEntry(let id): if let r = app.entry(id) { EntryFormView(editing: r, splitting: true) }
             case .editBill(let id): if let item = app.item(id) { BillForm(direction: item.direction, editing: item) }
             case .account(let id): if let a = app.account(id) { AccountPage(account: a) }
             case .bill(let id): if let b = app.bill(id) { BillPage(bill: b) }
@@ -112,7 +118,7 @@ extension Redesign {
             case .reconcile(let id): if let a = app.record(id) { ReconcileForm(account: a) }
             case .accountType(let id): if let a = app.record(id) { AccountTypeForm(account: a) }
             case .startingAmount(let id): if let a = app.record(id) { StartingAmountForm(account: a) }
-            case .lend(let id, let action): if let a = app.record(id) { LendForm(person: a, action: action) }
+            case .lend(let id, let action): LendForm(person: app.record(id), action: action)
             case .importStatement(let id): ImportStatement(accountId: id)
             case .newAccount(let loan): AddAccountForm(startsWithLoan: loan)
             case .newCash: AddAccountForm(startsWithLoan: false, startKind: .cash)
@@ -514,6 +520,14 @@ extension Redesign {
                         }
                     }
                     .rdPanel(padding: 14)
+                }
+                choice("I lent someone money", "A friend or family member will pay it back", "person.2",
+                       id: "add-I lent someone money") { app.open(.lend(nil, .lend)) }
+                choice("Someone lent me money", "Money you'll pay back", "person.crop.circle.badge.plus",
+                       id: "add-Someone lent me money") { app.open(.lend(nil, .borrow)) }
+                if app.lent.contains(where: { $0.balance > 0 }) {
+                    choice("Someone paid me back", "Some or all of what they owe you", "arrow.down.left",
+                           id: "add-Someone paid me back") { app.open(.lend(nil, .repaid)) }
                 }
                 choice("I moved money between my accounts", "Nothing spent, nothing earned", "arrow.up.arrow.down",
                        id: "add-I moved money between my accounts") { app.open(.entry(.transfer)) }

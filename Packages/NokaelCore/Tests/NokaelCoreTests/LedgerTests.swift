@@ -28,6 +28,29 @@ struct LedgerTests {
     let f = Fixture()
     let d = Fixture.date(2026, 10, 1)
 
+    @Test("A split bill: the account pays it all, the category takes your share, people owe the rest")
+    func splitExpense() throws {
+        let sam = AccountInfo(name: "Sam", kind: .lent, currency: "AED")
+        let alex = AccountInfo(name: "Alex", kind: .lent, currency: "AED")
+        let e = try EntryFactory.splitExpense(Fixture.aed(300), from: f.current, category: f.groceries,
+                                              shares: [(sam, Fixture.aed(100)), (alex, Fixture.aed(100))], date: d)
+        #expect(e.kind == .expense)
+        #expect(e.amount(on: f.current.id) == Fixture.aed(-300))
+        #expect(e.amount(on: f.groceries.id) == Fixture.aed(100))
+        #expect(e.amount(on: sam.id) == Fixture.aed(100))
+        #expect(e.amount(on: alex.id) == Fixture.aed(100))
+        // Others can't take the whole bill, and only people can share it
+        #expect(throws: LedgerError.self) {
+            try EntryFactory.splitExpense(Fixture.aed(200), from: f.current, category: f.groceries, shares: [(sam, Fixture.aed(200))], date: d)
+        }
+        #expect(throws: LedgerError.self) {
+            try EntryFactory.splitExpense(Fixture.aed(200), from: f.current, category: f.groceries, shares: [(f.savings, Fixture.aed(50))], date: d)
+        }
+        // No shares is a plain expense
+        let plain = try EntryFactory.splitExpense(Fixture.aed(50), from: f.current, category: f.groceries, shares: [], date: d)
+        #expect(plain.lines.count == 2)
+    }
+
     @Test func everyEntryBalances() throws {
         let bad = Entry(kind: .expense, date: d, lines: [Line(accountId: f.current.id, amount: Fixture.aed(-10))])
         #expect(throws: LedgerError.unbalanced(Fixture.aed(-10))) { try EntryFactory.validate(bad) }

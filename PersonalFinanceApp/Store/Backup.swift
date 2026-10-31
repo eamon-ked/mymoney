@@ -118,6 +118,7 @@ struct AccountDTO: Codable {
     /// Added later; older backups have none. An unknown category falls back to Loan payments.
     var debtCategoryId: UUID?
     var systemRole: String?
+    var owedBackBy: Date?
     var group: String
     var policyRaw: String
     var reserveInSafeToSpend: Bool
@@ -129,7 +130,7 @@ struct AccountDTO: Codable {
         spendable = r.spendable; onBudget = r.onBudget; archived = r.archived; isSystem = r.isSystem; sortOrder = r.sortOrder
         colorHex = r.colorHex; icon = r.icon; institution = r.institution; lastReconciledAt = r.lastReconciledAt
         debtRateBps = r.debtRateBps; debtPaymentMinor = r.debtPaymentMinor; debtDueDay = r.debtDueDay
-        debtCategoryId = r.debtCategoryId; systemRole = r.systemRole
+        debtCategoryId = r.debtCategoryId; systemRole = r.systemRole; owedBackBy = r.owedBackBy
         group = r.group; policyRaw = r.policyRaw; reserveInSafeToSpend = r.reserveInSafeToSpend
         createdAt = r.createdAt; updatedAt = r.updatedAt
     }
@@ -141,7 +142,7 @@ struct AccountDTO: Codable {
         r.institution = institution; r.lastReconciledAt = lastReconciledAt; r.debtRateBps = debtRateBps
         r.debtPaymentMinor = debtPaymentMinor; r.debtDueDay = debtDueDay; r.group = group; r.policyRaw = policyRaw
         r.reserveInSafeToSpend = reserveInSafeToSpend; r.createdAt = createdAt; r.updatedAt = updatedAt
-        r.debtCategoryId = debtCategoryId; r.systemRole = systemRole
+        r.debtCategoryId = debtCategoryId; r.systemRole = systemRole; r.owedBackBy = owedBackBy
         return r
     }
 }

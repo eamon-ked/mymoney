@@ -48,7 +48,7 @@ Status:
 
 | Feature | Was | New home | Status |
 |---|---|---|---|
-| Groups by kind | Accounts tab | "Your money" (cash, bank, savings, investment, other), "What you owe" (cards, loans), "Owed to you" (money lent) | In design + Added (Owed to you) |
+| Groups by kind | Accounts tab | "Your money" (cash, bank, savings, investment, other), "What you owe" (cards, loans), "People" (friends and family, either way) | In design + Added (People) |
 | Net worth | Accounts banner | Total Cash card's breakdown: owned, owed, net worth | Added |
 | Add account (bank, cash, savings, investment, lent, other) | `NewAccountSheet` | + on Accounts: the Add Account form, with every kind | In design |
 | Add loan or credit card (lender, owed, payment, due day, paid from, rate, category) | `NewLoanSheet` | Add Account form: choosing Loan or Credit card shows those fields | Added |
@@ -64,7 +64,11 @@ Status:
 | Payoff (debt-free date, payments left, interest) | `PayoffSummary` | Card and loan pages | Added |
 | Pay extra planner (Plus) | `PayoffComparison` | Card and loan pages, under Payoff | Added |
 | Pay a card or loan, split into principal, interest and fees | `PayDebtSheet` | Card page "Make a Repayment" and loan page "Make a payment" | In design + Added (split) |
-| Money lent: lend more, paid back, forgive | `LentSection` | Account page for someone you lent to | Added |
+| Money with a person, both ways: lend, paid back, forgive; borrow, pay back | `LentSection` | A person's page, its actions following who owes whom; What happened? › I lent someone money / Someone lent me money / Someone paid me back; + on Accounts › Lend Money | Added |
+| Lend from a credit card | — | Lend form › From lists cards | Added |
+| Split a bill with friends | — | Expense form › Split with others (Split evenly, new names allowed); only your share is spending | Added |
+| A bill a friend paid for you | — | Expense form › Paid from › the person; your spending, and you owe them | Added |
+| Pay-back-by date and reminders | — | Lend form and person details; Needs you on Home when the date passes, or after 30 quiet days of being owed | Added |
 
 ## Budget
 
@@ -127,7 +131,7 @@ Status:
 | Debt payment parts | `EntryDetailView` | Transaction page | Added |
 | Review a captured entry; always use an account for a card | `EntryDetailView` | Transaction page | Added |
 | It was a loan or card payment | `EntryDetailView` | Transaction page › More | Added |
-| I lent this / it was paid back to me | `EntryDetailView` | Transaction page › More | Added |
+| I lent this / it came from a person / split it with others | `EntryDetailView` | Transaction page › It was something else | Added |
 | Change history for an entry | `EntryDetailView` | Transaction page | Added |
 | Payday (salary, budget copy, goals) | `PaydaySheet` | "What happened?" › I got my salary; Needs you on payday; Help | Added |
 

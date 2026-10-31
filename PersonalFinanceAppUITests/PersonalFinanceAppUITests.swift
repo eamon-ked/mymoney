@@ -142,6 +142,49 @@ final class JourneyUITests: XCTestCase {
         expect("AED 11,915", "The account is down by 85, once")
     }
 
+    /// Lending starts from What happened?, and a new name becomes a person under People
+    @MainActor
+    func testLendToSomeoneNew() {
+        launch(["-uiTesting"])
+        completeSetup()
+        app.buttons["globalAdd"].tap()
+        app.buttons["More…"].tap()
+        tapScrolling(app.buttons["add-I lent someone money"], "I lent someone money")
+        type("Sam", into: "personName")
+        type("200", into: "lentAmount")
+        tapScrolling(app.buttons["saveLent"], "Save")
+        waitUntilGone(app.textFields["lentAmount"])
+        tab("Accounts")
+        expect("PEOPLE", "People have their own group")
+        expect("Owes you", "Sam owes the money back")
+        expect("AED 11,800", "The account is down by 200")
+    }
+
+    /// A 300 dinner split evenly three ways: the account pays 300, each friend owes 100
+    @MainActor
+    func testSplitABill() {
+        launch(["-uiTesting"])
+        completeSetup()
+        app.buttons["globalAdd"].tap()
+        app.buttons["Add Expense"].tap()
+        type("300", into: "amountField")
+        choose("Groceries", in: "Category")
+        let toggle = app.switches["splitToggle"].firstMatch
+        tapScrolling(toggle.exists ? toggle : app.descendants(matching: .any)["splitToggle"].firstMatch, "Split")
+        let names = app.textFields.matching(identifier: "shareName")
+        XCTAssertTrue(names.firstMatch.waitForExistence(timeout: 3), "A share row appears")
+        names.element(boundBy: 0).tap(); names.element(boundBy: 0).typeText("Sam")
+        tapScrolling(app.buttons["addShare"], "Add person")
+        names.element(boundBy: 1).tap(); names.element(boundBy: 1).typeText("Alex")
+        tapScrolling(app.buttons["splitEvenly"], "Split evenly")
+        expect("Your share AED 100", "Each pays a third")
+        tapScrolling(app.buttons["saveEntry"], "Save")
+        waitUntilGone(app.textFields["amountField"])
+        tab("Accounts")
+        expect("AED 11,700", "The account paid the whole bill")
+        expect("PEOPLE", "Sam and Alex are under People")
+    }
+
     // MARK: - Demo household
 
     @MainActor

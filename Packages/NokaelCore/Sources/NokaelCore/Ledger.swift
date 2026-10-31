@@ -214,6 +214,25 @@ public enum EntryFactory {
         return try make(.debtPayment, date: date, memo: memo, key: key, occurrenceId: occurrenceId, lines: lines)
     }
 
+    /// A bill paid in full for a group: the account drops by the whole amount, the category
+    /// takes your share, and each person's share becomes what they owe you
+    public static func splitExpense(_ total: Money, from account: AccountInfo, category: AccountInfo,
+                                    shares: [(person: AccountInfo, amount: Money)], date: Date, memo: String = "",
+                                    key: UUID = UUID(), occurrenceId: UUID? = nil) throws -> Entry {
+        guard !shares.isEmpty else {
+            return try expense(total, from: account, category: category, date: date, memo: memo, key: key, occurrenceId: occurrenceId)
+        }
+        guard total.isPositive, shares.allSatisfy({ $0.amount.isPositive }) else { throw LedgerError.amountMustBePositive }
+        guard account.kind.isBalanceSheet, account.kind != .lent else { throw LedgerError.wrongAccountKind("Pay from an account") }
+        guard category.kind == .expense else { throw LedgerError.wrongAccountKind("Choose a spending category") }
+        guard shares.allSatisfy({ $0.person.kind == .lent }) else { throw LedgerError.wrongAccountKind("Split with people") }
+        let mine = total - shares.map(\.amount).sum(total.currency)
+        guard mine.isPositive else { throw LedgerError.wrongAccountKind("Others' shares must be less than the total") }
+        var lines = [Line(accountId: account.id, amount: -total), Line(accountId: category.id, amount: mine)]
+        lines += shares.map { Line(accountId: $0.person.id, amount: $0.amount) }
+        return try make(.expense, date: date, memo: memo, key: key, occurrenceId: occurrenceId, lines: lines)
+    }
+
     private static func make(_ kind: EntryKind, date: Date, memo: String, key: UUID,
                              occurrenceId: UUID? = nil, lines: [Line]) throws -> Entry {
         let entry = Entry(kind: kind, date: date, memo: memo, lines: lines, idempotencyKey: key, occurrenceId: occurrenceId)

@@ -210,10 +210,10 @@ final class StatementReview {
                 Option(target: .transfer($0.id), title: $0.name, symbol: $0.icon)
             }))
         }
-        // Money lent isn't spending, and money paid back isn't income
+        // Money with friends isn't spending or income: it moves what they owe you, or what you owe them
         let people = snapshot.accounts.filter { $0.id != accountId && $0.kind == .lent && !$0.archived }
         if !people.isEmpty {
-            groups.append((out ? "Lent to" : "Paid back by", people.map {
+            groups.append((out ? "To a person" : "From a person", people.map {
                 Option(target: .transfer($0.id), title: $0.name, symbol: $0.icon)
             }))
         }
@@ -226,7 +226,7 @@ final class StatementReview {
         case .category(let id): return snapshot.account(id)?.name
         case .transfer(let id):
             return snapshot.account(id).map {
-                $0.kind == .loan ? "Pays \($0.name)" : $0.kind == .lent ? "Money lent · \($0.name)" : "Transfer · \($0.name)"
+                $0.kind == .loan ? "Pays \($0.name)" : $0.kind == .lent ? "\(row.amount.isNegative ? "To" : "From") \($0.name)" : "Transfer · \($0.name)"
             }
         case .bill(let occId):
             return snapshot.occurrences.first { $0.id == occId }.flatMap(snapshot.item(for:)).map { "Pays \($0.name)" }

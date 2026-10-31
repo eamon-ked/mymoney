@@ -317,7 +317,8 @@ extension Redesign {
         /// The screen's own job on top, then the three transactions, so those are always in the same place
         private var items: [Item] {
             let own: [Item] = switch app.createAction {
-            case .account: [Item(label: "Add Cash", symbol: "banknote", sheet: .newCash),
+            case .account: [Item(label: "Lend Money", symbol: "person.2", sheet: .lend(nil, .lend)),
+                            Item(label: "Add Cash", symbol: "banknote", sheet: .newCash),
                             Item(label: "Add Account", symbol: "creditcard", sheet: .newAccount(loan: false))]
             case .category: [Item(label: "Add Category", symbol: "square.grid.2x2", sheet: .newCategory)]
             case .bill: [Item(label: "Add Expected Income", symbol: "arrow.down.circle", sheet: .entry(.expectedIncome)),

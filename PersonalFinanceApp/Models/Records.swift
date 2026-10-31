@@ -387,6 +387,8 @@ final class SettingsRecord {
     var bankSenders: [String] = []
     /// Budget categories shown on Home, in the order they were pinned
     var pinnedCategoryIds: [UUID] = []
+    /// The person's first name, for Home's greeting; empty until they give it
+    var displayName: String = ""
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {
         self.currency = currency

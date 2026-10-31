@@ -58,15 +58,11 @@ struct NokaelMoneyApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Redesign.AppRoot(store: store, plus: plus)
                 .modifier(AppDuties(store: store, plus: plus))
                 .environment(store)
                 .environment(plus)
                 .modelContainer(container)
-                #if DEBUG
-                // Screenshot helper: -appearance dark|light
-                .preferredColorScheme(["dark": .dark, "light": .light][UserDefaults.standard.string(forKey: "appearance") ?? ""])
-                #endif
         }
     }
 }

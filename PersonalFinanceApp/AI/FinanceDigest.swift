@@ -98,7 +98,7 @@ struct FinanceDigest: Sendable {
         netWorth = (worth.assets - worth.liabilities).compact
 
         accounts = snapshot.accounts.map {
-            Account(name: $0.name, kind: AccountStyle.name(for: $0.kind),
+            Account(name: $0.name, kind: Redesign.kindName($0.kind),
                     balance: snapshot.balance($0.id).compact, spendable: $0.spendable)
         }
 
@@ -164,7 +164,7 @@ struct FinanceDigest: Sendable {
             "\(item.name): \(item.amount.compact)\(item.isEstimate ? " (estimate)" : ""), \(item.schedule.frequency.label.lowercased()), \(next(item))"
         }
         debts = snapshot.debts.map { debt in
-            var line = "\(debt.name) (\(AccountStyle.name(for: debt.kind))): owe \(snapshot.owed(debt.id).compact)"
+            var line = "\(debt.name) (\(Redesign.kindName(debt.kind))): owe \(snapshot.owed(debt.id).compact)"
             if let terms = debt.debtTerms { line += ", interest \(terms.rateText), monthly payment \(terms.monthlyPayment.compact)" }
             switch snapshot.payoff(for: debt) {
             case .paidOff(_, let last, let interest, _)?:

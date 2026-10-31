@@ -76,6 +76,7 @@ struct SettingsDTO: Codable {
     var bankRegion: String?
     var bankSenders: [String]?
     var pinnedCategoryIds: [UUID]?
+    var displayName: String?
 
     init(_ r: SettingsRecord) {
         currency = r.currency; localeIdentifier = r.localeIdentifier; firstWeekday = r.firstWeekday
@@ -83,6 +84,7 @@ struct SettingsDTO: Codable {
         onboardingDone = r.onboardingDone; payFrequencyData = r.payFrequencyData; lastUsedAccountId = r.lastUsedAccountId
         biometricLock = r.biometricLock; lastBackupAt = r.lastBackupAt
         bankRegion = r.bankRegion; bankSenders = r.bankSenders; pinnedCategoryIds = r.pinnedCategoryIds
+        displayName = r.displayName
     }
 
     func apply(to r: SettingsRecord) {
@@ -91,6 +93,7 @@ struct SettingsDTO: Codable {
         r.onboardingDone = onboardingDone; r.payFrequencyData = payFrequencyData; r.lastUsedAccountId = lastUsedAccountId
         r.biometricLock = biometricLock; r.lastBackupAt = lastBackupAt
         r.bankRegion = bankRegion; r.bankSenders = bankSenders ?? []; r.pinnedCategoryIds = pinnedCategoryIds ?? []
+        r.displayName = displayName ?? ""
     }
 }
 

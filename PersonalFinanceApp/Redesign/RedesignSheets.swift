@@ -151,6 +151,8 @@ extension Redesign {
         var owed: Decimal?
         var autofocus = true
         var identifier = "amountField"
+        /// Off where the screen's own button already sits above the keyboard; the bar would cover it
+        var keyboardDone = true
         @Environment(AppModel.self) private var app
         @FocusState private var focused: Bool
         @State private var revealed = false
@@ -182,7 +184,7 @@ extension Redesign {
                 .accessibilityIdentifier(identifier)
                 .toolbar {
                     // The number pad has no return key; this puts the form's buttons back in reach
-                    if focused {
+                    if focused && keyboardDone {
                         ToolbarItemGroup(placement: .keyboard) {
                             Spacer()
                             Button("Done") { focused = false }.fontWeight(.semibold)

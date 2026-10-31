@@ -90,23 +90,38 @@ final class JourneyUITests: XCTestCase {
     /// Onboarding with one account and no optional steps
     private func completeSetup(balance: String = "12000") {
         app.buttons["getStarted"].tap()
-        app.buttons["continue"].tap()
-        app.buttons["newAccount"].tap()
-        type("Current account", into: "accountName")
         type(balance, into: "openingBalance")
-        app.buttons["addAccount"].tap()
-        waitUntilGone(app.textFields["accountName"])
         app.buttons["continue"].tap()
         let skip = app.buttons["skip"]
         XCTAssertTrue(skip.waitForExistence(timeout: 5))
         skip.tap()
+        let noBills = app.buttons["continue"]
+        XCTAssertTrue(noBills.waitForExistence(timeout: 5))
+        noBills.tap()
+        // Setup ends on what's safe to spend
+        XCTAssertTrue(app.descendants(matching: .any)["setupSafeToSpend"].waitForExistence(timeout: 5))
+        app.buttons["finish"].tap()
+    }
+
+    /// The full setup: pay, then a bill picked from the common ones, then the result
+    @MainActor
+    func testSetupWithPayAndBill() {
+        launch(["-uiTesting"])
+        app.buttons["getStarted"].tap()
+        type("12000", into: "openingBalance")
         app.buttons["continue"].tap()
-        XCTAssertTrue(element("Plan the essentials").waitForExistence(timeout: 5))
-        // The last step ends on what's actually free to spend, below the essentials
-        let finish = app.buttons["finish"]
-        for _ in 0..<4 where !finish.isHittable { app.swipeUp() }
-        XCTAssertTrue(element("Safe to spend").exists)
-        finish.tap()
+        type("8000", into: "amountField")
+        app.buttons["continue"].tap()
+        let rent = app.buttons["Rent"]
+        XCTAssertTrue(rent.waitForExistence(timeout: 5), "Common bills are offered")
+        rent.tap()
+        type("1200", into: "billAmount")
+        app.buttons["addBill"].tap()
+        expect("AED 1,200", "The bill is listed once, at the amount typed")
+        app.buttons["continue"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["setupSafeToSpend"].waitForExistence(timeout: 5))
+        app.buttons["finish"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["safeToSpend"].waitForExistence(timeout: 5), "Setup ends on Home")
     }
 
     @MainActor

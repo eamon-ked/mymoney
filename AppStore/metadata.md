@@ -1,4 +1,4 @@
-# App Store Metadata — Nokael Money 2.0
+# App Store Metadata — Nokael Money 2.1.3
 
 Each field sits in its own fenced block so it can be copied into App Store Connect as is. Character counts are checked by script (see the end of this file).
 
@@ -17,15 +17,13 @@ Expense, Bills & Savings Goals
 ## Keywords (100 max)
 
 ```
-planner,spending,finance,salary,aed,dirham,uae,debt,loan,payoff,forecast,bank,statement,widget
+expense,tracker,manager,cashflow,forecast,payday,debt,loan,bills,reconcile,ai,local,goals,planner
 ```
-
-`money` was dropped from the suggested list because it is already in the name (Apple indexes name words, so repeating them wastes space).
 
 ## Promotional Text (170 max)
 
 ```
-Know what's safe to spend today. Plan your budget, never miss a bill, pay off debt faster and grow your savings, all private and on your iPhone. No account needed.
+Know what's safe to spend today. Track every account, split bills with friends and never miss a bill, all private and on your iPhone. No account needed.
 ```
 
 ## Description (4,000 max)
@@ -33,54 +31,53 @@ Know what's safe to spend today. Plan your budget, never miss a bill, pay off de
 ```
 Know exactly what's safe to spend today.
 
-Nokael Money is a simple, private budget tracker for your iPhone. It looks at your balance, your upcoming bills and your savings goals, then tells you one clear number: how much you can spend without falling short. No spreadsheets, no account, no sign-in.
+Nokael Money is a calm, private money app for your iPhone. It looks at your accounts, your upcoming bills and your savings, then tells you one clear number: how much you can spend without falling short. No spreadsheets, no account, no sign-in.
 
 SAFE TO SPEND
-Open the app and see what you can spend today and for the rest of the month. Bills that are coming up and money set aside for goals are already taken out, so the number you see is the number you can trust.
+Open the app and see what you can spend until payday, this week or until the end of the month. Bills that are coming up and money set aside for goals are already taken out, so the number you see is the number you can trust.
+
+ALL YOUR ACCOUNTS
+Bank accounts, cash, savings, credit cards, loans and investments, each on its own card. See what you have, what you owe and your net worth at a glance.
+
+MONEY WITH FRIENDS
+Split a dinner, lend a friend some money or note who paid for you. Each person has a card that shows who owes whom, and only your share counts as spending.
 
 BUDGET
-Give every dirham a job. Set an amount for each category, track spending as you go and move money between categories when plans change. You can see at a glance where you are on track and where you are over.
+Give your money a job. Set an amount for each category, track spending as you go and move money between categories when plans change.
 
 BILLS AND REMINDERS
 Add rent, phone, subscriptions and anything else that repeats. Nokael Money reminds you before each bill is due, so nothing slips through.
 
 DEBTS AND LOANS
-Track credit cards, car loans and personal loans. Every payment is split into interest and principal, so you can see how much of your money is actually paying the debt down. With Nokael Plus, see how much sooner you'd be debt-free, and how much interest you'd save, by paying a little extra each month.
+Track credit cards, car loans and personal loans. Every payment is split into interest and principal, so you can see how much is actually paying the debt down.
 
 SAVINGS GOALS
-Saving for a trip, an emergency fund or a new phone? Set a target and a date and watch your progress grow. Your first goal is free; Nokael Plus unlocks as many as you like.
+Saving for a trip, an emergency fund or a new phone? Set a target and a date and watch your progress grow.
 
-MONEY AHEAD (Plus)
-See where your balance is heading. Money ahead uses your salary and bills to show your balance day by day for up to 90 days, so you can spot a tight week before it arrives.
+REPORTS
+Clear charts show where your money goes each month and how your spending changes over time.
 
-REPORTS (Plus)
-Clear charts show where your money goes each month, how your spending changes over time and which categories are growing.
-
-BANK STATEMENT IMPORT (Plus)
-Import a CSV statement from your bank and add months of transactions in seconds, instead of typing them in one by one.
-
-HOME SCREEN WIDGET (Plus)
-Keep your safe-to-spend amount on your home screen and check it without opening the app.
-
-APPLE INTELLIGENCE (Plus)
-On supported iPhones, type "lunch 45 with Sara" and Apple Intelligence fills in the entry for you. It suggests categories, sums up your month in plain words and answers questions about your spending. It all runs on your device, so your data stays with you.
+APPLE INTELLIGENCE
+On supported iPhones, type "lunch 45 with Sara" and the entry is filled in for you. Ask questions about your spending and get answers in plain words. It runs on your device, so your data stays with you.
 
 BACKUPS AND EXPORT
-Save a full backup file wherever you like, such as the Files app or iCloud Drive, and restore it any time. With Nokael Plus, export your transactions as a CSV file too.
+Save a full backup file wherever you like, such as the Files app or iCloud Drive, and restore it any time. Export your transactions as a CSV file.
 
 PRIVATE BY DESIGN
 • Your data stays on your iPhone. There is no account and no server.
 • We don't collect, see or share anything. No ads and no tracking.
-• Lock the app with Face ID if you like.
+• Lock the app with Face ID and hide amounts with Privacy Mode.
 
 NOKAEL PLUS
-Nokael Money is free to download and use for everyday budgeting. Nokael Plus unlocks statement import, Apple Intelligence, Money ahead, reports, the widget, unlimited goals, payoff comparison and CSV export.
+Nokael Money is free for everyday budgeting, and Free keeps the whole picture: accounts, budgets, bills, debts, safe to spend, 3 savings goals, 3 months of reports and your first statement import for each account. Nokael Plus saves you work and looks further ahead:
+• Automatic capture of Apple Pay purchases and bank SMS alerts with Shortcuts
+• Money ahead: your balance day by day for up to 90 days
+• Pay-extra plans that show how much sooner you'd be debt-free
+• Unlimited statement imports, savings goals and Apple Intelligence
+• Every month of reports, a 6-month trend and a month story
+• A home screen widget
 
-• Monthly: AED 14.99 a month
-• Yearly: AED 99.99 a year, with a 1-week free trial
-• Lifetime: AED 249.99, one payment
-
-Prices may vary by country. Payment is charged to your Apple account. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. You can manage or cancel your subscription in your Apple account settings.
+Plus is available monthly, yearly (with a 1-week free trial) or as a one-time lifetime purchase. Payment is charged to your Apple account. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. You can manage or cancel your subscription in your Apple account settings.
 
 Nokael Money gives budgeting information only. It is not financial, tax or investment advice.
 
@@ -88,20 +85,17 @@ Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Privacy Policy: https://mymoney-legal-docs.pages.dev/privacy-policy.html
 ```
 
-## What's New in Version 2.0 (4,000 max)
+## What's New in Version 2.1.3 (4,000 max)
 
 ```
-Nokael Money 2.0 is a complete rebuild, made from the ground up to be simpler, faster and fully private.
+A whole new Nokael Money: redesigned from top to bottom to be calmer and easier to use.
 
-• Safe to spend: one clear number for what you can spend today
-• A new budget with categories you can fund and move between
-• Bills with reminders before they're due
-• Debts with every payment split into interest and principal
-• Savings goals with progress you can see
-• Everything stays on your iPhone. No account, no sign-in, no server
-• Backups you can save wherever you like
-
-New with Nokael Plus: bank statement import, Apple Intelligence, Money ahead forecasts, reports, a home screen widget, unlimited goals, payoff comparison and CSV export.
+• A new look, with Home, Accounts, Budget and Bills one tap away and a + on every tab
+• Accounts as cards, each with its own colour
+• Money with friends: split a bill, lend money or note who paid for you, and see who owes whom
+• Safe to spend for payday, the week or the month, with a clear breakdown
+• "Needs you" on Home lists only what's worth doing next
+• More for free: export, 3 savings goals, 3 months of reports and your first statement import for each account
 ```
 
 ## URLs
@@ -120,15 +114,15 @@ New with Nokael Plus: bank statement import, Apple Intelligence, Money ahead for
 
 ## Character counts
 
-Checked with a script on 26 October 2026:
+Checked with a script on 31 October 2026:
 
 | Field | Characters | Limit | Status |
 | --- | --- | --- | --- |
 | Name | 29 | 30 | OK |
 | Subtitle | 30 | 30 | OK |
-| Keywords | 94 | 100 | OK |
-| Promotional Text | 163 | 170 | OK |
-| Description | 3535 | 4000 | OK |
-| What's New in Version 2.0 | 655 | 4000 | OK |
+| Keywords | 97 | 100 | OK |
+| Promotional Text | 152 | 170 | OK |
+| Description | 3382 | 4000 | OK |
+| What's New in Version 2.1.3 | 557 | 4000 | OK |
 
-Keywords: 14 terms, no spaces, duplicates: none, words shared with name/subtitle: none.
+Keywords: 14 terms, no spaces.

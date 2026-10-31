@@ -548,7 +548,7 @@ extension Redesign {
                 VStack(alignment: .leading, spacing: 14) {
                     // The ready-made shortcut listens for one keyword; everywhere else it's set up by hand with the local keyword
                     if BankSenders.keyword(region: region) == Self.bankAlertShortcutKeyword {
-                        Button("Add the bank alerts automation") { openURL(Self.bankAlertShortcut) }
+                        Button("Add the bank alerts automation") { Task { openURL(await Self.resolved(Self.bankAlertShortcut)) } }
                             .buttonStyle(PrimaryButtonStyle())
                             .accessibilityIdentifier("addBankAutomation")
                         Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs whenever a message mentions \(Self.bankAlertShortcutKeyword).")
@@ -598,9 +598,20 @@ extension Redesign {
             }
         }
 
-        /// A shared shortcut carrying the Message trigger and the Read Bank Message action
+        /// A shared shortcut carrying the Message trigger and the Read Bank Message action. The link
+        /// goes through our site (legal-docs/_redirects), so a new version ships without an app update.
         static let bankAlertShortcutKeyword = "AED"
-        static let bankAlertShortcut = URL(string: "https://www.icloud.com/shortcuts/fed66c38583b44b5a58eb557cda7d879")!
+        static let bankAlertShortcut = URL(string: "https://mymoney-legal-docs.pages.dev/s/bank-alerts")!
+
+        /// Where our redirect points now. Opened directly, an iCloud shortcut link goes straight to
+        /// Shortcuts; reached through a redirect in Safari it stops on the web page instead.
+        static func resolved(_ url: URL) async -> URL {
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
+            request.httpMethod = "HEAD"
+            guard let (_, response) = try? await URLSession.shared.data(for: request),
+                  let final = response.url, final.host != url.host else { return url }
+            return final
+        }
 
         private var manualSteps: [String] {
             [

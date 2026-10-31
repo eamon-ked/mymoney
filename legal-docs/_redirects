@@ -1,0 +1,6 @@
+# Links the app opens for its ready-made shortcuts. Change the target here to
+# ship a new version of a shortcut; installed copies of the app follow it.
+# While one isn't ready, point it at /shortcuts/coming-soon.html instead.
+# 302, not 301, so phones never cache the old target.
+
+/s/bank-alerts  https://www.icloud.com/shortcuts/fed66c38583b44b5a58eb557cda7d879  302

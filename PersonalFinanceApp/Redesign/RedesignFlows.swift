@@ -669,7 +669,7 @@ extension Redesign {
 #if DEBUG
 extension Redesign {
     /// Screenshot helpers: -tab budget|accounts|bills|more|activity|reports and
-    /// -screen forecast|reports|payday|choose|guide|capture|settings|add [-addKind income]|ask|debtpay|loan|paywall|import
+    /// -screen forecast|reports|payday|choose|guide|capture|settings|add [-addKind income]|ask|debtpay|loan|paywall|import|person
     enum DebugScreens {
         @MainActor static func open(in app: AppModel) {
             let defaults = UserDefaults.standard
@@ -697,6 +697,8 @@ extension Redesign {
             case "paywall": app.open(.paywall(.statementImport))
             case "debtpay":
                 if let paid = s.entryRecords.first(where: { $0.kind == .debtPayment && $0.status == .posted }) { app.open(.transaction(paid.id)) }
+            case "person":
+                if let person = s.accountRecords.first(where: { $0.kind == .lent && $0.name == "Maya" }) { app.open(.account(person.id)) }
             case "import":
                 if let account = s.accounts.first(where: \.spendable) { app.open(.importStatement(account.id)) }
             default: break

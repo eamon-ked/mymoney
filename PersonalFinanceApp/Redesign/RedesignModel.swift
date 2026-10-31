@@ -406,7 +406,9 @@ extension Redesign {
         func item(_ id: UUID?) -> PlannedItem? { snapshot.items.first { $0.id == id } }
 
         func transactions(touching accountId: UUID) -> [Transaction] {
-            transactions.filter { $0.accountId == accountId || $0.destinationId == accountId }
+            // Any line counts, so a person's share of a split bill shows on their page
+            let posted = Set(snapshot.ledger.runningBalance(of: accountId).map(\.entry.id))
+            return transactions.filter { $0.accountId == accountId || $0.destinationId == accountId || posted.contains($0.id) }
         }
 
         private func transaction(_ record: EntryRecord, in s: FinanceSnapshot) -> Transaction {

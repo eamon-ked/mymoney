@@ -300,6 +300,7 @@ extension Redesign {
 extension Redesign {
     struct AddAccountForm: View {
         let startsWithLoan: Bool
+        var startKind: AccountKind?
         @Environment(AppModel.self) private var app
         @State private var kind: AccountKind = .bank
         @State private var name = ""
@@ -355,7 +356,7 @@ extension Redesign {
                     .accessibilityIdentifier(kind.isLiability ? "saveLoan" : "addAccount")
             }
             .onAppear {
-                if startsWithLoan { kind = .loan }
+                if startsWithLoan { kind = .loan } else if let startKind { kind = startKind }
                 fundingId = app.moneyAccounts.first { $0.id == app.store.settings.lastUsedAccountId }?.id ?? app.moneyAccounts.first?.id
             }
         }

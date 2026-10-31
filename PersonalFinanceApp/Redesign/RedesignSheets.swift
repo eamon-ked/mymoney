@@ -71,6 +71,7 @@ extension Redesign {
             case .lend(_, .forgive): "They won't pay it back"
             case .importStatement: "Import a statement"
             case .newAccount(let loan): loan ? "Add a loan or card" : "Add account"
+            case .newCash: "Add cash"
             case .newCategory: "New budget category"
             case .editCategory: "Edit category"
             case .moveMoney: "Move money"
@@ -114,6 +115,7 @@ extension Redesign {
             case .lend(let id, let action): if let a = app.record(id) { LendForm(person: a, action: action) }
             case .importStatement(let id): ImportStatement(accountId: id)
             case .newAccount(let loan): AddAccountForm(startsWithLoan: loan)
+            case .newCash: AddAccountForm(startsWithLoan: false, startKind: .cash)
             case .newCategory: CategoryForm(editing: nil)
             case .editCategory(let id): CategoryForm(editing: app.record(id))
             case .moveMoney(let id): MoveMoneyForm(destination: id)
@@ -324,32 +326,27 @@ extension Redesign {
 extension Redesign {
     struct Breakdown: View {
         @Environment(AppModel.self) private var app
-        @State private var period = "Until payday"
-        @State private var pickedDate = Date()
         @State private var bufferText = ""
 
-        private var end: Date {
-            let s = app.snapshot
-            switch period {
-            case "7 days": return s.endOfDay(s.calendar.date(byAdding: .day, value: 7, to: s.today) ?? s.today)
-            case "Month end":
-                let start = BudgetMonth.start(of: s.monthKey, calendar: s.calendar) ?? s.today
-                return s.endOfDay(s.calendar.date(byAdding: DateComponents(month: 1, day: -1), to: start) ?? s.today)
-            case "A date": return s.endOfDay(pickedDate)
-            default: return s.defaultPeriodEnd
-            }
+        private var end: Date { app.safeToSpend.periodEnd }
+
+        /// The pills set the app's period, so Home shows the same figure
+        private var period: Binding<String> {
+            Binding(get: { app.safePeriod.title },
+                    set: { title in app.safePeriod = SafePeriod.allCases.first { $0.title == title } ?? .untilPayday })
         }
 
         var body: some View {
-            let result = app.snapshot.safeToSpend(through: end)
+            @Bindable var app = app
+            let result = app.safeToSpend
             let safe = max(0, result.amount?.decimal ?? 0)
             let short = max(0, -(result.amount?.decimal ?? 0))
             Text("A clearer picture of what you can comfortably spend, after your upcoming commitments.")
                 .rdText(.body).foregroundStyle(Theme.muted).lineSpacing(3)
-            Pills(options: ["Until payday", "7 days", "Month end", "A date"], selection: $period).padding(.top, 16)
-            if period == "A date" {
+            Pills(options: SafePeriod.allCases.map(\.title), selection: period).padding(.top, 16)
+            if app.safePeriod == .date {
                 Field(label: "Through") {
-                    DatePicker("", selection: $pickedDate, in: app.today..., displayedComponents: .date).labelsHidden()
+                    DatePicker("", selection: $app.safePeriodDate, in: app.today..., displayedComponents: .date).labelsHidden()
                 }
                 .padding(.top, 12)
             }
@@ -520,6 +517,8 @@ extension Redesign {
                 }
                 choice("I moved money between my accounts", "Nothing spent, nothing earned", "arrow.up.arrow.down",
                        id: "add-I moved money between my accounts") { app.open(.entry(.transfer)) }
+                choice("I have cash", "Notes and coins in your wallet or at home", "banknote",
+                       id: "add-I have cash") { app.open(.newCash) }
                 choice("I have a loan or credit card", "Add what you owe and the monthly payment", "building.columns",
                        id: "add-I have a loan or credit card") { app.open(.newAccount(loan: true)) }
                 choice("A balance is wrong", "Set an account to what your bank shows", "slider.horizontal.3",

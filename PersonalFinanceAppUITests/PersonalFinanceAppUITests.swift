@@ -192,6 +192,49 @@ final class JourneyUITests: XCTestCase {
     }
 
     @MainActor
+    func testPlusOffersATransactionOnEveryTab() {
+        launch(["-demoData", "-plus", "-tab", "budget"])
+        for (tabName, own) in [("Accounts", "Add Account"), ("Accounts", "Add Cash"), ("Budget", "Add Category"), ("Bills", "Add Bill")] {
+            tab(tabName)
+            app.buttons["globalAdd"].tap()
+            XCTAssertTrue(app.buttons[own].waitForExistence(timeout: 3), "\(tabName) offers its own add")
+            XCTAssertTrue(app.buttons["Add Expense"].exists, "\(tabName) offers an expense")
+            app.buttons["globalAdd"].tap()
+            sleep(1)
+        }
+        app.buttons["globalAdd"].tap()
+        app.buttons["Add Expense"].tap()
+        XCTAssertTrue(app.textFields["amountField"].waitForExistence(timeout: 5), "The expense form opens from Bills")
+    }
+
+    /// The last rows of a long tab scroll clear of the floating + and tab bar
+    @MainActor
+    func testLastRowClearsTheTabBar() {
+        launch(["-demoData", "-plus", "-tab", "budget"])
+        let last = element("Emergency fund")
+        for _ in 0..<8 { app.swipeUp() }
+        XCTAssertTrue(last.waitForExistence(timeout: 3))
+        let plus = app.buttons["globalAdd"]
+        XCTAssertLessThanOrEqual(last.frame.maxY, plus.frame.minY, "The last row ends above the +")
+    }
+
+    /// The period picked on the breakdown is the one Home shows
+    @MainActor
+    func testSafeToSpendPeriodCarriesToHome() {
+        launch(["-demoData", "-plus"])
+        app.descendants(matching: .any)["safeToSpend"].tap()
+        let week = app.buttons["7 days"]
+        XCTAssertTrue(week.waitForExistence(timeout: 5))
+        week.tap()
+        app.buttons["Close"].firstMatch.tap()
+        expect("for the next 7 days", "Home shows the chosen period")
+        // Leave the next run on the usual period
+        app.descendants(matching: .any)["safeToSpend"].tap()
+        XCTAssertTrue(app.buttons["Until payday"].waitForExistence(timeout: 5))
+        app.buttons["Until payday"].tap()
+    }
+
+    @MainActor
     func testPayday() {
         launch(["-demoData", "-plus", "-screen", "payday"])
         tapScrolling(app.buttons["paydayDoIt"], "Do it")
@@ -204,6 +247,7 @@ final class JourneyUITests: XCTestCase {
         app.buttons["globalAdd"].tap()
         app.buttons["More…"].tap()
         XCTAssertTrue(app.buttons["add-I paid a loan or credit card"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["add-I have cash"].exists, "Cash can be added from What happened?")
         app.buttons["add-A balance is wrong"].tap()
         XCTAssertTrue(app.textFields["amountField"].waitForExistence(timeout: 5))
     }

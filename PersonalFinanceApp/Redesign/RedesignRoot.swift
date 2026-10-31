@@ -63,6 +63,7 @@ extension Redesign {
                         .id(app.tab)
                     }
                 }
+                .safeAreaPadding(.bottom, app.barHeight)
                 .scrollDismissesKeyboard(.interactively)
                 .background(Theme.background.ignoresSafeArea())
                 .toolbar(.hidden, for: .navigationBar)
@@ -77,12 +78,15 @@ extension Redesign {
                         .accessibilityAddTraits(.isButton)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            // The bar floats over the page rather than insetting it: an inset doesn't always reach the scroll
+            // views inside the navigation stack, which left the last rows stuck under the bar on some phones
+            .overlay(alignment: .bottom) {
                 VStack(alignment: .trailing, spacing: 12) {
                     if app.createAction != nil { CreateButton().transition(.scale(scale: 0.6).combined(with: .opacity)) }
                     GlassTabBar()
                 }
                 .animation(.spring(response: 0.3, dampingFraction: 0.85), value: app.createAction)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { app.barHeight = $0 + 12 }
             }
             .overlay(alignment: .top) { ToastView() }
             .modifier(PrivacyCover())
@@ -291,8 +295,8 @@ extension Redesign {
         }
     }
 
-    /// The one floating + above the tab bar. Where there's a single thing to add it opens that form; where a
-    /// transaction could be income, spending or a transfer it fans out those three and turns into a close button.
+    /// The one floating + above the tab bar. It fans out the screen's own thing to add (an account, a category,
+    /// a bill) above an expense, income and transfer, and turns into a close button while open.
     struct CreateButton: View {
         @Environment(AppModel.self) private var app
 
@@ -304,12 +308,24 @@ extension Redesign {
             var id: String { label }
         }
 
-        private let items = [
-            Item(label: "More…", symbol: "ellipsis", sheet: .whatHappened),
+        private static let transactions = [
             Item(label: "Add Expense", symbol: "basket", warm: true, sheet: .entry(.expense)),
             Item(label: "Add Income", symbol: "arrow.down.left", sheet: .entry(.income)),
             Item(label: "Transfer Money", symbol: "arrow.up.arrow.down", sheet: .entry(.transfer)),
         ]
+
+        /// The screen's own job on top, then the three transactions, so those are always in the same place
+        private var items: [Item] {
+            let own: [Item] = switch app.createAction {
+            case .account: [Item(label: "Add Cash", symbol: "banknote", sheet: .newCash),
+                            Item(label: "Add Account", symbol: "creditcard", sheet: .newAccount(loan: false))]
+            case .category: [Item(label: "Add Category", symbol: "square.grid.2x2", sheet: .newCategory)]
+            case .bill: [Item(label: "Add Expected Income", symbol: "arrow.down.circle", sheet: .entry(.expectedIncome)),
+                         Item(label: "Add Bill", symbol: "doc.text", sheet: .entry(.bill))]
+            case .transaction, nil: [Item(label: "More…", symbol: "ellipsis", sheet: .whatHappened)]
+            }
+            return own + Self.transactions
+        }
 
         var body: some View {
             let action = app.createAction
@@ -370,13 +386,7 @@ extension Redesign {
         }
 
         private func tapped() {
-            switch app.createAction {
-            case .transaction: toggle()
-            case .account: app.open(.newAccount(loan: false))
-            case .category: app.open(.newCategory)
-            case .bill: app.open(.entry(.bill))
-            case nil: break
-            }
+            if app.createAction != nil { toggle() }
         }
 
         private func toggle() {

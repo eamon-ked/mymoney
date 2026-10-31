@@ -156,9 +156,9 @@ extension Redesign {
         var label: String {
             switch self {
             case .transaction: "Add a transaction"
-            case .account: "Add account"
-            case .category: "Add budget category"
-            case .bill: "Add bill"
+            case .account: "Add an account or a transaction"
+            case .category: "Add a category or a transaction"
+            case .bill: "Add a bill or a transaction"
             }
         }
     }
@@ -175,7 +175,7 @@ extension Redesign {
         case account(UUID), bill(UUID), link(UUID), category(UUID), transaction(UUID)
         case payDebt(UUID, occurrence: UUID?), editDebtPayment(UUID), entryAsDebtPayment(UUID)
         case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), lend(UUID, LendAction)
-        case importStatement(UUID?), newAccount(loan: Bool), newCategory, editCategory(UUID), moveMoney(UUID)
+        case importStatement(UUID?), newAccount(loan: Bool), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
         case loansInCategory(UUID), goal(UUID), reserve(UUID?, goal: Bool), goalMoney(UUID, adding: Bool)
         case payday, help, intelligence, ask, paywall(PlusFeature), billLink(UUID)
         var id: Self { self }
@@ -239,6 +239,15 @@ extension Redesign {
         var toast: Toast?
         var showFilters = false
         var actionsOpen = false
+        /// Height of the tab bar and +, which float over the screen; every scroll area keeps this much clear at its end
+        var barHeight: CGFloat = 140
+        /// How far ahead safe to spend looks, chosen on the breakdown and shown on Home
+        var safePeriod = SafePeriod.saved {
+            didSet { SafePeriod.saved = safePeriod; WidgetSync.update(snapshot, isPlus: isPlus) }
+        }
+        var safePeriodDate = SafePeriod.savedDate {
+            didSet { SafePeriod.savedDate = safePeriodDate; WidgetSync.update(snapshot, isPlus: isPlus) }
+        }
         /// The month Budget shows, as a BudgetMonth key
         var month: String
         var privacy = Privacy() { didSet { privacy.store() } }
@@ -473,7 +482,17 @@ extension Redesign {
 
         // MARK: - Figures
 
-        var safeToSpend: SafeToSpend { snapshot.safeToSpend() }
+        var safeToSpend: SafeToSpend { snapshot.safeToSpend(through: safePeriod.end(in: snapshot, picked: safePeriodDate)) }
+
+        /// Home's words for the chosen period: "until payday", "for the next 7 days", "until 30 Nov"
+        var safePeriodLabel: String {
+            let end = safeToSpend.periodEnd.formatted(.dateTime.day().month(.abbreviated))
+            switch safePeriod {
+            case .untilPayday: return snapshot.nextIncomeDate == nil ? "until \(end)" : "until payday"
+            case .week: return "for the next 7 days"
+            case .monthEnd, .date: return "until \(end)"
+            }
+        }
         /// Spendable money: the accounts safe to spend starts from
         var cash: Decimal { safeToSpend.spendableTotal.decimal }
         /// Held back for bills, savings, essentials and the buffer

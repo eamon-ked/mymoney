@@ -42,8 +42,9 @@ The screens can be redrawn without touching what's below them.
 - **Type goes through `rdText(_:)`** and `Redesign.TextRole`. There's one role per kind of information, and each scales with Dynamic Type. Use a role rather than `.font(...)`.
 - **The floating + changes with the screen** (`app.createAction`):
   - Home fans out Expense, Income, Transfer and More… ("What happened?").
-  - Accounts adds an account, Budget adds a category, and Bills adds a bill.
+  - Accounts, Budget and Bills put their own item on top (an account, a category, a bill or expected income), above the same Expense, Income and Transfer.
   - It's hidden on More and on pages with nothing to create.
+- **The tab bar and + float over the screen.** Every scroll area reserves `app.barHeight` at its end (`safeAreaPadding`), so the last row always scrolls clear of them.
 - **The currency comes from `store.currency`.** Don't assume AED, English or the Gulf in labels or examples.
 
 Privacy Mode and appearance belong to the phone, not the data. They're kept in UserDefaults (`redesignPrivacy`, `appearance`), read before the first frame, and left out of backups. The profile name is `SettingsRecord.displayName`, and backups include it.

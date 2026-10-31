@@ -119,6 +119,7 @@ extension Redesign {
                 .padding(.top, 8)
                 .padding(.bottom, 24)
             }
+            .safeAreaPadding(.bottom, app.barHeight)
             .scrollDismissesKeyboard(.interactively)
             .background(Theme.background.ignoresSafeArea())
             .foregroundStyle(Theme.foreground)

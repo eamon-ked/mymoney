@@ -179,6 +179,8 @@ extension Redesign {
             Button(app.accounts.isEmpty ? "Add an account" : "Add another account") { app.open(.newAccount(loan: false)) }
                 .buttonStyle(app.accounts.isEmpty ? AnyButtonStyle(PrimaryButtonStyle()) : AnyButtonStyle(QuietButtonStyle()))
                 .accessibilityIdentifier("newAccount")
+            Button("I also keep cash") { app.open(.newCash) }
+                .buttonStyle(QuietButtonStyle()).padding(.top, 12)
             if !app.accounts.isEmpty {
                 Button("Continue", action: next).buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("continue")

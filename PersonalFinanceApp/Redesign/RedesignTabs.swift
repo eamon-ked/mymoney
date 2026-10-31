@@ -306,7 +306,7 @@ extension Redesign {
 
         private var hero: some View {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Safe to spend").rdText(.detailStrong)
+                Text("Safe to spend \(app.safePeriodLabel)").rdText(.detailStrong)
                     // Room for the eye, which sits over the card's corner
                     .frame(minHeight: 18)
                 HStack(spacing: 10) {

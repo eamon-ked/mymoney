@@ -15,7 +15,7 @@ enum WidgetSync {
     static func update(_ snapshot: FinanceSnapshot, isPlus: Bool) {
         let args = CommandLine.arguments
         guard !(args.contains("-uiTesting") || args.contains("-demoData")) || args.contains("-widgetData") else { return }
-        let sts = snapshot.safeToSpend()
+        let sts = SafePeriod.safeToSpend(snapshot)
         let due = snapshot.upcomingBills(days: 30)
         let summary = WidgetSummary(
             safeToSpend: snapshot.setupComplete ? sts.amount?.compact : nil,

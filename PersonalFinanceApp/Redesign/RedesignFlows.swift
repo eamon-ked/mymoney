@@ -131,24 +131,45 @@ extension Redesign {
         @Environment(AppModel.self) private var app
         @State private var chosen: UUID?
         @State private var review: StatementReview?
+        /// The account already had its free import
+        @State private var usedFree: UUID?
 
         var body: some View {
             Group {
                 if let review {
                     ImportReview(review: review)
+                } else if let usedFree {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("One free import per account").rdText(.heading)
+                        Text(private: "A statement is already imported into \(app.accountLabel(usedFree)). To keep it up to date, add new spending as it happens, or import as often as you like with Nokael Plus.")
+                            .rdText(.body).foregroundStyle(Theme.muted)
+                        Button("See Nokael Plus") { app.open(.paywall(.statementImport)) }.buttonStyle(PrimaryButtonStyle())
+                        if accountId == nil {
+                            Button("Choose another account") { self.usedFree = nil }.buttonStyle(QuietButtonStyle())
+                        }
+                    }
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Which account is the statement for?").rdText(.heading)
+                        if !app.isPlus {
+                            Redesign.footnote("Your first statement for each account is free. More imports come with Nokael Plus.")
+                        }
                         AccountChoice(label: "Account", selection: $chosen, accounts: app.accounts.filter { $0.kind != .lent })
                         Button("Continue") { start(chosen) }.buttonStyle(PrimaryButtonStyle()).disabled(chosen == nil)
                     }
                 }
             }
-            .onAppear { if review == nil, let accountId { start(accountId) } }
+            .onAppear { if review == nil, usedFree == nil, let accountId { start(accountId) } }
+            .onChange(of: app.isPlus) { _, plus in if plus, let id = usedFree { usedFree = nil; start(id) } }
         }
 
+        /// The first import into each account is free, so a new account can start with its history
         private func start(_ id: UUID?) {
             guard let id else { return }
+            if !app.isPlus && app.store.hasImportedStatement(into: id) {
+                usedFree = id
+                return
+            }
             review = StatementReview(accountId: id, store: app.store)
         }
     }

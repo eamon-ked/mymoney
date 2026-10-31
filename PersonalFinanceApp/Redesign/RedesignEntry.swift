@@ -143,7 +143,8 @@ extension Redesign {
 
         @ViewBuilder private var describe: some View {
             if AppleIntelligence.isReady {
-                if app.isPlus {
+                // Free includes a few uses a month; the note stays to say how many are left
+                if app.isPlus || FreeAllowance.describe.left > 0 || readNote != nil {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
                             IntelligenceMark(size: 22)
@@ -186,6 +187,7 @@ extension Redesign {
                 app.open(.payday)
                 return
             }
+            if !app.isPlus && FreeAllowance.describe.left == 0 { app.open(.paywall(.appleIntelligence)); return }
             #if canImport(FoundationModels)
             guard #available(iOS 26.0, *) else { return }
             reading = true
@@ -199,6 +201,10 @@ extension Redesign {
                 if !text.contains(where: \.isNumber) { draft.amount = nil }
                 fill(draft)
                 readNote = "Filled in below. Check it, then save."
+                if !app.isPlus {
+                    FreeAllowance.describe.spend()
+                    readNote = "Filled in below. Check it, then save. " + FreeAllowance.describe.leftText("use") + "."
+                }
             } catch {
                 readNote = AppleIntelligence.message(for: error)
             }

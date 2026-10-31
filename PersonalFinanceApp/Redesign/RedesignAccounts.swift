@@ -177,7 +177,7 @@ extension Redesign {
         @ViewBuilder private func moreMenu(_ r: LedgerAccountRecord?) -> some View {
             if account.kind.holdsMoney || account.isLiability {
                 Button("Check against a statement") { app.open(.reconcile(account.id)) }
-                Button("Import a statement (CSV)") { app.open(.importStatement(account.id), needs: .statementImport) }
+                Button("Import a statement (CSV)") { app.open(.importStatement(account.id)) }
                     .accessibilityIdentifier("importStatement")
             }
             Button("Change type") { app.open(.accountType(account.id)) }

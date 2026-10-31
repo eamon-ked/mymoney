@@ -25,8 +25,8 @@ extension Redesign {
                 line
                 row("calendar", "Money ahead", "Your balance over the next weeks", plus: true) { app.show(.forecast, needs: .moneyAhead) }
                 line
-                row("square.and.arrow.down", "Import a statement", "Add a bank's CSV file in one go", plus: true) {
-                    app.open(.importStatement(nil), needs: .statementImport)
+                row("square.and.arrow.down", "Import a statement", "Add a bank's CSV file in one go") {
+                    app.open(.importStatement(nil))
                 }
             }
             .padding(.bottom, 24)
@@ -470,8 +470,8 @@ extension Redesign {
 
             Redesign.overline("Your data")
             VStack(spacing: 0) {
-                LinkRow(symbol: "square.and.arrow.up", title: "Export all entries (CSV)", detail: "A spreadsheet for your own records",
-                        badge: app.isPlus ? nil : "PLUS") { if app.isPlus { export() } else { app.open(.paywall(.export)) } }
+                // Free for everyone: people's records are theirs to take
+                LinkRow(symbol: "square.and.arrow.up", title: "Export all entries (CSV)", detail: "A spreadsheet for your own records") { export() }
                 if let exportURL {
                     ShareLink(item: exportURL) {
                         Label("Share export", systemImage: "doc.text").rdText(.label).foregroundStyle(Theme.primary)
@@ -704,8 +704,8 @@ extension Redesign {
         var body: some View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Nokael Plus").rdText(.heading)
-                    Text("It does the work for you, and it understands your money: purchases saved automatically, statements imported, and answers to anything you ask.")
+                    Text("Your money, tracked automatically").rdText(.heading)
+                    Text("Nokael Plus: less work, more clarity. Everything in the free app, plus:")
                         .rdText(.body).foregroundStyle(Theme.muted)
                 }
                 VStack(alignment: .leading, spacing: 14) {
@@ -719,6 +719,8 @@ extension Redesign {
                         }
                     }
                 }
+                // Say plainly what never needs Plus, so nobody feels their picture is incomplete without it
+                Redesign.footnote("Free always includes unlimited accounts and transactions, budgets, bills, debts, safe to spend, Siri, export, backup and Privacy Mode.")
                 plans
                 Problem(text: problem)
                 Button { Task { await buy() } } label: {

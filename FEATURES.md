@@ -55,7 +55,7 @@ Status:
 | Archived accounts | Accounts | "Archived" row at the end of Accounts | Added |
 | Account page: balance, transactions with running balance | `AccountDetailView` | Account page, Transactions tab (balance after each entry) | In design + Added (running balance) |
 | Reconcile against a statement | `ReconcileSheet` | Account page › More › Check against a statement | Added |
-| Import a statement (CSV, Plus) | `ImportStatementView` | Account page › More › Import a statement; More › Import a statement | Added |
+| Import a statement (CSV; first per account free, more with Plus) | `ImportStatementView` | Account page › More › Import a statement; More › Import a statement | Added |
 | Change account type, moving entries | `ChangeAccountTypeSheet` | Account page › More › Change type | Added |
 | Fix starting amount | `StartingAmountSheet` | Account page › More › Fix starting amount | Added |
 | Rename; counts in net worth; money I can spend; part of my budget | `AccountSettingsSection` | Account page, Details tab | Added |
@@ -86,7 +86,7 @@ Status:
 | Category settings (name, group, rollover, keep out of safe to spend, icon, colour, archive) | `CategoryEditor` | Category page: "Edit category"; + on Budget for new ones | In design + Added |
 | Loans in a category | `LoansInCategoryView` | Category page | Added |
 | Pin to Home | Category toolbar | Category page | Added |
-| Savings goals (one free, more with Plus) | Budget › Savings | Budget › Savings section; goal page | Added |
+| Savings goals (3 free, more with Plus) | Budget › Savings | Budget › Savings section; goal page | Added |
 | Money set aside | Budget › Savings | Budget › Savings section | Added |
 | Goal: add money, take out, edit, monthly advice | `GoalDetailView`, `GoalMoneySheet` | Goal page | Added |
 
@@ -116,7 +116,7 @@ Status:
 | Deleted entries | Activity | Shown struck through | Added |
 | Add expense, income, transfer | `EntryEditor` | Add forms from the + | In design |
 | Category grid, all categories | `EntryEditor` | Category picker in the form (most used first) | In design |
-| Describe it (Apple Intelligence, Plus) | `EntryEditor` | Add form: "Describe it" line | Added |
+| Describe it (Apple Intelligence; 10 a month free, unlimited with Plus) | `EntryEditor` | Add form: "Describe it" line | Added |
 | Category from history and AI suggestion | `EntryEditor` | Add form (suggested category is picked for you) | Added |
 | This pays a bill | `EntryEditor` | Add form toggle | Added |
 | Repeats | `EntryEditor` | Add form toggle | Added |
@@ -136,7 +136,7 @@ Status:
 | Feature | Was | New home | Status |
 |---|---|---|---|
 | Reports: spent, in and out, where it went, all categories | `ReportsView` tab | More › Reports | Added (the design's page was a placeholder) |
-| Reports: comparison, last 6 months, other months (Plus) | `ReportsView` | More › Reports | Added |
+| Reports: last 3 months free; 6-month trend and every month with Plus | `ReportsView` | More › Reports | Added |
 | Month story (Apple Intelligence) | `ReportsView` | More › Reports | Added |
 | Ask about your money (chat) | `AskMoneyView` | Intelligence: "Ask" box | Added |
 | Guide: search, topics, salary and draft cards, AI answer | `GuideView` | Help page | Added (the design had FAQs only) |
@@ -152,7 +152,7 @@ Status:
 | Apple Intelligence on/off, cloud model | Settings | More › Settings › Apple Intelligence | Added |
 | Siri, Apple Pay and bank SMS capture setup | `CaptureSetupView` | More › Siri & automatic capture | Added |
 | Backup, restore | Settings | More › Backup & your data | Added |
-| Export entries as CSV (Plus) | Settings › Your data | More › Backup & your data | Added |
+| Export entries as CSV (free) | Settings › Your data | More › Backup & your data | Added |
 | Change history | Settings › Your data | More › Backup & your data | Added |
 | Delete all data | Settings › Your data | More › Backup & your data | Added |
 | Nokael Plus: plans, buy, restore, manage | Settings, paywall | More › Nokael Plus; paywall in the design's style | Added |
@@ -182,3 +182,20 @@ reminder notifications, schedules extended on launch, the backup reminder.
   - a statement import from a real CSV;
   - dark mode and the largest text size on every new screen;
   - an App Store screenshot pass.
+
+## Free and Plus
+
+Free covers everything needed to keep an accurate picture and make everyday decisions; Plus saves work and looks further ahead. The limits live in `FreePlan` (`Store/PlusStore.swift`); monthly AI uses are counted in `Logic/FreeAllowance.swift`.
+
+| Feature | Free | Plus |
+|---|---|---|
+| Accounts, transactions, budgets, bills, debts, safe to spend, Siri | Everything | Everything |
+| Statement import | First import for each account | Unlimited |
+| Ask about your money | 3 questions a month | Unlimited, cloud model where available |
+| Describe it in a sentence | 10 a month | Unlimited |
+| Reports | Last 3 months | Every month, 6-month trend, month story |
+| Savings goals | 3 (set-asides unlimited) | Unlimited |
+| Export, backup, restore, Privacy Mode, Face ID | Everything | Everything |
+| Automatic capture (Apple Pay, SMS) | — | Yes |
+| 60-day forecast, debt payoff simulations | — | Yes |
+| Home screen widget | — (basic free widget planned) | Yes |

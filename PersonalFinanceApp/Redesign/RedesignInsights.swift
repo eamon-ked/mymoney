@@ -48,12 +48,16 @@ extension Redesign {
             .background(Theme.intelligence.opacity(0.45), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
 
             if AppleIntelligence.isReady {
-                Button { app.open(.ask, needs: .appleIntelligence) } label: {
+                // A few questions a month are free, so people see what it does before Plus
+                let free = FreeAllowance.ask
+                Button { app.open(app.isPlus || free.left > 0 ? .ask : .paywall(.appleIntelligence)) } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "bubble.left.and.text.bubble.right").foregroundStyle(Theme.primary)
                         Text("Ask anything about your money").rdText(.body).foregroundStyle(Theme.muted)
                         Spacer()
-                        if !app.isPlus { PlusTag() }
+                        if !app.isPlus {
+                            if free.left > 0 { Text("\(free.left) free").rdText(.caption).foregroundStyle(Theme.muted) } else { PlusTag() }
+                        }
                     }
                     .padding(16)
                     .background(Theme.card, in: Capsule())
@@ -141,6 +145,7 @@ extension Redesign {
         @Environment(AppModel.self) private var app
         @State private var model = AskModel()
         @State private var question = ""
+        @State private var freeLeft = FreeAllowance.ask.left
 
         private let suggestions = [
             "How much can I spend this week?",
@@ -194,6 +199,10 @@ extension Redesign {
                         .accessibilityLabel("Send")
                 }
                 .padding(.top, 8)
+                if !app.isPlus {
+                    Text(FreeAllowance.ask.leftText("question") + ". Nokael Plus has no limit.")
+                        .rdText(.caption).foregroundStyle(Theme.muted).id(freeLeft)
+                }
                 if !model.messages.isEmpty {
                     Button("New conversation") { model.reset() }.rdText(.label).foregroundStyle(Theme.primary).frame(maxWidth: .infinity, minHeight: 44)
                 }
@@ -206,6 +215,12 @@ extension Redesign {
         }
 
         private func send(_ text: String) {
+            guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            if !app.isPlus {
+                guard FreeAllowance.ask.left > 0 else { app.open(.paywall(.appleIntelligence)); return }
+                FreeAllowance.ask.spend()
+                freeLeft = FreeAllowance.ask.left
+            }
             model.ask(text, digest: FinanceDigest(app.snapshot), plus: app.isPlus)
             question = ""
         }
@@ -332,30 +347,34 @@ extension Redesign {
                 }
             }
 
-            if app.isPlus {
-                #if canImport(FoundationModels)
-                if #available(iOS 26.0, *), AppleIntelligence.isReady { MonthStory(monthKey: key).padding(.top, 24) }
-                #endif
-                SectionHeading(title: "Last 6 months").padding(.top, 24)
-                let trend = Reports.trend(endingAt: key, count: 6, ledger: s.ledger, expenseCategories: expense,
-                                          incomeCategories: income, calendar: s.calendar, loanCategories: s.loanCategories)
-                Group {
-                    if app.hidesCharts || app.hidesAmounts { ChartHidden(height: 190) } else { trendChart(trend) }
-                }
-                .rdPanel(padding: 14)
-            } else {
-                LinkRow(symbol: "chart.bar.xaxis", title: "Your last 6 months", detail: "Trends, other months and how this one compares",
+            #if canImport(FoundationModels)
+            if app.isPlus, #available(iOS 26.0, *), AppleIntelligence.isReady { MonthStory(monthKey: key).padding(.top, 24) }
+            #endif
+            // Free shows enough months to see a trend; Plus shows six and every month before
+            let months = app.isPlus ? 6 : FreePlan.reportMonths
+            SectionHeading(title: "Last \(months) months").padding(.top, 24)
+            let trend = Reports.trend(endingAt: key, count: months, ledger: s.ledger, expenseCategories: expense,
+                                      incomeCategories: income, calendar: s.calendar, loanCategories: s.loanCategories)
+            Group {
+                if app.hidesCharts || app.hidesAmounts { ChartHidden(height: 190) } else { trendChart(trend) }
+            }
+            .rdPanel(padding: 14)
+            if !app.isPlus {
+                LinkRow(symbol: "chart.bar.xaxis", title: "Every month and longer trends", detail: "Six months side by side, and any month before",
                         badge: "PLUS") { app.open(.paywall(.reports)) }
                     .rdPanel(padding: 0)
-                    .padding(.top, 24)
+                    .padding(.top, 12)
                     .accessibilityIdentifier("reportsPlus")
             }
         }
 
-        /// Other months are Plus; this month is free
+        /// This month and the two before are free; earlier months are Plus
         private func step(_ by: Int) {
-            guard app.isPlus else { app.open(.paywall(.reports)); return }
-            month = BudgetMonth.adding(by, to: month ?? app.snapshot.monthKey, calendar: app.calendar)
+            let s = app.snapshot
+            let target = BudgetMonth.adding(by, to: month ?? s.monthKey, calendar: app.calendar)
+            let oldestFree = BudgetMonth.adding(-(FreePlan.reportMonths - 1), to: s.monthKey, calendar: app.calendar)
+            guard app.isPlus || target >= oldestFree else { app.open(.paywall(.reports)); return }
+            month = target
         }
 
         private func bar(_ label: String, _ value: Money, max: Money) -> some View {
@@ -388,7 +407,6 @@ extension Redesign {
 
         private func caption(_ line: CategoryTotal, share: Double) -> String {
             var parts = ["\(app.percent(share)) of the total"]
-            guard app.isPlus else { return parts[0] }
             if let plan = line.planned, plan.isPositive {
                 parts.append(line.amount > plan ? "\(app.money(line.amount - plan)) over plan" : "\(app.money(plan - line.amount)) under plan")
             } else if line.previous.isPositive {
@@ -636,7 +654,7 @@ extension Redesign {
             switch action {
             case .add(let kind):
                 app.open(.entry(kind == .income ? .income : kind == .transfer ? .transfer : kind == .adjustment ? .adjustment : .expense))
-            case .importStatement: app.open(.importStatement(nil), needs: .statementImport)
+            case .importStatement: app.open(.importStatement(nil))
             case .capture: app.show(.capture)
             case .tab(let tab):
                 switch tab {

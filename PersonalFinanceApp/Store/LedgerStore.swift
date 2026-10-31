@@ -290,6 +290,13 @@ final class LedgerStore {
     /// together, all or nothing; bill payments go through `pay` so debts split.
     /// Returns how many rows were new (a row already saved is left alone).
     @discardableResult
+    /// Whether a statement has ever been imported into this account. Read from the change history,
+    /// which backups carry, so restoring doesn't hand out another free import.
+    func hasImportedStatement(into accountId: UUID) -> Bool {
+        let action = "statement.imported"
+        return !fetch(AuditRecord.self, #Predicate { $0.action == action && $0.subjectId == accountId }).isEmpty
+    }
+
     func importRows(_ rows: [ImportedRow], into accountId: UUID) throws -> Int {
         guard let account = account(accountId) else { throw StoreError.notFound }
         let keys = rows.map(\.key)

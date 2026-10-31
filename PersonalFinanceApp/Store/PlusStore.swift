@@ -13,38 +13,37 @@ import StoreKit
 
 /// Features that need Nokael Plus, with how the paywall introduces each
 enum PlusFeature: String, Identifiable, CaseIterable {
-    case autoCapture, statementImport, appleIntelligence, moneyAhead, reports, widget, goals, payoffPlanner, export
+    // In the order the paywall lists them: automation first, then foresight and intelligence
+    case autoCapture, statementImport, appleIntelligence, moneyAhead, reports, payoffPlanner, goals, widget
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .autoCapture: return "Automatic capture"
-        case .statementImport: return "Import bank statements"
-        case .appleIntelligence: return "Apple Intelligence"
-        case .moneyAhead: return "Money ahead"
-        case .reports: return "Reports"
+        case .autoCapture: return "Automatic transaction capture"
+        case .statementImport: return "Unlimited statement imports"
+        case .appleIntelligence: return "Unlimited money assistant"
+        case .moneyAhead: return "60-day cash flow forecast"
+        case .reports: return "Advanced reports and trends"
         case .widget: return "Home screen widget"
         case .goals: return "Unlimited savings goals"
-        case .payoffPlanner: return "Debt payoff planner"
-        case .export: return "Export to a spreadsheet"
+        case .payoffPlanner: return "Debt payoff simulations"
         }
     }
 
     var detail: String {
         switch self {
-        case .autoCapture: return "Apple Pay purchases and bank SMS alerts saved for you"
-        case .statementImport: return "Bring in a CSV from your bank; what's already recorded is skipped"
+        case .autoCapture: return "Apple Pay purchases and bank SMS alerts recorded for you, ready to check"
+        case .statementImport: return "Import as often as you like. The first for each account is free"
         case .appleIntelligence:
             // Only promise the cloud model where this iPhone can actually reach it
             return [.ready, .limitReached].contains(AppleIntelligence.cloudStatus)
-                ? "Ask anything about your money, answered by Apple's larger cloud model"
-                : "Ask anything about your money, add from a sentence, tips for your month"
+                ? "Ask as much as you like, answered by Apple's larger cloud model. Free has \(FreePlan.askPerMonth) questions a month"
+                : "Ask as much as you like and add from a sentence. Free has \(FreePlan.askPerMonth) questions a month"
         case .moneyAhead: return "Your balance day by day for the next 60 days"
-        case .reports: return "Where the money went, six months side by side"
+        case .reports: return "Every month, and six months side by side. Free has the last \(FreePlan.reportMonths)"
         case .widget: return "Safe to spend and the next bills at a glance"
-        case .goals: return "Save for as many things as you like"
+        case .goals: return "Save for as many things as you like. Free has \(FreePlan.goals)"
         case .payoffPlanner: return "See how much sooner you're debt-free paying a little extra"
-        case .export: return "Every entry as a CSV for your own records"
         }
     }
 
@@ -58,9 +57,21 @@ enum PlusFeature: String, Identifiable, CaseIterable {
         case .widget: return "rectangle.grid.2x2"
         case .goals: return "target"
         case .payoffPlanner: return "flag.checkered"
-        case .export: return "tablecells"
         }
     }
+}
+
+/// Where the free app is limited rather than locked: Plus removes these limits.
+/// Free covers everything needed to keep an accurate picture; Plus saves work.
+enum FreePlan {
+    /// Savings goals with a target; set-asides are always unlimited
+    static let goals = 3
+    /// This month and the two before it in Reports
+    static let reportMonths = 3
+    /// Questions to Ask each month
+    static let askPerMonth = 3
+    /// "Describe it in a sentence" uses each month
+    static let describePerMonth = 10
 }
 
 @MainActor @Observable

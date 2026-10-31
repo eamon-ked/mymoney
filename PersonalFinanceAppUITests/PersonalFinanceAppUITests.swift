@@ -264,6 +264,20 @@ final class JourneyUITests: XCTestCase {
         }
     }
 
+    /// Free keeps an accurate picture: the first statement import and export need no Plus
+    @MainActor
+    func testFreeImportAndExport() {
+        launch(["-demoData", "-noPlus", "-tab", "more"])
+        tapScrolling(button("Import a statement"), "Import a statement")
+        XCTAssertTrue(element("Which account is the statement for?").waitForExistence(timeout: 5), "The first import is free")
+        app.buttons["Close"].firstMatch.tap()
+        sleep(1)
+        tapScrolling(button("Backup & your data"), "Backup & your data")
+        let export = button("Export all entries")
+        tapScrolling(export, "Export")
+        XCTAssertFalse(element("Your money, tracked automatically").waitForExistence(timeout: 2), "Export doesn't ask for Plus")
+    }
+
     @MainActor
     func testPaywallWithoutPlus() {
         launch(["-demoData", "-noPlus", "-tab", "more"])

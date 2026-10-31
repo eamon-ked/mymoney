@@ -807,8 +807,8 @@ extension Redesign {
         }
 
         private func newGoal() {
-            // The first goal is free; more come with Plus
-            if app.isPlus || app.snapshot.goals.isEmpty { app.open(.reserve(nil, goal: true)) } else { app.open(.paywall(.goals)) }
+            // A few goals are free; more come with Plus
+            if app.isPlus || app.snapshot.goals.count < FreePlan.goals { app.open(.reserve(nil, goal: true)) } else { app.open(.paywall(.goals)) }
         }
     }
 

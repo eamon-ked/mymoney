@@ -39,6 +39,8 @@ final class LedgerAccountRecord {
     var systemRole: String? = nil
     /// People only: when they said they'd pay back (or you said you would)
     var owedBackBy: Date? = nil
+    /// The bank's number for it, from an imported statement: later imports spot money moved here
+    var accountNumber: String? = nil
     // Category settings (expense categories only)
     var group: String
     var policyRaw: String
@@ -391,6 +393,10 @@ final class SettingsRecord {
     var pinnedCategoryIds: [UUID] = []
     /// The person's first name, for Home's greeting; empty until they give it
     var displayName: String = ""
+    /// Pay, a loan or bills found in an imported statement, still to confirm on Home (JSON)
+    var statementFindingsData: Data? = nil
+    /// Findings the person said weren't right, so a later import doesn't ask again
+    var dismissedFindings: [String] = []
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {
         self.currency = currency
@@ -436,4 +442,13 @@ enum Schema1 {
         PlannedItemRecord.self, OccurrenceRecord.self, ReserveRecord.self, AuditRecord.self, SettingsRecord.self,
         CardLinkRecord.self
     ]
+}
+
+extension LedgerAccountRecord {
+    /// The category group for money to and from people: it moves money without being spending or earning
+    static let transfersGroup = "Transfers"
+
+    var isTransferCategory: Bool {
+        kind.isCategory && (group == Self.transfersGroup || ["people", "fromPeople"].contains(systemRole ?? ""))
+    }
 }

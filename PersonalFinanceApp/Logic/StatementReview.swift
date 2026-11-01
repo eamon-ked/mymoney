@@ -43,6 +43,14 @@ final class StatementReview {
     private(set) var added: Int?
     /// Rows still waiting for a suggested category
     private(set) var suggesting = 0
+    /// The statement's own account number, when the file names it
+    private(set) var ownNumber: String?
+    /// Moves to another of the person's accounts that didn't say which: left for them to pick
+    private(set) var ownTransfers: Set<Int> = []
+    /// The currency the statement names, when it does
+    private(set) var fileCurrency: String?
+    /// What the statement says the account held before its first row and after its last
+    private(set) var balances: StatementBalances?
     @ObservationIgnored private var suggestTask: Task<Void, Never>?
 
     init(accountId: UUID, store: LedgerStore) {
@@ -59,6 +67,8 @@ final class StatementReview {
     var ready: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] != nil } }
     /// Ticked, still without a choice
     var unsorted: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] == nil } }
+    /// Rows the bulk "Put them in…" sorts: not moves between the person's own accounts
+    var bulkSortable: [StatementRow] { unsorted.filter { !ownTransfers.contains($0.id) } }
     var allSelected: Bool { inbox.allSatisfy { !skipped.contains($0.id) } }
 
     /// "3 ready · 1 needs a category · 2 left out"
@@ -86,6 +96,8 @@ final class StatementReview {
     func load(_ text: String, named name: String) {
         fileName = name
         fileText = text
+        ownNumber = StatementImport.accountNumber(in: text)
+        fileCurrency = StatementImport.currency(in: text)
         // Card statements usually list purchases as positive numbers
         var flip = false
         if account?.kind.isLiability == true,
@@ -99,6 +111,7 @@ final class StatementReview {
         guard let fileText else { return }
         do {
             rows = try StatementImport.read(fileText, currency: store.currency, flipSigns: flipSigns, calendar: store.calendar)
+            balances = StatementImport.balances(in: fileText, currency: store.currency, flipSigns: flipSigns, calendar: store.calendar)
             error = nil
         } catch {
             rows = []
@@ -125,7 +138,11 @@ final class StatementReview {
         }
         let others = snapshot.accounts.filter { $0.id != accountId }.map { (id: $0.id, name: $0.name) }
         let loans = snapshot.accounts.filter { $0.kind == .loan && !$0.archived }.map { (id: $0.id, name: $0.name) }
+        let ownAccounts = snapshot.accounts.filter {
+            $0.id != accountId && [.bank, .savings, .investment, .creditCard].contains($0.kind)
+        }
         var next: [Int: Target] = [:]
+        var own: Set<Int> = []
         var billsTaken: Set<UUID> = []
         for row in inbox {
             if let occ = StatementImport.bill(for: row, occurrences: snapshot.occurrences, items: snapshot.items,
@@ -137,12 +154,21 @@ final class StatementReview {
                 next[row.id] = .transfer(id)
             } else if let id = StatementImport.account(for: row.description, accounts: others) {
                 next[row.id] = .transfer(id)
+            } else if let numbered = ownAccounts.first(where: { a in
+                a.accountNumber.map { StatementImport.longNumbers(row.description).contains($0) } ?? false
+            }) {
+                next[row.id] = .transfer(numbered.id)
+            } else if StatementImport.isOwnAccountTransfer(row.description, ownNumber: ownNumber) {
+                // Not spending: it went to another of their accounts. Which one, if there's only one
+                if ownAccounts.count == 1 { next[row.id] = .transfer(ownAccounts[0].id) } else { own.insert(row.id) }
             } else if let id = StatementImport.category(for: row.description, history: history),
-                      let c = snapshot.account(id), c.kind == (row.amount.isNegative ? .expense : .income), !c.archived {
+                      let c = snapshot.account(id), c.kind == (row.amount.isNegative ? .expense : .income), !c.archived,
+                      CategoryRules.historyFits(categoryName: c.name, description: row.description, income: !row.amount.isNegative) {
                 next[row.id] = .category(id)
             }
         }
         targets = next
+        ownTransfers = own
         suggestRest()
     }
 
@@ -150,7 +176,7 @@ final class StatementReview {
     /// so every row arrives with a category the person only has to glance at
     private func suggestRest() {
         suggestTask?.cancel()
-        let pending = inbox.filter { targets[$0.id] == nil }
+        let pending = inbox.filter { targets[$0.id] == nil && !ownTransfers.contains($0.id) }
         suggesting = pending.count
         guard !pending.isEmpty else { return }
         suggestTask = Task {
@@ -234,6 +260,11 @@ final class StatementReview {
         }
     }
 
+    /// What a row with no choice yet asks for
+    func prompt(for row: StatementRow) -> String {
+        ownTransfers.contains(row.id) ? "Which of your accounts?" : "Choose a category"
+    }
+
     // MARK: - Adding
 
     func add() {
@@ -244,6 +275,53 @@ final class StatementReview {
         }
         do {
             added = try store.importRows(picks, into: accountId)
+            // The statement's rows were already inside a balance added later: start from the statement instead
+            if let balances {
+                try store.anchorOpening(accountId, statementOpening: balances.opening, firstDay: balances.firstDay)
+            }
+            if let ownNumber, account?.accountNumber == nil { try store.setAccountNumber(accountId, ownNumber) }
+            // Pay, a loan or bills it shows, for Home to offer
+            try store.saveFindings(StatementInsights.findings(rows, today: snapshot.today, calendar: store.calendar))
+        } catch {
+            self.error = StoreError.from(error).errorDescription
+        }
+    }
+
+    /// Money moved to an account of theirs that isn't in the app: it becomes one, kept aside as
+    /// savings (not spendable) until they check its balance, and every row naming it goes there
+    func addOwnAccount(for row: StatementRow) {
+        let number = StatementImport.longNumbers(row.description).first { $0 != ownNumber }
+        do {
+            let record = try store.addAccount(name: number.map { "Account …\($0.suffix(4))" } ?? "Other account", kind: .savings,
+                                              balance: .zero(store.currency), openingDate: row.date)
+            if let number { try store.setAccountNumber(record.id, number) }
+            for r in inbox where ownTransfers.contains(r.id) {
+                let same = number.map { StatementImport.longNumbers(r.description).contains($0) } ?? (r.id == row.id)
+                if same { targets[r.id] = .transfer(record.id) }
+            }
+        } catch {
+            self.error = StoreError.from(error).errorDescription
+        }
+    }
+
+    // MARK: - Balances
+
+    /// The app's balance at the end of the statement against the statement's own closing balance
+    var closingCheck: ReconciliationCheck? {
+        guard let balances, let closing = balances.closing else { return nil }
+        return Reconciler.check(ledger: snapshot.ledger, accountId: accountId,
+                                statementDate: snapshot.endOfDay(balances.lastDay), statementBalance: closing)
+    }
+
+    /// Starts the account from the statement and, if it still differs, corrects it to the closing balance
+    func matchStatement() {
+        guard let balances else { return }
+        do {
+            try store.anchorOpening(accountId, statementOpening: balances.opening, firstDay: balances.firstDay)
+            if let closing = balances.closing, closingCheck?.matches == false {
+                try store.reconcile(accountId: accountId, statementDate: snapshot.endOfDay(balances.lastDay),
+                                    statementBalance: closing, reason: "Matched to the statement")
+            }
         } catch {
             self.error = StoreError.from(error).errorDescription
         }

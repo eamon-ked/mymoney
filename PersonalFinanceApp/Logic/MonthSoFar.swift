@@ -36,7 +36,7 @@ struct MonthSoFar: Equatable {
         let previousCut = min(calendar.date(byAdding: .day, value: elapsed, to: previousStart) ?? start, start)
 
         // The same categories Reports counts, so the two figures always agree
-        let categories = snapshot.accountRecords.filter { $0.kind == .expense }.map(\.info)
+        let categories = snapshot.spendingCategoryInfos
         let ledger = snapshot.ledger
         let now = categories.map { ($0.name, ledger.spending(on: $0.id, from: start, to: tomorrow, loanCategories: snapshot.loanCategories)) }
         let before = categories.map { ledger.spending(on: $0.id, from: previousStart, to: previousCut, loanCategories: snapshot.loanCategories) }.sum(snapshot.currency)

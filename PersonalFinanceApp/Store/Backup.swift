@@ -77,6 +77,8 @@ struct SettingsDTO: Codable {
     var bankSenders: [String]?
     var pinnedCategoryIds: [UUID]?
     var displayName: String?
+    var statementFindingsData: Data?
+    var dismissedFindings: [String]?
 
     init(_ r: SettingsRecord) {
         currency = r.currency; localeIdentifier = r.localeIdentifier; firstWeekday = r.firstWeekday
@@ -85,6 +87,7 @@ struct SettingsDTO: Codable {
         biometricLock = r.biometricLock; lastBackupAt = r.lastBackupAt
         bankRegion = r.bankRegion; bankSenders = r.bankSenders; pinnedCategoryIds = r.pinnedCategoryIds
         displayName = r.displayName
+        statementFindingsData = r.statementFindingsData; dismissedFindings = r.dismissedFindings
     }
 
     func apply(to r: SettingsRecord) {
@@ -94,6 +97,7 @@ struct SettingsDTO: Codable {
         r.biometricLock = biometricLock; r.lastBackupAt = lastBackupAt
         r.bankRegion = bankRegion; r.bankSenders = bankSenders ?? []; r.pinnedCategoryIds = pinnedCategoryIds ?? []
         r.displayName = displayName ?? ""
+        r.statementFindingsData = statementFindingsData; r.dismissedFindings = dismissedFindings ?? []
     }
 }
 
@@ -119,6 +123,7 @@ struct AccountDTO: Codable {
     var debtCategoryId: UUID?
     var systemRole: String?
     var owedBackBy: Date?
+    var accountNumber: String?
     var group: String
     var policyRaw: String
     var reserveInSafeToSpend: Bool
@@ -131,7 +136,7 @@ struct AccountDTO: Codable {
         colorHex = r.colorHex; icon = r.icon; institution = r.institution; lastReconciledAt = r.lastReconciledAt
         debtRateBps = r.debtRateBps; debtPaymentMinor = r.debtPaymentMinor; debtDueDay = r.debtDueDay
         debtCategoryId = r.debtCategoryId; systemRole = r.systemRole; owedBackBy = r.owedBackBy
-        group = r.group; policyRaw = r.policyRaw; reserveInSafeToSpend = r.reserveInSafeToSpend
+        accountNumber = r.accountNumber; group = r.group; policyRaw = r.policyRaw; reserveInSafeToSpend = r.reserveInSafeToSpend
         createdAt = r.createdAt; updatedAt = r.updatedAt
     }
 
@@ -143,6 +148,7 @@ struct AccountDTO: Codable {
         r.debtPaymentMinor = debtPaymentMinor; r.debtDueDay = debtDueDay; r.group = group; r.policyRaw = policyRaw
         r.reserveInSafeToSpend = reserveInSafeToSpend; r.createdAt = createdAt; r.updatedAt = updatedAt
         r.debtCategoryId = debtCategoryId; r.systemRole = systemRole; r.owedBackBy = owedBackBy
+        r.accountNumber = accountNumber
         return r
     }
 }

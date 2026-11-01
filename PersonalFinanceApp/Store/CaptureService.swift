@@ -132,12 +132,25 @@ enum CaptureService {
                   let line = record.lines.first(where: { snapshot.account($0.accountId)?.kind == kind }) else { return nil }
             return (record.memo, line.accountId)
         }
-        if !merchant.isEmpty, let id = StatementImport.category(for: merchant, history: history), let found = snapshot.account(id) {
+        if !merchant.isEmpty, let id = StatementImport.category(for: merchant, history: history), let found = snapshot.account(id),
+           CategoryRules.historyFits(categoryName: found.name, description: merchant, income: income) {
             return found
         }
         if let name = CategoryRules.guess(merchant, income: income, categories: options.map(\.name)),
            let found = options.first(where: { $0.name == name }) {
             return found
+        }
+        // Money from family or friends isn't pay or earnings
+        if income, CategoryRules.isFromPeople(merchant) {
+            let people = store.fromPeopleCategory
+            try? store.commit()
+            return people
+        }
+        // A loan instalment, when there's no loan account for it to pay
+        if !income, CategoryRules.isLoanPayment(merchant) {
+            let loans = store.loanCategory
+            try? store.commit()
+            return loans
         }
         // Money sent to another person is spending on them, even before there's a category for it
         if !income, CategoryRules.isSentToPeople(merchant) {
@@ -148,7 +161,9 @@ enum CaptureService {
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *), !merchant.isEmpty, AppleIntelligence.isReady {
             let examples = history.prefix(40).compactMap { past in snapshot.account(past.categoryId).map { (past.memo, $0.name) } }
+            // Only pay is salary: money from friends or a payment app isn't, whatever the guess
             if let name = try? await MoneyAI.category(for: merchant, options: options.map(\.name), examples: examples),
+               !(income && CategoryRules.isSalaryCategory(name) && !CategoryRules.saysSalary(merchant)),
                let found = options.first(where: { $0.name == name }) {
                 return found
             }

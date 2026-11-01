@@ -186,10 +186,13 @@ extension Redesign {
                     VStack(spacing: 12) {
                         Image(systemName: "checkmark.circle").font(.system(size: 34, weight: .light)).foregroundStyle(Theme.primary)
                         Text(added == 0 ? "Nothing new to add" : "Added \(added) \(added == 1 ? "entry" : "entries")").rdText(.heading)
-                        Text("Check the balance against your statement to be sure everything's in.")
-                            .rdText(.body).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+                        if review.closingCheck == nil {
+                            Text("Check the balance against your statement to be sure everything's in.")
+                                .rdText(.body).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+                        }
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 24)
+                    balanceCheck
                     Button("Done") { app.close() }.buttonStyle(PrimaryButtonStyle())
                 } else if review.fileText == nil {
                     intro
@@ -235,13 +238,16 @@ extension Redesign {
                       detail: "Card statements often list purchases without a minus sign. Turn this on if money out appears as money in below.",
                       isOn: $review.flipSigns)
             Problem(text: review.error)
+            if let theirs = review.fileCurrency, let account = review.account, theirs != account.currency {
+                Problem(text: "This statement is in \(theirs), but \(account.name) is in \(account.currency). Its amounts will be read as \(account.currency).")
+            }
 
             if review.suggesting > 0 {
                 HStack(spacing: 10) {
                     ProgressView()
                     Text("Suggesting categories… \(review.suggesting) to go").rdText(.detail).foregroundStyle(Theme.muted)
                 }
-            } else if !review.unsorted.isEmpty {
+            } else if !review.bulkSortable.isEmpty {
                 sortTheRest
             }
 
@@ -257,10 +263,13 @@ extension Redesign {
             .padding(.top, 8)
             if review.inbox.isEmpty {
                 Text("Everything in this file is already recorded.").rdText(.detail).foregroundStyle(Theme.muted)
+                balanceCheck
             } else {
                 Divided(items: review.inbox) { row in
                     InboxRow(row: row, target: binding(row), skipped: skipBinding(row),
-                             options: review.options(for: row), label: review.label(for: row))
+                             options: review.options(for: row), label: review.label(for: row),
+                             prompt: review.prompt(for: row),
+                             addAccount: review.ownTransfers.contains(row.id) ? { review.addOwnAccount(for: row) } : nil)
                 }
                 .padding(.horizontal, 16)
                 .rdPanel(padding: 0)
@@ -305,12 +314,34 @@ extension Redesign {
             }
         }
 
+        /// The statement's closing balance against the app's on the same day, with a way to match them
+        @ViewBuilder private var balanceCheck: some View {
+            if let check = review.closingCheck, let day = review.balances?.lastDay {
+                VStack(alignment: .leading, spacing: 8) {
+                    if check.matches {
+                        Label {
+                            Text(private: "Matches your statement: \(app.money(check.statement)) on \(app.day(day))")
+                        } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.primary) }
+                        .rdText(.detail)
+                    } else {
+                        Text(private: "Your statement ends at \(app.money(check.statement)) on \(app.day(day)). The app has \(app.money(check.calculated)).")
+                            .rdText(.detail)
+                        Button("Use the statement's balance") { review.matchStatement() }
+                            .rdText(.label).foregroundStyle(Theme.primary)
+                            .accessibilityIdentifier("matchStatement")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .rdPanel()
+            }
+        }
+
         /// One choice for every ticked row that has none yet
         @ViewBuilder private var sortTheRest: some View {
-            let out = review.unsorted.filter(\.amount.isNegative)
-            let into = review.unsorted.filter { !$0.amount.isNegative }
+            let out = review.bulkSortable.filter(\.amount.isNegative)
+            let into = review.bulkSortable.filter { !$0.amount.isNegative }
             VStack(alignment: .leading, spacing: 10) {
-                Text("\(review.unsorted.count) still need a category").rdText(.cardTitle)
+                Text("\(review.bulkSortable.count) still need a category").rdText(.cardTitle)
                 if !out.isEmpty {
                     bulkMenu("Put \(out.count) money-out \(out.count == 1 ? "row" : "rows") in…", categories: app.snapshot.expenseCategories, rows: out)
                 }
@@ -349,6 +380,9 @@ extension Redesign {
         @Binding var skipped: Bool
         let options: [(String, [StatementReview.Option])]
         let label: String?
+        var prompt = "Choose a category"
+        /// Money moved to an account of theirs that isn't in the app yet
+        var addAccount: (() -> Void)? = nil
         @Environment(AppModel.self) private var app
 
         var body: some View {
@@ -376,6 +410,9 @@ extension Redesign {
                         Text("Left out · tick to add it").rdText(.captionStrong).foregroundStyle(Theme.muted)
                     } else {
                         Menu {
+                            if let addAccount {
+                                Button { addAccount() } label: { Label("Add it as a new account", systemImage: "plus.circle") }
+                            }
                             ForEach(options, id: \.0) { group in
                                 Section(group.0) {
                                     ForEach(group.1) { option in
@@ -384,7 +421,7 @@ extension Redesign {
                                 }
                             }
                         } label: {
-                            Text(label ?? "Choose a category")
+                            Text(label ?? prompt)
                                 .rdText(.captionStrong)
                                 .padding(.horizontal, 10).padding(.vertical, 4)
                                 .foregroundStyle(label == nil ? Theme.amber : Theme.primary)

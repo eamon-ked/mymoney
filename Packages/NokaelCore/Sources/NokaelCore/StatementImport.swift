@@ -62,6 +62,17 @@ public struct StatementColumns: Equatable, Sendable {
     public var amount: Int?
     public var debit: Int?
     public var credit: Int?
+    /// The running balance after each row, when the bank gives one
+    public var balance: Int? = nil
+}
+
+/// What a statement says the account held, before its first row and after its last
+public struct StatementBalances: Equatable, Sendable {
+    public let opening: Money?
+    public let closing: Money?
+    /// The day of the first and last rows
+    public let firstDay: Date
+    public let lastDay: Date
 }
 
 public enum StatementImport {
@@ -116,6 +127,7 @@ public enum StatementImport {
     private static let amountNames = ["amount", "transaction amount", "value"]
     private static let debitNames = ["debit", "debits", "debit amount", "withdrawal", "withdrawals", "money out", "paid out", "out"]
     private static let creditNames = ["credit", "credits", "credit amount", "deposit", "deposits", "money in", "paid in", "in"]
+    private static let balanceNames = ["balance", "running balance", "available balance", "ledger balance", "closing balance"]
 
     public static func columns(header: [String]) -> StatementColumns? {
         let names = header.map { h in
@@ -134,7 +146,8 @@ public enum StatementImport {
         let credit = find(creditNames)
         guard amount != nil || (debit != nil && credit != nil) else { return nil }
         return StatementColumns(date: date, description: description,
-                                amount: debit != nil && credit != nil ? nil : amount, debit: debit, credit: credit)
+                                amount: debit != nil && credit != nil ? nil : amount, debit: debit, credit: credit,
+                                balance: names.firstIndex { balanceNames.contains($0) })
     }
 
     // MARK: - Values
@@ -220,16 +233,8 @@ public enum StatementImport {
         var out: [StatementRow] = []
         for (n, r) in body.enumerated() {
             func field(_ i: Int?) -> String { i.flatMap { $0 < r.count ? r[$0] : nil } ?? "" }
-            let value: Money
-            if let a = cols.amount {
-                guard let m = amount(field(a), currency: currency) else {
-                    throw ImportError.unreadableAmount(row: n + 1, text: field(a))
-                }
-                value = m
-            } else {
-                let debit = amount(field(cols.debit), currency: currency)?.magnitude ?? .zero(currency)
-                let credit = amount(field(cols.credit), currency: currency)?.magnitude ?? .zero(currency)
-                value = credit - debit
+            guard let value = signedValue(r, cols: cols, currency: currency) else {
+                throw ImportError.unreadableAmount(row: n + 1, text: field(cols.amount))
             }
             guard !value.isZero, let day = parse(r[cols.date], with: f) else { continue }
             let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
@@ -237,6 +242,68 @@ public enum StatementImport {
                                     amount: flipSigns ? -value : value))
         }
         return out.sorted { ($0.date, $0.id) < ($1.date, $1.id) }
+    }
+
+    /// A row's amount from the account's point of view: one amount column, or credit minus debit
+    private static func signedValue(_ r: [String], cols: StatementColumns, currency: String) -> Money? {
+        func field(_ i: Int?) -> String { i.flatMap { $0 < r.count ? r[$0] : nil } ?? "" }
+        if let a = cols.amount { return amount(field(a), currency: currency) }
+        let debit = amount(field(cols.debit), currency: currency)?.magnitude ?? .zero(currency)
+        let credit = amount(field(cols.credit), currency: currency)?.magnitude ?? .zero(currency)
+        return credit - debit
+    }
+
+    // MARK: - Balances
+
+    /// The balances a statement gives: "Opening Balance: 2.23 AED" lines above
+    /// the column names, else worked out from a Balance column. nil when the
+    /// file has rows but says nothing about balances.
+    public static func balances(in text: String, currency: String, flipSigns: Bool = false,
+                                calendar: Calendar) -> StatementBalances? {
+        let rows = csvRows(text)
+        guard let headerIndex = rows.prefix(15).firstIndex(where: { columns(header: $0) != nil }),
+              let cols = columns(header: rows[headerIndex]) else { return nil }
+        let body = Array(rows.dropFirst(headerIndex + 1)).filter { $0.count > cols.date && !$0[cols.date].isEmpty }
+        guard let f = dateFormat(for: body.map { $0[cols.date] }, calendar: calendar) else { return nil }
+        // Oldest first, keeping the file's order within a day
+        var dated = body.compactMap { r in parse(r[cols.date], with: f).map { (day: $0, row: r) } }
+        guard let first = dated.first, let last = dated.last else { return nil }
+        if first.day > last.day { dated.reverse() }
+        dated = dated.enumerated().sorted { ($0.element.day, $0.offset) < ($1.element.day, $1.offset) }.map(\.element)
+
+        var opening: Money?
+        var closing: Money?
+        for cell in rows.prefix(headerIndex).flatMap({ $0 }) {
+            let lower = cell.lowercased()
+            let value = cell.split(separator: ":").last.map(String.init).flatMap { amount($0, currency: currency) }
+            if lower.contains("opening balance") || lower.contains("balance brought forward") || lower.contains("starting balance") {
+                opening = opening ?? value
+            } else if lower.contains("closing balance") || lower.contains("ending balance") {
+                closing = closing ?? value
+            }
+        }
+        if let b = cols.balance {
+            func balance(_ r: [String]) -> Money? { b < r.count ? amount(r[b], currency: currency) : nil }
+            if closing == nil, let row = dated.last?.row { closing = balance(row) }
+            if opening == nil, let row = dated.first?.row, let after = balance(row),
+               let moved = signedValue(row, cols: cols, currency: currency) {
+                opening = after - (flipSigns ? -moved : moved)
+            }
+        }
+        guard opening != nil || closing != nil, let firstDay = dated.first?.day, let lastDay = dated.last?.day else { return nil }
+        return StatementBalances(opening: opening, closing: closing, firstDay: firstDay, lastDay: lastDay)
+    }
+
+    /// The currency a statement names above its rows ("Account Number: … AED"), if any
+    public static func currency(in text: String) -> String? {
+        let rows = csvRows(text)
+        let top = rows.prefix(while: { columns(header: $0) == nil }).prefix(15)
+        let codes = Set(Locale.commonISOCurrencyCodes)
+        for cell in top.flatMap({ $0 }) {
+            let words = cell.components(separatedBy: CharacterSet.letters.inverted)
+            if let code = words.first(where: { $0.count == 3 && $0 == $0.uppercased() && codes.contains($0) }) { return code }
+        }
+        return nil
     }
 
     // MARK: - Matching
@@ -306,6 +373,34 @@ public enum StatementImport {
         return hits.count == 1 ? hits[0].id : nil
     }
 
+    /// The statement's own account number, from the details above the column
+    /// names: "Account Number: 11392149920001 AED" → "11392149920001"
+    public static func accountNumber(in text: String) -> String? {
+        let rows = csvRows(text)
+        let top = rows.prefix(while: { columns(header: $0) == nil }).prefix(15)
+        for cell in top.flatMap({ $0 }) {
+            let lower = cell.lowercased()
+            guard lower.contains("account number") || lower.contains("account no") || lower.contains("iban") else { continue }
+            if let number = longNumbers(cell).first { return number }
+        }
+        return nil
+    }
+
+    /// Money moved to another account of the same person at the same bank:
+    /// the description names an account number that isn't this one but
+    /// starts with the same customer digits ("…@11392149810001" from 11392149920001)
+    public static func isOwnAccountTransfer(_ description: String, ownNumber: String?) -> Bool {
+        guard let own = ownNumber, own.count >= 10 else { return false }
+        return longNumbers(description).contains { $0 != own && $0.count == own.count && $0.prefix(8) == own.prefix(8) }
+    }
+
+    /// Runs of 10 or more digits, spaces inside an IBAN allowed
+    public static func longNumbers(_ text: String) -> [String] {
+        text.replacingOccurrences(of: " ", with: "")
+            .components(separatedBy: CharacterSet.decimalDigits.inverted)
+            .filter { $0.count >= 10 }
+    }
+
     /// A loan instalment ("LOANRECOVERY-EMI:1139…", "MORTGAGE INSTALMENT") goes to the loan
     /// it names, else to the only loan there is
     public static func loan(for description: String, loans: [(id: UUID, name: String)]) -> UUID? {
@@ -319,7 +414,7 @@ public enum StatementImport {
 
     /// "POS PURCHASE CARREFOUR CITY 1234 DUBAI AE" → ["carrefour", "city"]
     static func merchantWords(_ text: String, limit: Int = 3) -> [String] {
-        let noise: Set = ["pos", "purchase", "card", "ae", "uae", "dubai", "abu", "dhabi", "sharjah", "llc", "the",
+        let noise: Set = ["pos", "pur", "purchase", "card", "ae", "uae", "dubai", "abu", "dhabi", "sharjah", "llc", "the",
                           "payment", "transfer", "to", "from", "bill"]
         let words = text.lowercased()
             .components(separatedBy: CharacterSet.letters.inverted)

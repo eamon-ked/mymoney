@@ -87,41 +87,91 @@ final class JourneyUITests: XCTestCase {
 
     // MARK: - Setup
 
-    /// Onboarding with one account and no optional steps
+    /// Onboarding with one bank account and a typed balance; pay, bills and budget are left for Home
     private func completeSetup(balance: String = "12000") {
         app.buttons["getStarted"].tap()
-        type(balance, into: "openingBalance")
         app.buttons["continue"].tap()
-        let skip = app.buttons["skip"]
-        XCTAssertTrue(skip.waitForExistence(timeout: 5))
-        skip.tap()
-        let noBills = app.buttons["continue"]
-        XCTAssertTrue(noBills.waitForExistence(timeout: 5))
-        noBills.tap()
-        // Setup ends on what's safe to spend
-        XCTAssertTrue(app.descendants(matching: .any)["setupSafeToSpend"].waitForExistence(timeout: 5))
-        app.buttons["finish"].tap()
+        let enter = app.buttons["enterBalance"]
+        XCTAssertTrue(enter.waitForExistence(timeout: 5))
+        enter.tap()
+        type(balance, into: "openingBalance")
+        app.buttons["saveAccount"].tap()
+        // Setup ends on the accounts added, then Home
+        let home = app.buttons["finish"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5))
+        home.tap()
     }
 
-    /// The full setup: pay, then a bill picked from the common ones, then the result
+    /// A bank account started from a statement: its balance, a check against the bank app,
+    /// then Home offering the pay and loan the statement showed
     @MainActor
-    func testSetupWithPayAndBill() {
+    func testSetupFromAStatement() {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/statement.csv")
+        launch(["-uiTesting", "-importSample", file.path])
+        app.buttons["getStarted"].tap()
+        type("Sam", into: "firstName")
+        app.buttons["continue"].tap()
+        let importButton = app.buttons["importStatement"]
+        XCTAssertTrue(importButton.waitForExistence(timeout: 5))
+        importButton.tap()
+        let add = app.buttons["addImported"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "The statement's rows are listed")
+        XCTAssertTrue(NSPredicate(format: "isEnabled == true").evaluate(with: add) || waitEnabled(add), "Every row has a category")
+        add.tap()
+        expect("Matches your statement", "The account starts from the statement and ends on its balance")
+        app.buttons["Done"].tap()
+
+        XCTAssertTrue(app.buttons["balanceRight"].waitForExistence(timeout: 5))
+        expect("AED 176.19", "Asks about the statement's closing balance")
+        app.buttons["balanceDifferent"].tap()
+        type("121.19", into: "bankBalance")
+        app.buttons["useBalance"].tap()
+
+        let home = app.buttons["finish"]
+        XCTAssertTrue(home.waitForExistence(timeout: 5))
+        expect("AED 121.19", "The account now holds what the bank app shows")
+        home.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["safeToSpend"].waitForExistence(timeout: 5), "Setup ends on Home")
+        expect("Sam", "Home greets them by name")
+        expect("your monthly pay", "Home offers the pay the statement showed")
+    }
+
+    /// "Add another account" tapped by mistake: Back returns to the list, Cancel goes to Home,
+    /// and an account started for a statement that never came isn't left behind
+    @MainActor
+    func testAddAnotherAccountCanBeLeft() {
         launch(["-uiTesting"])
         app.buttons["getStarted"].tap()
-        type("12000", into: "openingBalance")
         app.buttons["continue"].tap()
-        type("8000", into: "amountField")
-        app.buttons["continue"].tap()
-        let rent = app.buttons["Rent"]
-        XCTAssertTrue(rent.waitForExistence(timeout: 5), "Common bills are offered")
-        rent.tap()
-        type("1200", into: "billAmount")
-        app.buttons["addBill"].tap()
-        expect("AED 1,200", "The bill is listed once, at the amount typed")
-        app.buttons["continue"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["setupSafeToSpend"].waitForExistence(timeout: 5))
-        app.buttons["finish"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["safeToSpend"].waitForExistence(timeout: 5), "Setup ends on Home")
+        let enter = app.buttons["enterBalance"]
+        XCTAssertTrue(enter.waitForExistence(timeout: 5))
+        enter.tap()
+        type("500", into: "openingBalance")
+        app.buttons["saveAccount"].tap()
+
+        let another = app.buttons["addAnother"]
+        XCTAssertTrue(another.waitForExistence(timeout: 5))
+        another.tap()
+        let back = app.buttons["back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "There's a way back from Add another account")
+        back.tap()
+        XCTAssertTrue(another.waitForExistence(timeout: 5), "Back on the list of accounts")
+
+        another.tap()
+        app.buttons["importStatement"].tap()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        close.tap()
+        let cancel = app.buttons["cancelAddAccount"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["safeToSpend"].waitForExistence(timeout: 5), "Cancel goes to Home")
+        XCTAssertFalse(element("Account 2").exists, "The account started for the statement isn't left behind")
+    }
+
+    private func waitEnabled(_ el: XCUIElement) -> Bool {
+        let done = expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: el)
+        return XCTWaiter.wait(for: [done], timeout: 20) == .completed
     }
 
     @MainActor

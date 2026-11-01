@@ -350,7 +350,9 @@ extension Redesign {
                 }
                 .padding(.top, 10)
                 Text(!app.setupComplete ? "Add an account you spend from to see this."
-                     : app.shortfall > 0 ? "Your cash is reserved for upcoming commitments." : "Your commitments are covered. This is yours to spend.")
+                     : app.shortfall > 0 ? "Your cash is reserved for upcoming commitments."
+                     : app.snapshot.nextIncomeDate == nil ? "Until the end of the month. Add your payday for a truer number."
+                     : "Your commitments are covered. This is yours to spend.")
                     .rdText(.caption).lineSpacing(3).frame(maxWidth: 250, alignment: .leading).padding(.top, 10)
                 HStack(spacing: 3) { Text("View breakdown"); Image(systemName: "chevron.right") }
                     .rdText(.captionStrong).padding(.top, 12)
@@ -384,8 +386,46 @@ extension Redesign {
         let task: HomeTask
 
         var body: some View {
+            if case .finding(let finding) = task {
+                findingRow(finding)
+            } else if case .setUp = task {
+                // No regular pay or no bills: say so once and it stops asking
+                row.contextMenu {
+                    Button("Not for me") { try? app.store.updateSettings { $0.dismissedFindings.append(task.id) } }
+                }
+            } else {
+                row
+            }
+        }
+
+        /// A statement's suggestion: set it up, or say it isn't right
+        private func findingRow(_ f: StatementFinding) -> some View {
             let (symbol, tone, title, detail) = look
-            Button(action: run) {
+            return HStack(alignment: .top, spacing: 12) {
+                IconBox(symbol: symbol, tone: tone, small: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(private: title).rdText(.cardTitle)
+                    Text(private: detail).rdText(.caption).foregroundStyle(Theme.muted)
+                    HStack(spacing: 16) {
+                        Button("Yes, add it") {
+                            do { try app.store.acceptFinding(f, accountId: app.snapshot.accounts.first { $0.spendable }?.id) }
+                            catch { app.toast = Toast(message: StoreError.from(error).errorDescription ?? "Couldn't add it.", isError: true) }
+                        }
+                        .rdText(.label).foregroundStyle(Theme.primary)
+                        .accessibilityIdentifier("acceptFinding")
+                        Button("Not this") { try? app.store.dismissFinding(f) }
+                            .rdText(.label).foregroundStyle(Theme.muted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 12)
+        }
+
+        private var row: some View {
+            let (symbol, tone, title, detail) = look
+            return Button(action: run) {
                 HStack(spacing: 12) {
                     IconBox(symbol: symbol, tone: tone, small: true)
                     VStack(alignment: .leading, spacing: 4) {
@@ -450,6 +490,25 @@ extension Redesign {
             case .backup(let never):
                 return ("externaldrive", .green, never ? "Save your first backup" : "Time for a fresh backup",
                         "Your money is only on this iPhone. A backup file keeps it safe.")
+            case .finding(let f):
+                let when = "next on \(app.day(f.nextDate))"
+                switch f.kind {
+                case .pay:
+                    return ("arrow.down.left", .green, "Is \(app.money(f.amount)) your monthly pay?",
+                            "Seen in your statement, \(when). Safe to spend will last until payday.")
+                case .loan:
+                    return ("building.columns", .green, "A loan payment of \(app.money(f.amount))?",
+                            "Seen in your statement, \(when). Add it as a monthly bill so it's set aside.")
+                case .bill:
+                    return ("doc.text", .green, "\(app.hidesDetails ? "A bill" : f.name) every month?",
+                            "\(app.money(f.amount)) in each month of your statement, \(when). Add it as a bill.")
+                }
+            case .setUp(.payday):
+                return ("calendar", .green, "Add your payday",
+                        "Safe to spend runs to the end of the month until it knows when you're paid.")
+            case .setUp(.bills):
+                return ("doc.text", .green, "Add your regular bills",
+                        "Rent, phone, a loan: they're set aside before you see what's safe to spend.")
             }
         }
 
@@ -464,6 +523,9 @@ extension Redesign {
             case .person(let p, _, _): app.open(.account(p.id))
             case .stale(let a): app.open(.reconcile(a.id))
             case .backup: app.show(.data)
+            case .finding: break
+            case .setUp(.payday): app.open(.payday)
+            case .setUp(.bills): app.go(.bills)
             }
         }
     }

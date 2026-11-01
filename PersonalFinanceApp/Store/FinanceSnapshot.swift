@@ -116,6 +116,36 @@ struct FinanceSnapshot {
         accountRecords.filter { $0.kind.isBalanceSheet && $0.archived }
     }
 
+    /// What an imported statement suggested setting up, still to confirm: pay only while there's no
+    /// income planned, a loan or bill only while nothing of that amount is planned
+    var statementFindings: [StatementFinding] {
+        guard let data = settings.statementFindingsData,
+              let all = try? JSONDecoder().decode([StatementFinding].self, from: data) else { return [] }
+        let planned = Set(items.filter { $0.direction == .outflow }.map(\.amount))
+        return all.filter { f in
+            switch f.kind {
+            case .pay: return nextIncomeDate == nil
+            case .loan, .bill: return !planned.contains(f.amount)
+            }
+        }
+    }
+
+    /// Spending categories the totals count: not money sent to people
+    var spendingCategoryInfos: [AccountInfo] {
+        accountRecords.filter { $0.kind == .expense && !$0.isTransferCategory }.map(\.info)
+    }
+
+    /// Income categories the totals count: not money from people
+    var earningCategoryInfos: [AccountInfo] {
+        accountRecords.filter { $0.kind == .income && !$0.isTransferCategory }.map(\.info)
+    }
+
+    /// Money to and from people, shown on its own line
+    var peopleCategoryInfos: (sent: [AccountInfo], received: [AccountInfo]) {
+        let people = accountRecords.filter(\.isTransferCategory)
+        return (people.filter { $0.kind == .expense }.map(\.info), people.filter { $0.kind == .income }.map(\.info))
+    }
+
     var expenseCategories: [LedgerAccountRecord] {
         accountRecords.filter { $0.kind == .expense && !$0.archived }
     }

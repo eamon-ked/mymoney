@@ -128,8 +128,8 @@ struct FinanceDigest: Sendable {
                                amount: amount)
         }
 
-        let expense = snapshot.accountRecords.filter { $0.kind == .expense }.map(\.info)
-        let income = snapshot.accountRecords.filter { $0.kind == .income }.map(\.info)
+        let expense = snapshot.spendingCategoryInfos
+        let income = snapshot.earningCategoryInfos
         months = (0..<6).map { back in
             let key = BudgetMonth.adding(-back, to: month, calendar: calendar)
             let report = Reports.month(key, ledger: snapshot.ledger, expenseCategories: expense,

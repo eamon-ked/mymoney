@@ -33,6 +33,8 @@ public enum CategoryRules {
         (["pharmacy", "aster", "boots", "hospital", "clinic", "medical", "dental", "nmc", "mediclinic", "cleveland",
           "burjeel", "seha", "lab", "optic", "optical"], ["health", "medical", "pharmacy"]),
         (["rent", "ejari", "real estate", "properties", "landlord", "mortgage"], ["rent", "housing", "mortgage", "home"]),
+        // Before fees, so "LOANRECOVERY-EMI" isn't a bank charge
+        (loanWords, ["loan", "repayment", "debt"]),
         (["fee", "fees", "charge", "charges", "interest", "commission", "vat on"], ["interest", "fee", "bank charge"]),
         (["school", "university", "tuition", "academy", "nursery", "course"], ["education", "school"]),
         (["gym", "fitness", "salon", "barber", "spa"], ["personal", "fitness", "health"]),
@@ -43,7 +45,68 @@ public enum CategoryRules {
     /// Words banks use for money sent to someone else, in many countries
     static let sentToPeopleWords = ["trf", "transfer", "transferred", "remittance", "remit", "ipp", "aani", "p2p", "zelle",
                                     "venmo", "interac", "upi", "imps", "neft", "paynow", "pix", "bizum", "blik", "swish",
-                                    "sepa", "western union", "moneygram", "send money", "sent to", "fast payment"]
+                                    "sepa", "western union", "moneygram", "send money", "sent to", "fast payment",
+                                    // Money apps people use to send to family and friends
+                                    "botim", "ziina", "payit", "wise", "revolut", "remitly", "worldremit", "taptap",
+                                    "sendwave", "mukuru", "skrill", "ria", "paypal", "cash app"]
+
+    /// Words banks use for a loan instalment
+    static let loanWords = ["emi", "loan", "loanrecovery", "instalment", "installment", "repayment"]
+
+    /// Whether money out reads like a loan instalment
+    public static func isLoanPayment(_ description: String) -> Bool {
+        let words = tokens(description)
+        return loanWords.contains { words.contains($0) }
+    }
+
+    static let salaryWords = ["salary", "payroll", "wps", "sal credit", "wages"]
+
+    /// Whether money in says it's pay. Money from friends or a payment app isn't,
+    /// so a guess of "Salary" for it is wrong.
+    public static func saysSalary(_ description: String) -> Bool {
+        let words = tokens(description)
+        let joined = " " + words.joined(separator: " ") + " "
+        return salaryWords.contains { $0.contains(" ") ? joined.contains(" \($0) ") : words.contains($0) }
+    }
+
+    /// Words that put money in from someone, not a business: "B/O Sheila Ankunda", "Transfer from J Smith"
+    static let fromPersonWords = ["b o", "from", "received from", "inward", "ipp", "aani", "p2p", "zelle", "venmo", "interac",
+                                  "upi", "imps", "paynow", "pix", "bizum", "blik", "swish", "fast payment", "remittance"]
+    /// Words that mark the sender as a business. Long ones also count inside a run-together name
+    /// ("NOKAELDASHLOGISTICSFORDELIVER")
+    static let companyWords = ["llc", "ltd", "limited", "inc", "corp", "company", "co", "fze", "fzco", "fzc", "fzllc", "gmbh",
+                               "plc", "pty", "est", "establishment", "logistics", "trading", "services", "solutions",
+                               "holding", "holdings", "group", "bank", "insurance", "ministry", "government", "authority",
+                               "university", "school", "hospital", "restaurant", "technologies", "delivery", "payroll"]
+
+    /// Whether money in reads like it came from family or a friend: a money app, or a transfer
+    /// naming a person rather than a business
+    public static func isFromPeople(_ description: String) -> Bool {
+        let words = tokens(description)
+        let joined = " " + words.joined(separator: " ") + " "
+        func has(_ list: [String]) -> Bool { list.contains { $0.contains(" ") ? joined.contains(" \($0) ") : words.contains($0) } }
+        if saysSalary(description) { return false }
+        if has(moneyApps) { return true }
+        let business = companyWords.contains { key in
+            words.contains(key) || (key.count >= 6 && words.contains { $0.count > key.count && $0.contains(key) })
+        }
+        return !business && has(fromPersonWords)
+    }
+
+    /// Apps people use to send money to each other
+    static let moneyApps = ["botim", "ziina", "payit", "wise", "revolut", "remitly", "worldremit", "taptap", "sendwave",
+                            "mukuru", "skrill", "venmo", "zelle", "cash app", "paypal"]
+
+    /// Whether last time's category still fits: money from a person isn't pay just because it was filed so once
+    public static func historyFits(categoryName: String, description: String, income: Bool) -> Bool {
+        !(income && isSalaryCategory(categoryName) && !saysSalary(description) && isFromPeople(description))
+    }
+
+    /// Whether a category name is for pay
+    public static func isSalaryCategory(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return ["salary", "wage", "payroll"].contains { n.contains($0) }
+    }
 
     /// Whether a description reads like money sent to another person
     public static func isSentToPeople(_ description: String) -> Bool {
@@ -53,7 +116,7 @@ public enum CategoryRules {
     }
 
     static let income: [([String], [String])] = [
-        (["salary", "payroll", "wps", "sal credit", "wages"], ["salary", "pay", "wage"]),
+        (salaryWords, ["salary", "pay", "wage"]),
         (["refund", "reversal", "cashback", "cash back"], ["refund", "other income"]),
         (["interest", "profit", "dividend"], ["interest", "investment", "other income"])
     ]

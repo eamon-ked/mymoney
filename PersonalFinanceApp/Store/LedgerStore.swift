@@ -126,6 +126,17 @@ final class LedgerStore {
                                                currency: s.currency, isSystem: true))
             try? context.save()
         }
+        // Money to and from people moves money without being spending or earning
+        let people = fetch(LedgerAccountRecord.self).filter { $0.kind.isCategory && $0.systemRole == nil && $0.name == "Sent to people" }
+        for record in people where record.group != LedgerAccountRecord.transfersGroup {
+            record.systemRole = "people"
+            record.group = LedgerAccountRecord.transfersGroup
+        }
+        if let role = fetch(LedgerAccountRecord.self).first(where: { $0.systemRole == "people" }),
+           role.group != LedgerAccountRecord.transfersGroup {
+            role.group = LedgerAccountRecord.transfersGroup
+        }
+        if context.hasChanges { try? context.save() }
     }
 
     /// Editable starting categories; the person can rename, archive or add their own
@@ -142,7 +153,7 @@ final class LedgerStore {
             ("Shopping", "Lifestyle", "bag.fill", "#FF2D55"),
             ("Health", "Other", "heart.fill", "#FF3B30"),
             ("Interest & fees", "Other", "percent", "#8E8E93"),
-            ("Sent to people", "Other", "person.2.fill", "#FF9500"),
+            ("Sent to people", LedgerAccountRecord.transfersGroup, "person.2.fill", "#FF9500"),
             ("Other spending", "Other", "ellipsis.circle.fill", "#8E8E93")
         ]
         for (i, c) in expenses.enumerated() where !existing.contains(c.0) {
@@ -153,6 +164,7 @@ final class LedgerStore {
             context.insert(LedgerAccountRecord(name: name, kind: .income, currency: currency, colorHex: "#2BA84A",
                                                icon: "arrow.down.circle.fill", sortOrder: i))
         }
+        _ = fromPeopleCategory
         try commit()
     }
 
@@ -799,8 +811,9 @@ final class LedgerStore {
     }
 
     /// Found by its role, so a renamed one is still found; older stores are matched by name once
-    private func systemCategory(_ role: String, name: String, colorHex: String, icon: String, group: String, sortOrder: Int) -> LedgerAccountRecord {
-        let raw = AccountKind.expense.rawValue
+    private func systemCategory(_ role: String, name: String, colorHex: String, icon: String, group: String, sortOrder: Int,
+                                kind: AccountKind = .expense) -> LedgerAccountRecord {
+        let raw = kind.rawValue
         let expenses = fetch(LedgerAccountRecord.self, #Predicate { $0.kindRaw == raw })
         if let existing = expenses.first(where: { $0.systemRole == role })
             ?? expenses.first(where: { $0.systemRole == nil && $0.name == name }) {
@@ -808,7 +821,7 @@ final class LedgerStore {
             existing.systemRole = role
             return existing
         }
-        let record = LedgerAccountRecord(name: name, kind: .expense, currency: currency, colorHex: colorHex,
+        let record = LedgerAccountRecord(name: name, kind: kind, currency: currency, colorHex: colorHex,
                                          icon: icon, group: group, sortOrder: sortOrder)
         record.systemRole = role
         context.insert(record)
@@ -1083,6 +1096,115 @@ final class LedgerStore {
         }
     }
 
+    // MARK: - Statement findings
+
+    /// Keeps what a statement suggested for Home to ask about, leaving out ones already turned down
+    func saveFindings(_ findings: [StatementFinding]) throws {
+        let dismissed = Set(settings.dismissedFindings)
+        var all = (settings.statementFindingsData.flatMap { try? JSONDecoder().decode([StatementFinding].self, from: $0) }) ?? []
+        for f in findings where !dismissed.contains(f.id) {
+            all.removeAll { $0.kind == f.kind && $0.name == f.name }
+            all.append(f)
+        }
+        let data = try? JSONEncoder().encode(all)
+        try updateSettings { $0.statementFindingsData = data }
+    }
+
+    /// "Not this": stops asking about it
+    func dismissFinding(_ finding: StatementFinding) throws {
+        var all = (settings.statementFindingsData.flatMap { try? JSONDecoder().decode([StatementFinding].self, from: $0) }) ?? []
+        all.removeAll { $0.id == finding.id }
+        let data = try? JSONEncoder().encode(all)
+        try updateSettings { $0.statementFindingsData = data; $0.dismissedFindings.append(finding.id) }
+    }
+
+    /// "Yes": pay becomes the salary plan, a loan or bill a monthly bill, all from the account it was seen in
+    func acceptFinding(_ finding: StatementFinding, accountId: UUID?) throws {
+        switch finding.kind {
+        case .pay:
+            try setUpSalary(finding.amount, every: .monthly(every: 1), nextPayday: finding.nextDate)
+        case .loan, .bill:
+            let item = PlannedItem(name: finding.kind == .loan ? "Loan payment" : finding.name, direction: .outflow,
+                                   amount: finding.amount,
+                                   schedule: Schedule(start: snapshot.calendar.startOfDay(for: finding.nextDate), frequency: .monthly(every: 1)),
+                                   accountId: accountId,
+                                   categoryId: finding.kind == .loan ? loanCategory.id : nil)
+            try savePlannedItem(item)
+        }
+        try dismissFinding(finding)
+    }
+
+    /// Puts away an account that was started but never used, e.g. setup made one for a statement
+    /// and the person went back: nothing in it but a starting balance of nothing. Anything else stays.
+    func discardUnusedAccount(_ accountId: UUID) throws {
+        guard let record = account(accountId), !record.archived else { return }
+        let entries = snapshot.entries(touching: accountId).filter { $0.status == .posted }
+        let unused = entries.allSatisfy { $0.kind == .openingBalance && ($0.entry.amount(on: accountId)?.isZero ?? true) }
+        guard unused else { return }
+        record.archived = true
+        record.updatedAt = now()
+        try commit()
+    }
+
+    /// Remembers the bank's number for an account, read from its statement
+    func setAccountNumber(_ accountId: UUID, _ number: String) throws {
+        guard let record = account(accountId) else { throw StoreError.notFound }
+        record.accountNumber = number
+        record.updatedAt = now()
+        try commit()
+    }
+
+    /// A statement reaching back before the balance an account was added with: that balance already
+    /// included everything older, so counting those rows on top of it counts them twice. The start
+    /// moves back instead: to the statement's own opening balance on its first day when it gives one
+    /// and nothing older is recorded, else to the added balance less what's recorded before it.
+    /// Returns whether anything changed.
+    @discardableResult
+    func anchorOpening(_ accountId: UUID, statementOpening: Money?, firstDay: Date) throws -> Bool {
+        guard let record = account(accountId) else { throw StoreError.notFound }
+        let start = snapshot.calendar.startOfDay(for: firstDay)
+        let opening = openingEntry(for: accountId)
+        let others = snapshot.entries(touching: accountId).filter { $0.kind != .openingBalance && $0.status == .posted }
+        func moved(_ r: EntryRecord) -> Int64 { r.lines.filter { $0.accountId == accountId }.reduce(0) { $0 + $1.minorUnits } }
+
+        let started: Money
+        if let opening {
+            let older = others.filter { $0.date < opening.date }
+            guard let earliest = older.map(\.date).min() else { return false }
+            let newBalance: Money
+            let newDate: Date
+            if let statementOpening, !others.contains(where: { $0.date < start }) {
+                newBalance = statementOpening
+                newDate = start
+            } else {
+                let old = opening.entry.amount(on: accountId) ?? .zero(record.currency)
+                newBalance = old - Money(minorUnits: older.reduce(0) { $0 + moved($1) }, currency: record.currency)
+                newDate = snapshot.calendar.startOfDay(for: earliest)
+            }
+            if newBalance.isZero {
+                try void(opening.id, reason: "Started from a statement")
+                return true
+            }
+            let entry: Entry
+            do { entry = try EntryFactory.openingBalance(newBalance, for: record.info, equity: equityAccount.info, date: newDate) }
+            catch { throw StoreError.from(error) }
+            _ = try replace(opening.id, with: entry, notes: opening.notes)
+            started = newBalance
+        } else {
+            // Added at nothing: the statement's opening is the only start there is
+            guard let statementOpening, !statementOpening.isZero, !others.contains(where: { $0.date < start }) else { return false }
+            let entry: Entry
+            do { entry = try EntryFactory.openingBalance(statementOpening, for: record.info, equity: equityAccount.info, date: start) }
+            catch { throw StoreError.from(error) }
+            _ = try post(entry)
+            started = statementOpening
+        }
+        context.insert(AuditRecord(action: "account.anchored", subjectId: accountId,
+                                   summary: "Started \(record.name) at \(MoneyFormat.string(started)) from a statement"))
+        try commit()
+        return true
+    }
+
     // MARK: - Wrong account type
 
     /// Entries on an account that could belong to another one instead: not what it was added with,
@@ -1197,7 +1319,14 @@ final class LedgerStore {
 
     /// Where spending on other people goes when nothing better fits: money sent, or a loan they won't repay
     var peopleCategory: LedgerAccountRecord {
-        systemCategory("people", name: "Sent to people", colorHex: "#FF9500", icon: "person.2.fill", group: "Other", sortOrder: 97)
+        systemCategory("people", name: "Sent to people", colorHex: "#FF9500", icon: "person.2.fill",
+                       group: LedgerAccountRecord.transfersGroup, sortOrder: 97)
+    }
+
+    /// Money from family and friends: it arrives, but it isn't pay
+    var fromPeopleCategory: LedgerAccountRecord {
+        systemCategory("fromPeople", name: "From people", colorHex: "#FF9500", icon: "person.2.fill",
+                       group: LedgerAccountRecord.transfersGroup, sortOrder: 97, kind: .income)
     }
 
     /// Someone's own "Money lent" account, found by name or opened at nothing owed

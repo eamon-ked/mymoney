@@ -28,6 +28,14 @@ enum HomeTask: Identifiable {
     case person(LedgerAccountRecord, balance: Money, due: Date?)
     case stale(LedgerAccountRecord)
     case backup(neverSaved: Bool)
+    /// Pay, a loan or a bill an imported statement showed, to set up with one tap
+    case finding(StatementFinding)
+    /// The rest of the picture, after setup let the person straight into Home
+    case setUp(SetUpStep)
+
+    enum SetUpStep: String {
+        case payday, bills
+    }
 
     var id: String {
         switch self {
@@ -41,6 +49,8 @@ enum HomeTask: Identifiable {
         case .person(let p, _, _): "person-\(p.id)"
         case .stale(let a): "stale-\(a.id)"
         case .backup: "backup"
+        case .finding(let f): "finding-\(f.id)"
+        case .setUp(let step): "setUp-\(step.rawValue)"
         }
     }
 
@@ -53,6 +63,10 @@ enum HomeTask: Identifiable {
         tasks += bills.filter { snapshot.state(of: $0) == .overdue }.map(HomeTask.bill)
         tasks += bills.filter { [.dueToday, .partiallyPaid].contains(snapshot.state(of: $0)) }.map(HomeTask.bill)
         tasks += suggestions.map(HomeTask.billLink)
+
+        // Filling in the picture: what a statement showed first, then what's still missing
+        let findings = snapshot.statementFindings
+        tasks += findings.map(HomeTask.finding)
 
         if snapshot.setupComplete, let due = PaydayPlan.dueSalary(snapshot) { tasks.append(.payday(due.item, due.occurrence)) }
 
@@ -81,6 +95,17 @@ enum HomeTask: Identifiable {
         }.map(HomeTask.stale)
 
         if needsBackup(snapshot) { tasks.append(.backup(neverSaved: snapshot.settings.lastBackupAt == nil)) }
+
+        // Last: what's still missing from the picture, until it's added or turned down
+        let skipped = Set(snapshot.settings.dismissedFindings)
+        if snapshot.hasAccounts, snapshot.nextIncomeDate == nil, !findings.contains(where: { $0.kind == .pay }),
+           !skipped.contains("setUp-payday") {
+            tasks.append(.setUp(.payday))
+        }
+        if snapshot.hasAccounts, !snapshot.items.contains(where: { $0.direction == .outflow }),
+           !findings.contains(where: { $0.kind != .pay }), !skipped.contains("setUp-bills") {
+            tasks.append(.setUp(.bills))
+        }
         return tasks
     }
 

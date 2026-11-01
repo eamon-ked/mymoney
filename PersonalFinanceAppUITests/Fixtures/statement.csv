@@ -1,0 +1,10 @@
+"Account Number: 11392149920001 AED",
+"Statement Period: From 20/10/2026 to 01/11/2026",
+"Opening Balance: 2.23 AED",
+"Closing Balance: 176.19 AED",
+Posting Date,Value Date,Reference No,Description,Debit Amount,Credit Amount,Balance
+"20/10/2026 16:07:19","20/10/2026","P1","736668522 B/O ACMEDELIVERYLOGISTICSLLC","0.00","5","7.23",
+"26/10/2026 09:00:00","26/10/2026","S1","SALARY","0.00","12000","12007.23",
+"26/10/2026 09:05:00","26/10/2026","L1","LOANRECOVERY-EMI:11392149P022001","5781","0.00","6226.23",
+"31/10/2026 23:48:34","31/10/2026","P2","743378734 B/O Jane Doe","0.00","30","6256.23",
+"01/11/2026 12:54:34","01/11/2026","T2","41587896180 MBTRF AED6080.04 TRF OUT TO john smith","6080.04","0.00","176.19",

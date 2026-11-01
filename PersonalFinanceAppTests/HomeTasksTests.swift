@@ -41,6 +41,8 @@ struct HomeTasksTests {
         case .person: "person"
         case .stale: "stale"
         case .backup: "backup"
+        case .finding: "finding"
+        case .setUp: "setUp"
         }
     }
 
@@ -73,7 +75,8 @@ struct HomeTasksTests {
         }
 
         let tasks = HomeTask.all(store.snapshot)
-        #expect(tasks.map(kind) == ["bill", "billLink", "overspent", "review", "unplanned", "backup"])
+        // No pay planned, so Home also asks for a payday, after everything else
+        #expect(tasks.map(kind) == ["bill", "billLink", "overspent", "review", "unplanned", "backup", "setUp"])
         if case .review(let count) = tasks[3] { #expect(count == 3) }
         if case .overspent(let c, let by) = tasks[2] { #expect(c.name == "Groceries" && by == aed(50)) }
         if case .bill(let occ) = tasks[0] { #expect(store.snapshot.item(for: occ)?.name == "Phone") }
@@ -87,7 +90,8 @@ struct HomeTasksTests {
         let giro = try store.createAccount(name: "Girokonto", kind: .bank, opening: eur(1000), openingDate: today)
         try store.updateSettings { $0.onboardingDone = true }
         try store.setAllocation(eur(1000), categoryId: category("Groceries").id, month: store.snapshot.monthKey)
-        #expect(HomeTask.all(store.snapshot).isEmpty)
+        // Only the optional setup: a payday and bills, which this person hasn't added
+        #expect(HomeTask.all(store.snapshot).map(\.id) == ["setUp-payday", "setUp-bills"])
 
         try store.post(EntryFactory.expense(eur(1200), from: giro.info, category: category("Groceries").info, date: today, memo: "Rewe"))
         let first = try #require(HomeTask.all(store.snapshot).first)

@@ -287,8 +287,8 @@ extension Redesign {
         var body: some View {
             let s = app.snapshot
             let key = month ?? s.monthKey
-            let expense = s.accountRecords.filter { $0.kind == .expense }.map(\.info)
-            let income = s.accountRecords.filter { $0.kind == .income }.map(\.info)
+            let expense = s.spendingCategoryInfos
+            let income = s.earningCategoryInfos
             let report = Reports.month(key, ledger: s.ledger, expenseCategories: expense, incomeCategories: income,
                                        budget: s.budget, calendar: s.calendar, loanCategories: s.loanCategories)
             let total = report.totals.spending
@@ -323,6 +323,24 @@ extension Redesign {
                     bar("Money out", total, max: max(report.totals.income, total))
                 }
                 .rdPanel()
+            }
+
+            let people = s.peopleCategoryInfos
+            let moved = Reports.totals(key, ledger: s.ledger, expenseCategories: people.sent, incomeCategories: people.received,
+                                       calendar: s.calendar)
+            if moved.spending.isPositive || moved.income.isPositive {
+                VStack(alignment: .leading, spacing: 8) {
+                    if moved.spending.isPositive {
+                        HStack { Text("Sent to people"); Spacer(); Text(private: app.money(moved.spending)) }.rdText(.detail)
+                    }
+                    if moved.income.isPositive {
+                        HStack { Text("From people"); Spacer(); Text(private: app.money(moved.income)) }.rdText(.detail)
+                    }
+                    Text("Money with family and friends isn't counted as spending or income.")
+                        .rdText(.caption).foregroundStyle(Theme.muted)
+                }
+                .rdPanel()
+                .padding(.top, 12)
             }
 
             SectionHeading(title: "Where it went", action: report.spending.count > 5 || !report.income.isEmpty ? (showAll ? "Show fewer" : "See all") : nil) {

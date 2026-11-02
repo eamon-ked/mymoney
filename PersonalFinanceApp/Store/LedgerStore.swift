@@ -836,6 +836,8 @@ final class LedgerStore {
                                          icon: icon, group: group, sortOrder: sortOrder)
         record.systemRole = role
         context.insert(record)
+        // A snapshot built before it was added doesn't know it
+        revision += 1
         return record
     }
 
@@ -905,6 +907,7 @@ final class LedgerStore {
                                    summary: terms.map { "\(debt.name): \($0.annualRatePercent)% a year, \(MoneyFormat.string($0.monthlyPayment)) a month" }
                                        ?? "\(debt.name): terms removed"))
         try commit()
+        try splitEarlierPayments(debtId)
     }
 
     /// Records a card or loan payment: the paying account drops by the whole amount,
@@ -950,6 +953,7 @@ final class LedgerStore {
         let loans = fetch(LedgerAccountRecord.self).filter { $0.kind == .loan && !$0.archived }
         guard !loans.isEmpty else { return }
         try moveLoanPayments()
+        for loan in loans { try splitEarlierPayments(loan.id) }
         var planned = Set<UUID>()
         for loan in loans {
             let category = chargeCategory(for: loan)
@@ -1086,6 +1090,15 @@ final class LedgerStore {
     /// Fixes the balance an account was added with, e.g. a loan entered as 36,000 that was really 63,000.
     /// Everything recorded since stays as it is, so today's balance moves by the same difference.
     func correctOpeningBalance(_ accountId: UUID, to balance: Money) throws {
+        try setOpening(accountId, to: balance)
+        // A loan started from a statement is finished once something is owed on it
+        if settings.unfinishedLoans.contains(accountId), snapshot.balance(accountId).isNegative {
+            try updateSettings { $0.unfinishedLoans.removeAll { $0 == accountId } }
+        }
+        try splitEarlierPayments(accountId)
+    }
+
+    private func setOpening(_ accountId: UUID, to balance: Money) throws {
         guard let record = account(accountId) else { throw StoreError.notFound }
         let current = snapshot.balance(accountId)
         if let opening = openingEntry(for: accountId) {
@@ -1209,13 +1222,22 @@ final class LedgerStore {
     }
 
     /// What's left on a loan started from a statement, a new name when given, and its rate when known.
-    /// Payments already recorded stay; the start moves so today's amount owed is what they typed
+    /// Payments already recorded stay; the start moves so today's amount owed is what they typed,
+    /// after each of those payments has had its month's interest taken out
     func finishLoan(_ loanId: UUID, name: String, owed: Money, annualRateBps: Int?) throws {
         guard let loan = account(loanId), loan.kind == .loan else { throw StoreError.notFound }
         let title = name.trimmingCharacters(in: .whitespaces)
         guard owed.isPositive else { throw StoreError.invalid("Enter what you still owe.") }
-        let opening = openingEntry(for: loanId)?.entry.amount(on: loanId) ?? .zero(currency)
-        try correctOpeningBalance(loanId, to: opening - owed - snapshot.balance(loanId))
+        let rate = loan.debtTerms == nil ? 0 : annualRateBps ?? loan.debtTerms?.annualRateBps ?? 0
+        let opening = openingEntry(for: loanId)?.entry.amount(on: loanId)?.negated ?? .zero(currency)
+        // Interest makes the start a little more than owed plus payments; a few rounds settle it to the cent
+        var start = opening + owed + snapshot.balance(loanId)
+        for _ in 0..<10 {
+            let after = paymentSplits(loanId, opening: start, rateBps: rate).owed
+            if after == owed { break }
+            start += owed - after
+        }
+        try correctOpeningBalance(loanId, to: start.negated)
         if !title.isEmpty { loan.name = title }
         loan.updatedAt = now()
         // Saved again so the bill takes the new name, and the rate when given
@@ -1224,6 +1246,55 @@ final class LedgerStore {
             try saveDebtTerms(terms, for: loanId, paidFrom: snapshot.paymentItem(for: loanId)?.accountId)
         }
         try updateSettings { $0.unfinishedLoans.removeAll { $0 == loanId } }
+    }
+
+    /// Instalments recorded before what's owed on a loan was known went in whole, as plain
+    /// transfers. Once what's owed and the rate are known, each is recorded again as a loan
+    /// payment, in date order: a month's interest on what was owed then, the rest off the loan.
+    /// Only transfers of the monthly payment are taken, so a lump sum paid in stays as it was.
+    private func splitEarlierPayments(_ loanId: UUID) throws {
+        guard let loan = account(loanId), loan.kind == .loan, let rate = loan.debtTerms?.annualRateBps, rate > 0,
+              let opening = openingEntry(for: loanId)?.entry.amount(on: loanId)?.negated, opening.isPositive else { return }
+        let splits = paymentSplits(loanId, opening: opening, rateBps: rate).splits
+        guard !splits.isEmpty else { return }
+        let category = chargeCategory(for: loan)
+        var months = Set<String>()
+        for (record, funding, split) in splits {
+            let entry: Entry
+            do {
+                entry = try EntryFactory.debtPayment(principal: split.principal, interest: split.interest, fees: split.fees,
+                                                     from: funding.info, debt: loan.info, interestCategory: category.info,
+                                                     date: record.date, memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
+            } catch { throw StoreError.from(error) }
+            _ = try replace(record.id, with: entry, notes: record.notes)
+            months.insert(BudgetMonth.key(for: record.date, calendar: snapshot.calendar))
+        }
+        for month in months { try planInstalments(for: month, category: category) }
+    }
+
+    /// Walks a loan's entries from a given start: which instalment transfers would split, and what's owed after
+    private func paymentSplits(_ loanId: UUID, opening: Money, rateBps: Int)
+        -> (splits: [(record: EntryRecord, funding: LedgerAccountRecord, split: PaymentSplit)], owed: Money) {
+        let monthly = account(loanId)?.debtTerms?.monthlyPayment
+        let records = snapshot.entryRecords
+            .filter { $0.status == .posted && $0.lines.contains { $0.accountId == loanId } }
+            .sorted { ($0.date, $0.kind == .openingBalance ? 0 : 1) < ($1.date, $1.kind == .openingBalance ? 0 : 1) }
+        var owed = opening
+        var splits: [(EntryRecord, LedgerAccountRecord, PaymentSplit)] = []
+        for record in records {
+            guard record.kind != .openingBalance, let paid = record.entry.amount(on: loanId) else { continue }
+            if record.kind == .transfer, paid.isPositive, paid == monthly,
+               let funding = record.lines.lazy.compactMap({ self.account($0.accountId) }).first(where: { $0.kind.isAsset }) {
+                let split = DebtCalculator.split(payment: paid, owed: owed, annualRateBps: rateBps)
+                if split.interest.isPositive, !split.overpaid.isPositive {
+                    splits.append((record, funding, split))
+                    owed -= split.principal
+                    continue
+                }
+            }
+            owed -= paid
+        }
+        return (splits, owed)
     }
 
     /// Remembers the bank's number for an account, read from its statement

@@ -119,10 +119,11 @@ struct FinanceSnapshot {
 
     /// What an imported statement suggested setting up, still to confirm: pay only while there's no
     /// income planned, a loan or bill only while nothing of that amount is planned
-    /// Loans started from a statement that still need what's owed
+    /// Loans started from a statement that still need what's owed. Once something is owed,
+    /// however it was entered (Finish your loan, Rate and payment, Starting amount), it's finished
     var unfinishedLoans: [LedgerAccountRecord] {
         let ids = Set(settings.unfinishedLoans)
-        return accountRecords.filter { ids.contains($0.id) && $0.kind == .loan && !$0.archived }
+        return accountRecords.filter { ids.contains($0.id) && $0.kind == .loan && !$0.archived && !balance($0.id).isNegative }
     }
 
     var statementFindings: [StatementFinding] {

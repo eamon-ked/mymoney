@@ -73,12 +73,40 @@ struct LoanFromStatementTests {
         try store.finishLoan(loan.id, name: "Construction", owed: Self.aed(244561.31), annualRateBps: 750)
         let after = store.snapshot
         #expect(after.owed(loan.id) == Self.aed(244561.31))
+        // Both instalments are loan payments now, each with its month's interest out
+        let payments = after.entries(touching: loan.id).filter { $0.kind == .debtPayment }
+        #expect(payments.count == 2)
+        #expect(payments.allSatisfy { $0.entry.amount(on: bank.id) == Self.aed(-5781) && $0.entry.amount(on: loan.id)! < Self.aed(5781) })
         #expect(after.unfinishedLoans.isEmpty)
         #expect(after.account(loan.id)?.name == "Construction")
         #expect(after.account(loan.id)?.debtTerms?.annualRateBps == 750)
         #expect(after.paymentItem(for: loan.id)?.accountId == bank.id)
         #expect(after.paymentItem(for: loan.id)?.name == "Construction payment")
         #expect(!HomeTask.all(after).contains { if case .finishLoan = $0 { true } else { false } })
+    }
+
+    @Test func owedEnteredAnotherWayFinishesTheLoan() throws {
+        let loan = try store.addUnfinishedLoan(name: "Loan …2001", openingDate: LedgerStoreTests.date(2026, 10, 26))
+        try store.post(EntryFactory.transfer(Self.aed(5781), from: bank.info, to: loan.info, date: LedgerStoreTests.date(2026, 10, 26)))
+        try store.startLoan(loan.id, payments: [(LedgerStoreTests.date(2026, 10, 26), Self.aed(5781))], paidFrom: bank.id)
+        #expect(store.snapshot.unfinishedLoans.count == 1)
+        // Rate and payment's "Owed when added"
+        try store.correctOpeningBalance(loan.id, to: Self.aed(248787.39).negated)
+        #expect(store.snapshot.unfinishedLoans.isEmpty)
+        #expect(store.settings.unfinishedLoans.isEmpty)
+        #expect(!HomeTask.all(store.snapshot).contains { $0.id == "finishLoan-\(loan.id)" })
+
+        // Then the rate: the payment made before is split, a month's interest at 7.5% out of it
+        let terms = try #require(store.account(loan.id)?.debtTerms)
+        try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: terms.monthlyPayment, dueDay: terms.dueDay),
+                                for: loan.id, paidFrom: bank.id)
+        let s = store.snapshot
+        #expect(s.owed(loan.id) == Self.aed(244561.31))
+        let payment = try #require(s.entries(touching: loan.id).first { $0.kind == .debtPayment })
+        #expect(payment.entry.amount(on: loan.id) == Self.aed(4226.08))
+        // Done once: saving again changes nothing
+        try store.tidyLoanPayments()
+        #expect(store.snapshot.owed(loan.id) == Self.aed(244561.31))
     }
 
     @Test func anExistingLoanStillTakesItsInstalments() throws {

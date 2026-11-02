@@ -5,13 +5,13 @@ Each field sits in its own fenced block so it can be copied into App Store Conne
 ## Name (30 max)
 
 ```
-Budget Tracker – Nokael Money
+Budget & Safe to Spend: Nokael
 ```
 
 ## Subtitle (30 max)
 
 ```
-Expense, Bills & Savings Goals
+Personal Finance & Net Worth
 ```
 
 ## Keywords (100 max)
@@ -95,12 +95,15 @@ A whole new Nokael Money: redesigned from top to bottom to be calmer and easier 
 • Money with friends: split a bill, lend money or note who paid for you, and see who owes whom
 • Safe to spend for payday, the week or the month, with a clear breakdown
 • "Needs you" on Home lists only what's worth doing next
+• Start from your bank's statement: import a CSV and your balance, pay, bills and loan payments are picked up for you
+• Money sent to or from friends stays out of your spending and income
+• A loan found in a statement is added in one tap; add what's still owed later and each payment is split into interest and principal
 • More for free: export, 3 savings goals, 3 months of reports and your first statement import for each account
 ```
 
 ## URLs
 
-- Support URL: `https://mymoney-legal-docs.pages.dev`
+- Support URL: `https://github.com/Eamonked/money_issue_report/issues`
 - Privacy Policy URL: `https://mymoney-legal-docs.pages.dev/privacy-policy.html`
 - Terms of Use (EULA): Apple's standard EULA. Leave the custom EULA field empty in App Store Connect; the link above is in the description, and Terms of Use are also at `https://mymoney-legal-docs.pages.dev/terms-of-service.html`.
 
@@ -114,15 +117,15 @@ A whole new Nokael Money: redesigned from top to bottom to be calmer and easier 
 
 ## Character counts
 
-Checked with a script on 31 October 2026:
+Checked with a script on 2 November 2026:
 
 | Field | Characters | Limit | Status |
 | --- | --- | --- | --- |
-| Name | 29 | 30 | OK |
-| Subtitle | 30 | 30 | OK |
+| Name | 30 | 30 | OK |
+| Subtitle | 28 | 30 | OK |
 | Keywords | 97 | 100 | OK |
 | Promotional Text | 152 | 170 | OK |
 | Description | 3382 | 4000 | OK |
-| What's New in Version 2.1.3 | 557 | 4000 | OK |
+| What's New in Version 2.1.3 | 878 | 4000 | OK |
 
 Keywords: 14 terms, no spaces.

@@ -192,6 +192,19 @@ struct BudgetTests {
         #expect(fresh.availableToAllocate(month: nov) == rolling.availableToAllocate(month: nov) + Fixture.aed(200))
     }
 
+    @Test("Overspending isn't carried into the next month; leftovers are")
+    func overspendingStaysInItsMonth() throws {
+        let entries = [try opening(5000),
+                       try EntryFactory.expense(Fixture.aed(700), from: f.current, category: f.groceries, date: Fixture.date(2026, 10, 9))]
+        let b = budget(entries, [Allocation(categoryId: f.groceries.id, month: oct, amount: Fixture.aed(500)),
+                                 Allocation(categoryId: f.groceries.id, month: nov, amount: Fixture.aed(500))])
+        #expect(b.line(f.groceries.id, month: oct).remaining == Fixture.aed(-200))
+        #expect(b.line(f.groceries.id, month: nov).carriedIn.isZero)
+        #expect(b.line(f.groceries.id, month: nov).remaining == Fixture.aed(500))
+        // The 200 over is gone from the account, so it's out of what's left to plan
+        #expect(b.availableToAllocate(month: nov) == Fixture.aed(3800))
+    }
+
     @Test func futureAllocationsReduceAvailableNow() throws {
         let b = budget([try opening(1000)], [Allocation(categoryId: f.groceries.id, month: nov, amount: Fixture.aed(300))])
         #expect(b.availableToAllocate(month: oct) == Fixture.aed(700))

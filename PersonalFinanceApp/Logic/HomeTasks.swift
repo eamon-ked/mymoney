@@ -14,6 +14,8 @@ enum HomeTask: Identifiable {
     case bill(Occurrence)
     /// A payment already recorded that looks like an unpaid bill
     case billLink(BillSuggestion)
+    /// Two bills that look like the same payment, kept twice
+    case sameBills(PlannedItem, PlannedItem)
     case payday(PlannedItem, Occurrence)
     /// Spent more than the category's budget
     case overspent(LedgerAccountRecord, by: Money)
@@ -41,6 +43,7 @@ enum HomeTask: Identifiable {
         switch self {
         case .bill(let o): "bill-\(o.id)"
         case .billLink(let s): "link-\(s.id)"
+        case .sameBills(let a, let b): "same-\([a.id.uuidString, b.id.uuidString].sorted().joined(separator: "-"))"
         case .payday(_, let o): "payday-\(o.id)"
         case .overspent(let c, _): "over-\(c.id)"
         case .noBudget: "noBudget"
@@ -63,6 +66,8 @@ enum HomeTask: Identifiable {
         tasks += bills.filter { snapshot.state(of: $0) == .overdue }.map(HomeTask.bill)
         tasks += bills.filter { [.dueToday, .partiallyPaid].contains(snapshot.state(of: $0)) }.map(HomeTask.bill)
         tasks += suggestions.map(HomeTask.billLink)
+        let skipped = Set(snapshot.settings.dismissedFindings)
+        tasks += snapshot.duplicateBills.map(HomeTask.sameBills).filter { !skipped.contains($0.id) }
 
         // Filling in the picture: what a statement showed first, then what's still missing
         let findings = snapshot.statementFindings
@@ -71,7 +76,7 @@ enum HomeTask: Identifiable {
         if snapshot.setupComplete, let due = PaydayPlan.dueSalary(snapshot) { tasks.append(.payday(due.item, due.occurrence)) }
 
         let month = snapshot.monthKey
-        let lines = snapshot.expenseCategories.map { ($0, snapshot.budget.line($0.id, month: month)) }
+        let lines = snapshot.budgetCategories.map { ($0, snapshot.budget.line($0.id, month: month)) }
         for (c, line) in lines where line.isOverBudget { tasks.append(.overspent(c, by: line.remaining.magnitude)) }
         let unbudgeted = lines.filter { $0.1.isUnbudgetedSpending }.sorted { $0.1.spent > $1.1.spent }
         if !unbudgeted.isEmpty {
@@ -97,7 +102,6 @@ enum HomeTask: Identifiable {
         if needsBackup(snapshot) { tasks.append(.backup(neverSaved: snapshot.settings.lastBackupAt == nil)) }
 
         // Last: what's still missing from the picture, until it's added or turned down
-        let skipped = Set(snapshot.settings.dismissedFindings)
         if snapshot.hasAccounts, snapshot.nextIncomeDate == nil, !findings.contains(where: { $0.kind == .pay }),
            !skipped.contains("setUp-payday") {
             tasks.append(.setUp(.payday))

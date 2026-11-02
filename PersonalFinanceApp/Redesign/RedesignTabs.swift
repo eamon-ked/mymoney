@@ -384,10 +384,13 @@ extension Redesign {
     struct TaskRow: View {
         @Environment(AppModel.self) private var app
         let task: HomeTask
+        @State private var choosing = false
 
         var body: some View {
             if case .finding(let finding) = task {
                 findingRow(finding)
+            } else if case .sameBills(let a, let b) = task {
+                sameBillsRow(a, b)
             } else if case .setUp = task {
                 // No regular pay or no bills: say so once and it stops asking
                 row.contextMenu {
@@ -423,6 +426,43 @@ extension Redesign {
             .padding(.vertical, 12)
         }
 
+        /// Two bills that look the same: keep one, or say both are real
+        private func sameBillsRow(_ a: PlannedItem, _ b: PlannedItem) -> some View {
+            let (symbol, tone, title, detail) = look
+            return HStack(alignment: .top, spacing: 12) {
+                IconBox(symbol: symbol, tone: tone, small: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(private: title).rdText(.cardTitle)
+                    Text(private: detail).rdText(.caption).foregroundStyle(Theme.muted)
+                    HStack(spacing: 16) {
+                        Button("Keep one") { choosing = true }
+                            .rdText(.label).foregroundStyle(Theme.primary)
+                            .accessibilityIdentifier("keepOneBill")
+                        Button("Both are real") { try? app.store.updateSettings { $0.dismissedFindings.append(task.id) } }
+                            .rdText(.label).foregroundStyle(Theme.muted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 12)
+            .confirmationDialog("Which one do you keep?", isPresented: $choosing, titleVisibility: .visible) {
+                ForEach([(a, b), (b, a)], id: \.0.id) { keep, stop in
+                    Button("Keep \(keep.name), due \(app.day(nextDue(keep)))") {
+                        do { try app.store.keepBill(keep.id, stopping: stop.id) }
+                        catch { app.toast = Toast(message: StoreError.from(error).errorDescription ?? "Couldn't change it.", isError: true) }
+                    }
+                }
+            } message: {
+                Text("The other one stops. Payments already made stay in your history.")
+            }
+        }
+
+        private func nextDue(_ item: PlannedItem) -> Date {
+            app.snapshot.occurrences.first { $0.itemId == item.id && !$0.isSettledOrStarted && $0.dueDate >= app.snapshot.calendar.startOfDay(for: app.today) }?.dueDate
+                ?? item.schedule.start
+        }
+
         private var row: some View {
             let (symbol, tone, title, detail) = look
             return Button(action: run) {
@@ -455,6 +495,10 @@ extension Redesign {
                 let name = app.hidesDetails ? "a bill" : suggestion.item.name
                 return ("link", .green, "Is this your \(name) payment?",
                         "\(app.money(suggestion.payment.amount)) on \(app.day(suggestion.entry.date)). Link it so it isn't counted twice.")
+            case .sameBills(let a, let b):
+                let names = app.hidesDetails ? "Two bills" : "\(a.name) and \(b.name)"
+                return ("doc.on.doc", .alert, "Is this the same bill twice?",
+                        "\(names) are both \(app.money(a.amount)), due \(app.day(nextDue(a))) and \(app.day(nextDue(b))). Kept twice, the money is set aside twice.")
             case .payday(let item, _):
                 return ("arrow.down.left", .green, "Payday? Got your \(app.hidesDetails ? "salary" : item.name.lowercased())",
                         "Record it, plan this month's budget and top up your goals in one go.")
@@ -517,6 +561,7 @@ extension Redesign {
             case .bill(let occ): app.open(.bill(occ.id))
             case .billLink(let s): app.open(.billLink(s.occurrence.id))
             case .payday: app.open(.payday)
+            case .sameBills: choosing = true
             case .overspent(let c, _): app.open(.category(c.id))
             case .noBudget, .unplanned: app.go(.budget)
             case .review: app.open(.review)
@@ -793,7 +838,9 @@ extension Redesign {
                         Divided(items: groups[group] ?? []) { CategoryRow(category: $0) }
                     }
                     if filtered.isEmpty { EmptyNote(text: "No categories match. Choose All to see every one.") }
-                    Redesign.footnote("Your budget is a plan, not available cash. Bills are included in their categories, never counted twice. Not planned yet: \(app.money(app.unallocated)).")
+                    Redesign.footnote("Your budget is a plan, not available cash. Bills are included in their categories, never counted twice. " + (app.unallocated < 0
+                        ? "You've planned \(app.money(-app.unallocated)) more than you have."
+                        : "Not planned yet: \(app.money(app.unallocated))."))
                         .padding(.top, 20)
                 }
 

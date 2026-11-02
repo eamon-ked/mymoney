@@ -355,6 +355,8 @@ extension Redesign {
     /// Every regular bill and expected income, to change or stop
     struct Schedules: View {
         @Environment(AppModel.self) private var app
+        /// Pressed and held to remove, waiting on a yes
+        @State private var removing: PlannedItem?
 
         var body: some View {
             let items = app.snapshot.items
@@ -387,10 +389,25 @@ extension Redesign {
                             .padding(.vertical, 12).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(item.direction == .inflow ? "Stop expecting this" : "Remove this bill", systemImage: "trash", role: .destructive) {
+                                removing = item
+                            }
+                        }
                         if i < items.count - 1 { Redesign.hairline }
                     }
                 }
                 .rdPanel(padding: 14)
+                .confirmationDialog(removing.map { "Remove \($0.name)?" } ?? "", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                                    titleVisibility: .visible, presenting: removing) { item in
+                    Button("Remove", role: .destructive) {
+                        if let problem = app.attempt("Removed.", closing: false, { try app.store.archivePlannedItem(item.id) }) {
+                            app.toast = Toast(message: problem, isError: true)
+                        }
+                    }
+                } message: { _ in
+                    Text("Future unpaid ones are removed. Payments already made stay in your history.")
+                }
             }
         }
     }

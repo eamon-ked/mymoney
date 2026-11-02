@@ -48,6 +48,13 @@ struct StatementSetupTests {
         #expect(StatementImport.currency(in: uk) == nil)
     }
 
+    @Test func namesTheOtherOwnAccountNotTheReference() {
+        let row = "41421369215MBTRFAED1000.00@11392149810001"
+        #expect(StatementImport.otherOwnAccount(in: row, ownNumber: "11392149920001") == "11392149810001")
+        #expect(StatementImport.isOwnAccountTransfer(row, ownNumber: "11392149920001"))
+        #expect(StatementImport.otherOwnAccount(in: "41031133397 MBTRF AED350 TRF OUT TO john smith", ownNumber: "11392149920001") == nil)
+    }
+
     @Test func noBalancesWhenTheFileHasNone() {
         let plain = "Date,Description,Amount\n2026-10-01,Coffee,-5\n2026-10-02,Lunch,-12"
         #expect(StatementImport.balances(in: plain, currency: "USD", calendar: calendar) == nil)

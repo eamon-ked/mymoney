@@ -390,8 +390,14 @@ public enum StatementImport {
     /// the description names an account number that isn't this one but
     /// starts with the same customer digits ("…@11392149810001" from 11392149920001)
     public static func isOwnAccountTransfer(_ description: String, ownNumber: String?) -> Bool {
-        guard let own = ownNumber, own.count >= 10 else { return false }
-        return longNumbers(description).contains { $0 != own && $0.count == own.count && $0.prefix(8) == own.prefix(8) }
+        otherOwnAccount(in: description, ownNumber: ownNumber) != nil
+    }
+
+    /// The person's other account a transfer names: "11392149810001" in
+    /// "41421369215MBTRFAED1000.00@11392149810001", not the reference before it
+    public static func otherOwnAccount(in description: String, ownNumber: String?) -> String? {
+        guard let own = ownNumber, own.count >= 10 else { return nil }
+        return longNumbers(description).first { $0 != own && $0.count == own.count && $0.prefix(8) == own.prefix(8) }
     }
 
     /// Runs of 10 or more digits, spaces inside an IBAN allowed

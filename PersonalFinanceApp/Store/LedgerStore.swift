@@ -624,6 +624,17 @@ final class LedgerStore {
         try commit()
     }
 
+    /// One of two bills that are the same payment stops; paid history of both stays. When the one
+    /// going was the loan's, the one kept takes over the link, so the loan still knows its bill.
+    func keepBill(_ keepId: UUID, stopping otherId: UUID) throws {
+        guard let keep = fetch(PlannedItemRecord.self, #Predicate { $0.id == keepId }).first,
+              let other = fetch(PlannedItemRecord.self, #Predicate { $0.id == otherId }).first else { throw StoreError.notFound }
+        if keep.debtId == nil, let debtId = other.debtId { keep.debtId = debtId }
+        archive(other)
+        context.insert(AuditRecord(action: "bill.duplicate", subjectId: otherId, summary: "Kept \(keep.name), stopped \(other.name)"))
+        try commit()
+    }
+
     private func archive(_ record: PlannedItemRecord) {
         let id = record.id
         record.archived = true
@@ -872,8 +883,13 @@ final class LedgerStore {
         debt.debtTerms = terms
         debt.updatedAt = now()
 
-        let linked = fetch(PlannedItemRecord.self).filter { $0.debtId == debtId && !$0.archived }
+        var linked = fetch(PlannedItemRecord.self).filter { $0.debtId == debtId && !$0.archived }
         if let terms, let fundingId, let dueDay = terms.dueDay {
+            // A bill already kept by hand for this payment becomes the loan's, rather than a second one
+            if linked.isEmpty, debt.kind == .loan,
+               let same = sameLoanBill(terms.monthlyPayment, category: snapshot.loanCategories[debtId], linkedToo: false) {
+                linked = [same]
+            }
             let start = DebtCalculator.nextDueDate(dueDay: dueDay, onOrAfter: now(), calendar: calendar)
             let item = PlannedItem(id: linked.first?.id ?? UUID(), name: "\(debt.name) payment", direction: .outflow,
                                    amount: terms.monthlyPayment,
@@ -1123,6 +1139,9 @@ final class LedgerStore {
         switch finding.kind {
         case .pay:
             try setUpSalary(finding.amount, every: .monthly(every: 1), nextPayday: finding.nextDate)
+        case .loan where sameLoanBill(finding.amount, category: loanCategory.id) != nil:
+            // Already kept, by hand or with the loan: a second bill would hold the money back twice
+            break
         case .loan, .bill:
             let item = PlannedItem(name: finding.kind == .loan ? "Loan payment" : finding.name, direction: .outflow,
                                    amount: finding.amount,
@@ -1132,6 +1151,19 @@ final class LedgerStore {
             try savePlannedItem(item)
         }
         try dismissFinding(finding)
+    }
+
+    /// A monthly bill of this amount for a loan payment kept under the loan's category, and with
+    /// `linkedToo`, one already linked to a loan paid from that category
+    private func sameLoanBill(_ amount: Money, category: UUID?, linkedToo: Bool = true) -> PlannedItemRecord? {
+        let loans = Set(snapshot.accountRecords.filter { $0.kind == .loan }.map(\.id))
+        return fetch(PlannedItemRecord.self).first { record in
+            let item = record.item
+            guard !record.archived, item.direction == .outflow, item.amount == amount,
+                  item.schedule.frequency == .monthly(every: 1) else { return false }
+            if let debtId = item.debtId { return linkedToo && loans.contains(debtId) && category != nil && snapshot.loanCategories[debtId] == category }
+            return category != nil && item.categoryId == category
+        }
     }
 
     /// Puts away an account that was started but never used, e.g. setup made one for a statement

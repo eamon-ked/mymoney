@@ -27,7 +27,8 @@ public enum BudgetMonth {
 
 /// What happens to a category's leftover money at the end of a month
 public enum RolloverPolicy: String, Codable, Sendable, CaseIterable {
-    /// Unspent money stays in the category; overspending carries forward until covered
+    /// Unspent money stays in the category. Overspending doesn't follow it: that money is
+    /// already gone from the accounts, so it lowers what's left to plan instead.
     case rollover
     /// Each month starts fresh; leftovers and overspending go back to Available to allocate
     case reset
@@ -175,7 +176,8 @@ public struct Budget: Sendable {
                 .union(categoryBills.map(\.month).filter { $0 < month })
             for m in earlierMonths.sorted() {
                 let base = carried + allocated(categoryId, month: m)
-                carried = base + billTopUp(categoryBills, month: m, base: base) - spent(categoryId, month: m)
+                let left = base + billTopUp(categoryBills, month: m, base: base) - spent(categoryId, month: m)
+                carried = Money.max(left, .zero(currency))
             }
         }
         let allocatedNow = allocated(categoryId, month: month)

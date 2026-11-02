@@ -103,7 +103,7 @@ struct FinanceDigest: Sendable {
         }
 
         let month = snapshot.monthKey
-        let lines = snapshot.expenseCategories.map { ($0, snapshot.budget.line($0.id, month: month)) }
+        let lines = snapshot.budgetCategories.map { ($0, snapshot.budget.line($0.id, month: month)) }
         categories = lines.map { c, line in
             let planned = line.planned
             return Category(name: c.name, group: c.group, planned: planned.compact,

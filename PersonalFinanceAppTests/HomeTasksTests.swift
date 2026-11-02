@@ -33,6 +33,7 @@ struct HomeTasksTests {
         switch task {
         case .bill: "bill"
         case .billLink: "billLink"
+        case .sameBills: "sameBills"
         case .payday: "payday"
         case .overspent: "overspent"
         case .noBudget: "noBudget"

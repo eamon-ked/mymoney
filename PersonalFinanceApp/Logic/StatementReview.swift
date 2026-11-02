@@ -290,7 +290,8 @@ final class StatementReview {
     /// Money moved to an account of theirs that isn't in the app: it becomes one, kept aside as
     /// savings (not spendable) until they check its balance, and every row naming it goes there
     func addOwnAccount(for row: StatementRow) {
-        let number = StatementImport.longNumbers(row.description).first { $0 != ownNumber }
+        let number = StatementImport.otherOwnAccount(in: row.description, ownNumber: ownNumber)
+            ?? StatementImport.longNumbers(row.description).first { $0 != ownNumber }
         do {
             let record = try store.addAccount(name: number.map { "Account …\($0.suffix(4))" } ?? "Other account", kind: .savings,
                                               balance: .zero(store.currency), openingDate: row.date)

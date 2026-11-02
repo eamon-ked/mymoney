@@ -41,7 +41,8 @@ struct FinanceSnapshot {
         let ledger = Ledger(accounts: accounts.map(\.info), entries: entries.map(\.entry), currency: settings.currency)
         self.ledger = ledger
 
-        let categories = accounts.filter { $0.kind == .expense && !$0.archived }
+        // Money sent to people isn't something to budget for, so it isn't planned or counted as unplanned
+        let categories = accounts.filter { $0.kind == .expense && !$0.archived && !$0.isTransferCategory }
             .map { BudgetCategory(id: $0.id, name: $0.name, group: $0.group, policy: $0.policy) }
         let reserves = store.fetch(ReserveRecord.self).filter { !$0.archived }.map(\.reserve)
         let budgetAccounts = Set(accounts.filter { $0.kind.isBalanceSheet && $0.onBudget }.map(\.id))
@@ -150,6 +151,11 @@ struct FinanceSnapshot {
         accountRecords.filter { $0.kind == .expense && !$0.archived }
     }
 
+    /// Spending categories the budget plans: not money sent to people
+    var budgetCategories: [LedgerAccountRecord] {
+        expenseCategories.filter { !$0.isTransferCategory }
+    }
+
     var incomeCategories: [LedgerAccountRecord] {
         accountRecords.filter { $0.kind == .income && !$0.archived }
     }
@@ -160,7 +166,7 @@ struct FinanceSnapshot {
     /// Spending categories by group, in Budget's order; a group not in the list comes last, by name
     var expenseCategoryGroups: [(name: String, categories: [LedgerAccountRecord])] {
         let order = ["Essentials", "Lifestyle", "Savings", "Other"]
-        let grouped = Dictionary(grouping: expenseCategories) { $0.group.isEmpty ? "Other" : $0.group }
+        let grouped = Dictionary(grouping: budgetCategories) { $0.group.isEmpty ? "Other" : $0.group }
         return grouped.keys.sorted { (order.firstIndex(of: $0) ?? 99, $0) < (order.firstIndex(of: $1) ?? 99, $1) }
             .map { ($0, grouped[$0] ?? []) }
     }
@@ -409,6 +415,35 @@ struct FinanceSnapshot {
                   occ.dueDate <= through, item.accountId == accountId || (item.accountId == nil && spendable) else { return nil }
             return (occ, item)
         }
+    }
+
+    /// Two bills that look like the same payment kept twice: the same amount, as often, in the
+    /// same category, with due dates within a week of each other (a skipped month doesn't hide it).
+    /// Names aren't compared, so "Loan payment" and "Construction payment" match in any language.
+    /// Two different loans never do.
+    var duplicateBills: [(PlannedItem, PlannedItem)] {
+        let start = calendar.startOfDay(for: today)
+        let upcoming = Dictionary(grouping: occurrences.filter { $0.dueDate >= start && !$0.isSettledOrStarted }, by: \.itemId)
+            .mapValues { $0.map(\.dueDate) }
+        func category(_ item: PlannedItem) -> UUID? {
+            item.debtId.flatMap { loanCategories[$0] } ?? item.categoryId
+        }
+        func close(_ a: [Date], _ b: [Date]) -> Bool {
+            a.contains { x in b.contains { abs(x.timeIntervalSince($0)) <= 7 * 86_400 } }
+        }
+        let bills = items.filter { $0.direction == .outflow && upcoming[$0.id] != nil }
+            .sorted { (upcoming[$0.id]!.min()!, $0.name) < (upcoming[$1.id]!.min()!, $1.name) }
+        var pairs: [(PlannedItem, PlannedItem)] = []
+        for (i, a) in bills.enumerated() {
+            for b in bills[(i + 1)...] where a.amount == b.amount && a.schedule.frequency == b.schedule.frequency
+                && category(a) == category(b) && (a.debtId == nil || b.debtId == nil || a.debtId == b.debtId)
+                && close(upcoming[a.id]!, upcoming[b.id]!) {
+                if !pairs.contains(where: { [$0.0.id, $0.1.id].contains(a.id) || [$0.0.id, $0.1.id].contains(b.id) }) {
+                    pairs.append((a, b))
+                }
+            }
+        }
+        return pairs
     }
 
     /// Payments already recorded that look like an unpaid bill but aren't linked to it.

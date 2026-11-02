@@ -79,6 +79,7 @@ struct SettingsDTO: Codable {
     var displayName: String?
     var statementFindingsData: Data?
     var dismissedFindings: [String]?
+    var unfinishedLoans: [UUID]?
 
     init(_ r: SettingsRecord) {
         currency = r.currency; localeIdentifier = r.localeIdentifier; firstWeekday = r.firstWeekday
@@ -88,6 +89,7 @@ struct SettingsDTO: Codable {
         bankRegion = r.bankRegion; bankSenders = r.bankSenders; pinnedCategoryIds = r.pinnedCategoryIds
         displayName = r.displayName
         statementFindingsData = r.statementFindingsData; dismissedFindings = r.dismissedFindings
+        unfinishedLoans = r.unfinishedLoans
     }
 
     func apply(to r: SettingsRecord) {
@@ -98,6 +100,7 @@ struct SettingsDTO: Codable {
         r.bankRegion = bankRegion; r.bankSenders = bankSenders ?? []; r.pinnedCategoryIds = pinnedCategoryIds ?? []
         r.displayName = displayName ?? ""
         r.statementFindingsData = statementFindingsData; r.dismissedFindings = dismissedFindings ?? []
+        r.unfinishedLoans = unfinishedLoans ?? []
     }
 }
 

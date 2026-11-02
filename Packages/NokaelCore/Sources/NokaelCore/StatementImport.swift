@@ -410,12 +410,23 @@ public enum StatementImport {
     /// A loan instalment ("LOANRECOVERY-EMI:1139…", "MORTGAGE INSTALMENT") goes to the loan
     /// it names, else to the only loan there is
     public static func loan(for description: String, loans: [(id: UUID, name: String)]) -> UUID? {
-        guard !loans.isEmpty else { return nil }
-        let words = description.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
-        let marks = ["loan", "emi", "instal", "mortgage", "finance", "repayment"]
-        guard words.contains(where: { w in marks.contains { w == $0 || ($0.count > 3 && w.contains($0)) } }) else { return nil }
+        guard !loans.isEmpty, isInstalment(description) else { return nil }
         if let named = account(for: description, accounts: loans) { return named }
         return loans.count == 1 ? loans[0].id : nil
+    }
+
+    /// Reads as a loan instalment: "LOANRECOVERY-EMI:1139…", "MORTGAGE INSTALMENT"
+    public static func isInstalment(_ description: String) -> Bool {
+        let words = description.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+        let marks = ["loan", "emi", "instal", "mortgage", "finance", "repayment"]
+        return words.contains { w in marks.contains { w == $0 || ($0.count > 3 && w.contains($0)) } }
+    }
+
+    /// The loan's own reference in an instalment, "LOANRECOVERY-EMI:11392149P022001" → "11392149P022001":
+    /// the last run of six or more letters and digits that has a digit in it
+    public static func loanReference(_ description: String) -> String? {
+        description.uppercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .last { $0.count >= 6 && $0.contains(where: \.isNumber) }
     }
 
     /// "POS PURCHASE CARREFOUR CITY 1234 DUBAI AE" → ["carrefour", "city"]

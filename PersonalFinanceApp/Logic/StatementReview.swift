@@ -47,6 +47,10 @@ final class StatementReview {
     private(set) var ownNumber: String?
     /// Moves to another of the person's accounts that didn't say which: left for them to pick
     private(set) var ownTransfers: Set<Int> = []
+    /// Loan instalments for a loan that isn't in the app yet: left for them to pick or add
+    private(set) var loanRows: Set<Int> = []
+    /// Loans added from this statement, set up once its rows are added
+    private var newLoans: Set<UUID> = []
     /// The currency the statement names, when it does
     private(set) var fileCurrency: String?
     /// What the statement says the account held before its first row and after its last
@@ -68,7 +72,7 @@ final class StatementReview {
     /// Ticked, still without a choice
     var unsorted: [StatementRow] { inbox.filter { !skipped.contains($0.id) && targets[$0.id] == nil } }
     /// Rows the bulk "Put them in…" sorts: not moves between the person's own accounts
-    var bulkSortable: [StatementRow] { unsorted.filter { !ownTransfers.contains($0.id) } }
+    var bulkSortable: [StatementRow] { unsorted.filter { !ownTransfers.contains($0.id) && !loanRows.contains($0.id) } }
     var allSelected: Bool { inbox.allSatisfy { !skipped.contains($0.id) } }
 
     /// "3 ready · 1 needs a category · 2 left out"
@@ -143,6 +147,7 @@ final class StatementReview {
         }
         var next: [Int: Target] = [:]
         var own: Set<Int> = []
+        var loanPayments: Set<Int> = []
         var billsTaken: Set<UUID> = []
         for row in inbox {
             if let occ = StatementImport.bill(for: row, occurrences: snapshot.occurrences, items: snapshot.items,
@@ -152,6 +157,9 @@ final class StatementReview {
                 next[row.id] = .bill(occ.id)
             } else if row.amount.isNegative, let id = StatementImport.loan(for: row.description, loans: loans) {
                 next[row.id] = .transfer(id)
+            } else if row.amount.isNegative, StatementImport.isInstalment(row.description) {
+                // Not spending: it pays down a loan the app doesn't know yet
+                loanPayments.insert(row.id)
             } else if let id = StatementImport.account(for: row.description, accounts: others) {
                 next[row.id] = .transfer(id)
             } else if let numbered = ownAccounts.first(where: { a in
@@ -169,6 +177,7 @@ final class StatementReview {
         }
         targets = next
         ownTransfers = own
+        loanRows = loanPayments
         suggestRest()
     }
 
@@ -176,7 +185,7 @@ final class StatementReview {
     /// so every row arrives with a category the person only has to glance at
     private func suggestRest() {
         suggestTask?.cancel()
-        let pending = inbox.filter { targets[$0.id] == nil && !ownTransfers.contains($0.id) }
+        let pending = inbox.filter { targets[$0.id] == nil && !ownTransfers.contains($0.id) && !loanRows.contains($0.id) }
         suggesting = pending.count
         guard !pending.isEmpty else { return }
         suggestTask = Task {
@@ -262,7 +271,7 @@ final class StatementReview {
 
     /// What a row with no choice yet asks for
     func prompt(for row: StatementRow) -> String {
-        ownTransfers.contains(row.id) ? "Which of your accounts?" : "Choose a category"
+        ownTransfers.contains(row.id) ? "Which of your accounts?" : loanRows.contains(row.id) ? "Which loan?" : "Choose a category"
     }
 
     // MARK: - Adding
@@ -279,6 +288,11 @@ final class StatementReview {
             if let balances {
                 try store.anchorOpening(accountId, statementOpening: balances.opening, firstDay: balances.firstDay)
             }
+            for loanId in newLoans {
+                let payments = ready.filter { targets[$0.id] == .transfer(loanId) }.map { (date: $0.date, amount: $0.amount.magnitude) }
+                try store.startLoan(loanId, payments: payments, paidFrom: accountId)
+            }
+            newLoans = []
             if let ownNumber, account?.accountNumber == nil { try store.setAccountNumber(accountId, ownNumber) }
             // Pay, a loan or bills it shows, for Home to offer
             try store.saveFindings(StatementInsights.findings(rows, today: snapshot.today, calendar: store.calendar))
@@ -300,6 +314,23 @@ final class StatementReview {
                 let same = number.map { StatementImport.longNumbers(r.description).contains($0) } ?? (r.id == row.id)
                 if same { targets[r.id] = .transfer(record.id) }
             }
+        } catch {
+            self.error = StoreError.from(error).errorDescription
+        }
+    }
+
+    /// Payments to a loan that isn't in the app: it becomes one, named from the bank's reference,
+    /// and every instalment with the same reference goes to it. What's owed is asked on Home
+    func addLoan(for row: StatementRow) {
+        let reference = StatementImport.loanReference(row.description)
+        let rows = inbox.filter { r in
+            loanRows.contains(r.id) && (reference.map { StatementImport.loanReference(r.description) == $0 } ?? (r.id == row.id))
+        }
+        do {
+            let record = try store.addUnfinishedLoan(name: reference.map { "Loan …\($0.suffix(4))" } ?? "Loan",
+                                                     openingDate: rows.map(\.date).min() ?? row.date)
+            newLoans.insert(record.id)
+            for r in rows { targets[r.id] = .transfer(record.id) }
         } catch {
             self.error = StoreError.from(error).errorDescription
         }

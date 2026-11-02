@@ -211,7 +211,7 @@ extension Redesign {
         case entry(FormKind), editEntry(UUID), splitEntry(UUID), editBill(UUID)
         case account(UUID), bill(UUID), link(UUID), category(UUID), transaction(UUID)
         case payDebt(UUID, occurrence: UUID?), editDebtPayment(UUID), entryAsDebtPayment(UUID)
-        case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), lend(UUID?, LendAction)
+        case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), finishLoan(UUID), lend(UUID?, LendAction)
         case importStatement(UUID?), newAccount(loan: Bool), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
         case loansInCategory(UUID), goal(UUID), reserve(UUID?, goal: Bool), goalMoney(UUID, adding: Bool)
         case payday, help, intelligence, ask, paywall(PlusFeature), billLink(UUID)
@@ -582,6 +582,9 @@ extension Redesign {
         func percent(_ share: Double) -> String { hidesCharts ? "••%" : "\(Int((share * 100).rounded()))%" }
 
         /// "Account 1", "Account 2"… in the order Accounts lists them, when account names are hidden
+        /// A loan started from a statement, before they've said what's left
+        func owedNotSet(_ id: UUID) -> Bool { snapshot.unfinishedLoans.contains { $0.id == id } }
+
         func accountLabel(_ id: UUID?) -> String {
             guard let id else { return "No account" }
             let all = accounts + archivedAccounts

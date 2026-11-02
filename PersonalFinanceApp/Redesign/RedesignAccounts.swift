@@ -36,9 +36,18 @@ extension Redesign {
                             Text(app.reference(of: account) + (account.archived ? " · Archived" : "")).rdText(.caption).tracking(1).foregroundStyle(Theme.muted)
                         }
                     }
-                    app.amount(account.shown).rdText(.balance).padding(.top, 24)
-                    Text(account.caption)
-                        .rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 4)
+                    if app.owedNotSet(account.id) {
+                        Button { app.open(.finishLoan(account.id)) } label: {
+                            Text("Add what's owed").rdText(.balance).foregroundStyle(Theme.primary)
+                        }
+                        .buttonStyle(.plain).padding(.top, 24)
+                        Text("Amount owed not set yet")
+                            .rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 4)
+                    } else {
+                        app.amount(account.shown).rdText(.balance).padding(.top, 24)
+                        Text(account.caption)
+                            .rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 4)
+                    }
                     if let record { Text(checkedLine(record)).rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 2) }
                     if !account.isLiability && account.kind != .lent && record?.spendable == true {
                         HStack(alignment: .top) {
@@ -780,6 +789,53 @@ extension Redesign {
             .onAppear {
                 let opening = app.store.openingEntry(for: account.id)?.entry.amount(on: account.id) ?? .zero(app.currency)
                 amount = MoneyFormat.editable(opening.magnitude, emptyWhenZero: true)
+            }
+        }
+    }
+
+    /// A loan started from a statement: its payment and day are known, what's left isn't yet
+    struct FinishLoanForm: View {
+        let loan: LedgerAccountRecord
+        @Environment(AppModel.self) private var app
+        @State private var name = ""
+        @State private var owed = ""
+        @State private var rate = ""
+        @State private var problem: String?
+
+        var body: some View {
+            let item = app.snapshot.paymentItem(for: loan.id)
+            VStack(alignment: .leading, spacing: 16) {
+                Field(label: "Name") {
+                    TextField(loan.name, text: $name).accessibilityIdentifier("loanName")
+                }
+                AmountBox(label: "Still owed today in \(app.currency)", text: $owed, identifier: "loanOwed")
+                Field(label: "Interest rate, % a year (optional)") {
+                    TextField("e.g. 4.5", text: $rate).keyboardType(.decimalPad)
+                }
+                if let terms = loan.debtTerms {
+                    DetailCard {
+                        DetailRow(label: "Monthly payment", value: app.money(terms.monthlyPayment))
+                        DetailRow(label: "Due on", value: terms.dueDay.map { "Day \($0)" } ?? "Not set")
+                        if let item { DetailRow(label: "Paid from", value: app.accountLabel(item.accountId)) }
+                    }
+                }
+                Text("From your loan statement or banking app: what's left to pay, not the original loan. Payments already recorded stay as they are.")
+                    .rdText(.caption).foregroundStyle(Theme.muted).lineSpacing(3)
+                Problem(text: problem)
+                Button("Save", action: save)
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("finishLoan")
+            }
+        }
+
+        private func save() {
+            guard let amount = app.parse(owed), amount.isPositive else { problem = "Enter what you still owe."; return }
+            guard rate.isEmpty || DebtTerms.rateBps(from: rate) != nil else {
+                problem = "Enter the yearly rate as a percentage, e.g. 4.5, or leave it empty."; return
+            }
+            let bps = rate.isEmpty ? nil : DebtTerms.rateBps(from: rate)
+            problem = app.attempt("Loan saved. It isn't counted as cash.") {
+                try app.store.finishLoan(loan.id, name: name, owed: amount, annualRateBps: bps)
             }
         }
     }

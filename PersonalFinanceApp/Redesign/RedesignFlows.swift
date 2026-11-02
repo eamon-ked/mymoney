@@ -269,7 +269,8 @@ extension Redesign {
                     InboxRow(row: row, target: binding(row), skipped: skipBinding(row),
                              options: review.options(for: row), label: review.label(for: row),
                              prompt: review.prompt(for: row),
-                             addAccount: review.ownTransfers.contains(row.id) ? { review.addOwnAccount(for: row) } : nil)
+                             addAccount: review.ownTransfers.contains(row.id) ? { review.addOwnAccount(for: row) } : nil,
+                             addLoan: review.loanRows.contains(row.id) ? { review.addLoan(for: row) } : nil)
                 }
                 .padding(.horizontal, 16)
                 .rdPanel(padding: 0)
@@ -383,6 +384,8 @@ extension Redesign {
         var prompt = "Choose a category"
         /// Money moved to an account of theirs that isn't in the app yet
         var addAccount: (() -> Void)? = nil
+        /// Pays a loan that isn't in the app yet
+        var addLoan: (() -> Void)? = nil
         @Environment(AppModel.self) private var app
 
         var body: some View {
@@ -412,6 +415,10 @@ extension Redesign {
                         Menu {
                             if let addAccount {
                                 Button { addAccount() } label: { Label("Add it as a new account", systemImage: "plus.circle") }
+                            }
+                            if let addLoan {
+                                Button { addLoan() } label: { Label("Add it as a new loan", systemImage: "plus.circle") }
+                                    .accessibilityIdentifier("addLoanFromRow")
                             }
                             ForEach(options, id: \.0) { group in
                                 Section(group.0) {

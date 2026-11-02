@@ -119,6 +119,12 @@ struct FinanceSnapshot {
 
     /// What an imported statement suggested setting up, still to confirm: pay only while there's no
     /// income planned, a loan or bill only while nothing of that amount is planned
+    /// Loans started from a statement that still need what's owed
+    var unfinishedLoans: [LedgerAccountRecord] {
+        let ids = Set(settings.unfinishedLoans)
+        return accountRecords.filter { ids.contains($0.id) && $0.kind == .loan && !$0.archived }
+    }
+
     var statementFindings: [StatementFinding] {
         guard let data = settings.statementFindingsData,
               let all = try? JSONDecoder().decode([StatementFinding].self, from: data) else { return [] }

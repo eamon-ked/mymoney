@@ -1178,6 +1178,54 @@ final class LedgerStore {
         try commit()
     }
 
+    // MARK: - Loans from a statement
+
+    /// A loan a statement pays that the app doesn't know yet. It stays at nothing owed, never
+    /// below, until the person says what's left; Home asks for that
+    @discardableResult
+    func addUnfinishedLoan(name: String, openingDate: Date) throws -> LedgerAccountRecord {
+        let record = try addAccount(name: name, kind: .loan, balance: .zero(currency), openingDate: openingDate)
+        try updateSettings { $0.unfinishedLoans.append(record.id) }
+        return record
+    }
+
+    /// After an import: the payments it recorded leave the new loan at nothing owed, and the
+    /// latest one becomes its monthly payment and bill, on the same day from the same account
+    func startLoan(_ loanId: UUID, payments: [(date: Date, amount: Money)], paidFrom fundingId: UUID) throws {
+        guard let latest = payments.max(by: { $0.date < $1.date }) else { return }
+        try correctOpeningBalance(loanId, to: payments.map(\.amount).sum(currency).negated)
+        try saveDebtTerms(DebtTerms(annualRateBps: 0, monthlyPayment: latest.amount,
+                                    dueDay: snapshot.calendar.component(.day, from: latest.date)),
+                          for: loanId, paidFrom: fundingId)
+    }
+
+    /// "It's a loan": a statement's loan payment starts a loan to finish from Home, with its bill
+    func acceptFindingAsLoan(_ finding: StatementFinding, accountId: UUID?) throws {
+        let loan = try addUnfinishedLoan(name: "Loan", openingDate: now())
+        try saveDebtTerms(DebtTerms(annualRateBps: 0, monthlyPayment: finding.amount,
+                                    dueDay: snapshot.calendar.component(.day, from: finding.nextDate)),
+                          for: loan.id, paidFrom: accountId)
+        try dismissFinding(finding)
+    }
+
+    /// What's left on a loan started from a statement, a new name when given, and its rate when known.
+    /// Payments already recorded stay; the start moves so today's amount owed is what they typed
+    func finishLoan(_ loanId: UUID, name: String, owed: Money, annualRateBps: Int?) throws {
+        guard let loan = account(loanId), loan.kind == .loan else { throw StoreError.notFound }
+        let title = name.trimmingCharacters(in: .whitespaces)
+        guard owed.isPositive else { throw StoreError.invalid("Enter what you still owe.") }
+        let opening = openingEntry(for: loanId)?.entry.amount(on: loanId) ?? .zero(currency)
+        try correctOpeningBalance(loanId, to: opening - owed - snapshot.balance(loanId))
+        if !title.isEmpty { loan.name = title }
+        loan.updatedAt = now()
+        // Saved again so the bill takes the new name, and the rate when given
+        if var terms = loan.debtTerms {
+            if let annualRateBps { terms.annualRateBps = annualRateBps }
+            try saveDebtTerms(terms, for: loanId, paidFrom: snapshot.paymentItem(for: loanId)?.accountId)
+        }
+        try updateSettings { $0.unfinishedLoans.removeAll { $0 == loanId } }
+    }
+
     /// Remembers the bank's number for an account, read from its statement
     func setAccountNumber(_ accountId: UUID, _ number: String) throws {
         guard let record = account(accountId) else { throw StoreError.notFound }

@@ -43,6 +43,7 @@ struct HomeTasksTests {
         case .stale: "stale"
         case .backup: "backup"
         case .finding: "finding"
+        case .finishLoan: "finishLoan"
         case .setUp: "setUp"
         }
     }

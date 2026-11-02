@@ -32,6 +32,8 @@ enum HomeTask: Identifiable {
     case backup(neverSaved: Bool)
     /// Pay, a loan or a bill an imported statement showed, to set up with one tap
     case finding(StatementFinding)
+    /// A loan started from a statement, still without what's owed
+    case finishLoan(LedgerAccountRecord)
     /// The rest of the picture, after setup let the person straight into Home
     case setUp(SetUpStep)
 
@@ -53,6 +55,7 @@ enum HomeTask: Identifiable {
         case .stale(let a): "stale-\(a.id)"
         case .backup: "backup"
         case .finding(let f): "finding-\(f.id)"
+        case .finishLoan(let l): "finishLoan-\(l.id)"
         case .setUp(let step): "setUp-\(step.rawValue)"
         }
     }
@@ -72,6 +75,7 @@ enum HomeTask: Identifiable {
         // Filling in the picture: what a statement showed first, then what's still missing
         let findings = snapshot.statementFindings
         tasks += findings.map(HomeTask.finding)
+        tasks += snapshot.unfinishedLoans.map(HomeTask.finishLoan)
 
         if snapshot.setupComplete, let due = PaydayPlan.dueSalary(snapshot) { tasks.append(.payday(due.item, due.occurrence)) }
 

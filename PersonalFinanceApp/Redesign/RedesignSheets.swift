@@ -67,6 +67,7 @@ extension Redesign {
             case .reconcile: "Check against a statement"
             case .accountType: "Change type"
             case .startingAmount: "Starting amount"
+            case .finishLoan: "Finish your loan"
             case .lend(nil, .lend): "Lend money"
             case .lend(_, .lend): "Lend more"
             case .lend(_, .repaid): "They paid you back"
@@ -118,6 +119,7 @@ extension Redesign {
             case .reconcile(let id): if let a = app.record(id) { ReconcileForm(account: a) }
             case .accountType(let id): if let a = app.record(id) { AccountTypeForm(account: a) }
             case .startingAmount(let id): if let a = app.record(id) { StartingAmountForm(account: a) }
+            case .finishLoan(let id): if let a = app.record(id) { FinishLoanForm(loan: a) }
             case .lend(let id, let action): LendForm(person: app.record(id), action: action)
             case .importStatement(let id): ImportStatement(accountId: id)
             case .newAccount(let loan): AddAccountForm(startsWithLoan: loan)

@@ -100,15 +100,21 @@ extension Redesign {
                         Text(app.reference(of: account) + (compact && account.isLiability ? " · Owed" : ""))
                             .rdText(.caption).tracking(0.7).foregroundStyle(muted)
                         if !compact {
-                            app.amount(account.shown).rdText(.figure)
-                                .padding(.top, 6)
-                            Text(account.isLiability ? "Outstanding balance" : account.caption)
-                                .rdText(.caption).foregroundStyle(muted)
+                            if app.owedNotSet(account.id) {
+                                Text("Not set yet").rdText(.figure).padding(.top, 6)
+                                Text("Amount owed not set yet").rdText(.caption).foregroundStyle(muted)
+                            } else {
+                                app.amount(account.shown).rdText(.figure)
+                                    .padding(.top, 6)
+                                Text(account.isLiability ? "Outstanding balance" : account.caption)
+                                    .rdText(.caption).foregroundStyle(muted)
+                            }
                         }
                     }
                     Spacer(minLength: 8)
                     if compact {
-                        app.amount(account.shown).rdText(.amount)
+                        if app.owedNotSet(account.id) { Text("Not set yet").rdText(.amount).foregroundStyle(Theme.muted) }
+                        else { app.amount(account.shown).rdText(.amount) }
                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.muted)
                     } else if !typeSize.isAccessibilitySize {
                         Image(Redesign.kindArtwork(account.kind))
@@ -410,11 +416,19 @@ extension Redesign {
                     Text(private: title).rdText(.cardTitle)
                     Text(private: detail).rdText(.caption).foregroundStyle(Theme.muted)
                     HStack(spacing: 16) {
-                        Button("Yes, add it") {
+                        if f.kind == .loan {
+                            Button("It's a loan") {
+                                do { try app.store.acceptFindingAsLoan(f, accountId: app.snapshot.accounts.first { $0.spendable }?.id) }
+                                catch { app.toast = Toast(message: StoreError.from(error).errorDescription ?? "Couldn't add it.", isError: true) }
+                            }
+                            .rdText(.label).foregroundStyle(Theme.primary)
+                            .accessibilityIdentifier("findingIsLoan")
+                        }
+                        Button(f.kind == .loan ? "Just a bill" : "Yes, add it") {
                             do { try app.store.acceptFinding(f, accountId: app.snapshot.accounts.first { $0.spendable }?.id) }
                             catch { app.toast = Toast(message: StoreError.from(error).errorDescription ?? "Couldn't add it.", isError: true) }
                         }
-                        .rdText(.label).foregroundStyle(Theme.primary)
+                        .rdText(.label).foregroundStyle(f.kind == .loan ? Theme.foreground : Theme.primary)
                         .accessibilityIdentifier("acceptFinding")
                         Button("Not this") { try? app.store.dismissFinding(f) }
                             .rdText(.label).foregroundStyle(Theme.muted)
@@ -542,11 +556,14 @@ extension Redesign {
                             "Seen in your statement, \(when). Safe to spend will last until payday.")
                 case .loan:
                     return ("building.columns", .green, "A loan payment of \(app.money(f.amount))?",
-                            "Seen in your statement, \(when). Add it as a monthly bill so it's set aside.")
+                            "Seen in your statement, \(when). Add the loan to track what's left, or just keep the payment as a bill.")
                 case .bill:
                     return ("doc.text", .green, "\(app.hidesDetails ? "A bill" : f.name) every month?",
                             "\(app.money(f.amount)) in each month of your statement, \(when). Add it as a bill.")
                 }
+            case .finishLoan(let l):
+                return ("building.columns", .green, "How much is left on \(app.accountLabel(l.id))?",
+                        "Its payments come from your statement. Add what you still owe to see when it's paid off.")
             case .setUp(.payday):
                 return ("calendar", .green, "Add your payday",
                         "Safe to spend runs to the end of the month until it knows when you're paid.")
@@ -569,6 +586,7 @@ extension Redesign {
             case .stale(let a): app.open(.reconcile(a.id))
             case .backup: app.show(.data)
             case .finding: break
+            case .finishLoan(let l): app.open(.finishLoan(l.id))
             case .setUp(.payday): app.open(.payday)
             case .setUp(.bills): app.go(.bills)
             }

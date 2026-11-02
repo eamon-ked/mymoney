@@ -117,6 +117,14 @@ final class JourneyUITests: XCTestCase {
         let add = app.buttons["addImported"]
         XCTAssertTrue(add.waitForExistence(timeout: 10), "The statement's rows are listed")
         XCTAssertTrue(NSPredicate(format: "isEnabled == true").evaluate(with: add) || waitEnabled(add), "Every row has a category")
+        // The loan instalment asks which loan, and starts one in a tap
+        let whichLoan = app.buttons["Which loan?"]
+        for _ in 0..<12 where !whichLoan.isHittable { app.swipeUp() }
+        whichLoan.tap()
+        let newLoan = app.buttons["addLoanFromRow"]
+        XCTAssertTrue(newLoan.waitForExistence(timeout: 5))
+        newLoan.tap()
+        expect("Pays Loan …2001", "The instalment goes to the new loan")
         add.tap()
         expect("Matches your statement", "The account starts from the statement and ends on its balance")
         app.buttons["Done"].tap()
@@ -134,6 +142,12 @@ final class JourneyUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["safeToSpend"].waitForExistence(timeout: 5), "Setup ends on Home")
         expect("Sam", "Home greets them by name")
         expect("your monthly pay", "Home offers the pay the statement showed")
+        expect("How much is left on Loan …2001?", "Home asks what's owed on the loan")
+        element("How much is left on Loan …2001?").tap()
+        type("Construction", into: "loanName")
+        type("244561.31", into: "loanOwed")
+        app.buttons["finishLoan"].tap()
+        XCTAssertTrue(element("How much is left").waitForNonExistence(timeout: 5), "Home stops asking once it's finished")
     }
 
     /// "Add another account" tapped by mistake: Back returns to the list, Cancel goes to Home,

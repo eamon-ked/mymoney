@@ -397,6 +397,8 @@ final class SettingsRecord {
     var statementFindingsData: Data? = nil
     /// Findings the person said weren't right, so a later import doesn't ask again
     var dismissedFindings: [String] = []
+    /// Loans started from a statement, still waiting for what's owed
+    var unfinishedLoans: [UUID] = []
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {
         self.currency = currency

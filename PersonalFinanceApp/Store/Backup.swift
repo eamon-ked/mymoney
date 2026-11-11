@@ -28,6 +28,8 @@ struct Backup: Codable {
     var occurrences: [OccurrenceDTO]
     var reserves: [ReserveDTO]
     var audit: [AuditDTO]
+    /// Cards and account numbers tied to accounts; missing from backups made before they were kept
+    var cardLinks: [CardLinkDTO]? = nil
 
     /// What a restore would bring back, for the confirmation screen
     var summary: String {
@@ -80,6 +82,7 @@ struct SettingsDTO: Codable {
     var statementFindingsData: Data?
     var dismissedFindings: [String]?
     var unfinishedLoans: [UUID]?
+    var lastStatementImportAt: Date?
 
     init(_ r: SettingsRecord) {
         currency = r.currency; localeIdentifier = r.localeIdentifier; firstWeekday = r.firstWeekday
@@ -89,7 +92,7 @@ struct SettingsDTO: Codable {
         bankRegion = r.bankRegion; bankSenders = r.bankSenders; pinnedCategoryIds = r.pinnedCategoryIds
         displayName = r.displayName
         statementFindingsData = r.statementFindingsData; dismissedFindings = r.dismissedFindings
-        unfinishedLoans = r.unfinishedLoans
+        unfinishedLoans = r.unfinishedLoans; lastStatementImportAt = r.lastStatementImportAt
     }
 
     func apply(to r: SettingsRecord) {
@@ -100,7 +103,7 @@ struct SettingsDTO: Codable {
         r.bankRegion = bankRegion; r.bankSenders = bankSenders ?? []; r.pinnedCategoryIds = pinnedCategoryIds ?? []
         r.displayName = displayName ?? ""
         r.statementFindingsData = statementFindingsData; r.dismissedFindings = dismissedFindings ?? []
-        r.unfinishedLoans = unfinishedLoans ?? []
+        r.unfinishedLoans = unfinishedLoans ?? []; r.lastStatementImportAt = lastStatementImportAt
     }
 }
 
@@ -177,12 +180,26 @@ struct EntryDTO: Codable {
     var createdAt: Date
     var updatedAt: Date
     var dismissedOccurrenceIds: [UUID]?
+    // How an automatic entry arrived; all optional so older backups still read
+    var sourceRaw: String?
+    var cardHint: String?
+    var needsReview: Bool?
+    var reference: String?
+    var alsoFromRaw: String?
+    var reviewReason: String?
+    var reconciledIn: [UUID]?
+    var debtId: UUID?
+    var debtFeesMinor: Int64?
 
     init(_ r: EntryRecord) {
         id = r.id; kindRaw = r.kindRaw; date = r.date; statusRaw = r.statusRaw; clearedRaw = r.clearedRaw
         memo = r.memo; notes = r.notes; idempotencyKey = r.idempotencyKey; occurrenceId = r.occurrenceId
         replacesId = r.replacesId; createdAt = r.createdAt; updatedAt = r.updatedAt
         dismissedOccurrenceIds = r.dismissedOccurrenceIds.isEmpty ? nil : r.dismissedOccurrenceIds
+        sourceRaw = r.sourceRaw; cardHint = r.cardHint; needsReview = r.needsReview ? true : nil
+        reference = r.reference; alsoFromRaw = r.alsoFromRaw; reviewReason = r.reviewReason
+        reconciledIn = r.reconciledInIds.isEmpty ? nil : r.reconciledInIds
+        debtId = r.debtId; debtFeesMinor = r.debtFeesMinor
         lines = r.lines.map { LineDTO(accountId: $0.accountId, minorUnits: $0.minorUnits, currency: $0.currency) }
     }
 
@@ -191,6 +208,20 @@ struct EntryDTO: Codable {
         Entry(id: id, kind: EntryKind(rawValue: kindRaw) ?? .adjustment, date: date, memo: memo,
               lines: lines.map { Line(accountId: $0.accountId, amount: Money(minorUnits: $0.minorUnits, currency: $0.currency)) },
               idempotencyKey: idempotencyKey, occurrenceId: occurrenceId)
+    }
+}
+
+struct CardLinkDTO: Codable {
+    var hint: String
+    var accountId: UUID
+    var createdAt: Date
+
+    init(_ r: CardLinkRecord) { hint = r.hint; accountId = r.accountId; createdAt = r.createdAt }
+
+    func record() -> CardLinkRecord {
+        let r = CardLinkRecord(hint: hint, accountId: accountId)
+        r.createdAt = createdAt
+        return r
     }
 }
 
@@ -235,12 +266,15 @@ struct PlannedItemDTO: Codable {
     var archived: Bool
     var createdAt: Date
     var updatedAt: Date
+    // Optional so backups saved before it existed still restore
+    var isTrial: Bool?
 
     init(_ r: PlannedItemRecord) {
         id = r.id; name = r.name; directionRaw = r.directionRaw; minorUnits = r.minorUnits; currency = r.currency
         isEstimate = r.isEstimate; scheduleStart = r.scheduleStart; frequencyData = r.frequencyData; scheduleEnd = r.scheduleEnd
         accountId = r.accountId; categoryId = r.categoryId; debtId = r.debtId; autopay = r.autopay
         reminderDaysBefore = r.reminderDaysBefore; archived = r.archived; createdAt = r.createdAt; updatedAt = r.updatedAt
+        isTrial = r.isTrial
     }
 
     func record() -> PlannedItemRecord {
@@ -251,6 +285,7 @@ struct PlannedItemDTO: Codable {
         let r = PlannedItemRecord(item)
         r.directionRaw = directionRaw; r.frequencyData = frequencyData; r.autopay = autopay
         r.reminderDaysBefore = reminderDaysBefore; r.archived = archived; r.createdAt = createdAt; r.updatedAt = updatedAt
+        r.isTrial = isTrial ?? false
         return r
     }
 }
@@ -294,6 +329,7 @@ struct ReserveDTO: Codable {
     var targetMinor: Int64?
     var targetDate: Date?
     var lastChangeKey: UUID?
+    var appliedKeys: [UUID]?
     var archived: Bool
     var createdAt: Date
     var updatedAt: Date
@@ -301,6 +337,7 @@ struct ReserveDTO: Codable {
     init(_ r: ReserveRecord) {
         id = r.id; name = r.name; minorUnits = r.minorUnits; currency = r.currency; accountId = r.accountId
         targetMinor = r.targetMinor; targetDate = r.targetDate; lastChangeKey = r.lastChangeKey; archived = r.archived
+        appliedKeys = r.appliedKeys.isEmpty ? nil : r.appliedKeys
         createdAt = r.createdAt; updatedAt = r.updatedAt
     }
 
@@ -308,6 +345,7 @@ struct ReserveDTO: Codable {
         let r = ReserveRecord(Reserve(id: id, name: name, amount: Money(minorUnits: minorUnits, currency: currency),
                                       accountId: accountId, target: targetMinor.map { Money(minorUnits: $0, currency: currency) },
                                       targetDate: targetDate))
+        r.appliedKeys = appliedKeys ?? []
         r.lastChangeKey = lastChangeKey; r.archived = archived; r.createdAt = createdAt; r.updatedAt = updatedAt
         return r
     }
@@ -345,7 +383,8 @@ extension LedgerStore {
                plannedItems: fetch(PlannedItemRecord.self).map(PlannedItemDTO.init),
                occurrences: fetch(OccurrenceRecord.self).map(OccurrenceDTO.init),
                reserves: fetch(ReserveRecord.self).map(ReserveDTO.init),
-               audit: fetch(AuditRecord.self).map(AuditDTO.init))
+               audit: fetch(AuditRecord.self).map(AuditDTO.init),
+               cardLinks: fetch(CardLinkRecord.self).map(CardLinkDTO.init))
     }
 
     /// The backup as a file's contents. Dates keep full precision so schedules
@@ -384,6 +423,10 @@ extension LedgerStore {
         let items = try unique(backup.plannedItems, \.id, "bills")
         _ = try unique(backup.occurrences, \.id, "due dates")
         _ = try unique(backup.reserves, \.id, "savings")
+        _ = try unique(backup.allocations, \.id, "budget amounts")
+        // One amount per category, month and move: a second one for the same would be merged or lost on restore
+        let budgetKeys = backup.allocations.map { "\($0.categoryId)|\($0.month)|\($0.moveId?.uuidString ?? "")" }
+        guard Set(budgetKeys).count == budgetKeys.count else { throw BackupError.damaged("duplicate budget amounts") }
         guard backup.accounts.filter({ $0.kindRaw == AccountKind.equity.rawValue }).count == 1 else {
             throw BackupError.damaged("opening balances account")
         }
@@ -391,13 +434,36 @@ extension LedgerStore {
             guard e.lines.allSatisfy({ accounts.contains($0.accountId) }) else { throw BackupError.damaged("unknown account in an entry") }
             do { try EntryFactory.validate(e.entry) } catch { throw BackupError.damaged("an entry doesn't balance") }
         }
+        // One currency throughout, the one the ledger keeps: sums of mixed currencies aren't possible
+        let currency = backup.settings.currency
+        guard backup.entries.allSatisfy({ $0.lines.allSatisfy { $0.currency == currency } }),
+              backup.allocations.allSatisfy({ $0.currency == currency }),
+              backup.plannedItems.allSatisfy({ $0.currency == currency }),
+              backup.occurrences.allSatisfy({ $0.currency == currency }),
+              backup.reserves.allSatisfy({ $0.currency == currency }) else {
+            throw BackupError.damaged("amounts in a currency other than \(currency)")
+        }
         for a in backup.allocations where !accounts.contains(a.categoryId) { throw BackupError.damaged("unknown category in budget") }
         for o in backup.occurrences where !items.contains(o.itemId) { throw BackupError.damaged("unknown bill") }
+        // What a bill says was paid must come from payments that are there
+        let entryIds = Set(backup.entries.map(\.id))
+        for o in backup.occurrences {
+            guard o.paidMinor >= 0, o.paidEntryIds.allSatisfy(entryIds.contains),
+                  o.paidMinor == 0 || !o.paidEntryIds.isEmpty else {
+                throw BackupError.damaged("a bill marked paid without its payment")
+            }
+        }
         for r in backup.reserves where !accounts.contains(r.accountId) { throw BackupError.damaged("unknown account in savings") }
         for p in backup.plannedItems {
             for ref in [p.accountId, p.categoryId, p.debtId].compactMap({ $0 }) where !accounts.contains(ref) {
                 throw BackupError.damaged("unknown account in a bill")
             }
+        }
+        for link in backup.cardLinks ?? [] where !accounts.contains(link.accountId) {
+            throw BackupError.damaged("unknown account for a card")
+        }
+        guard Set((backup.cardLinks ?? []).map { CardLinkRecord.key($0.hint) }).count == (backup.cardLinks ?? []).count else {
+            throw BackupError.damaged("duplicate cards")
         }
         return backup
     }
@@ -406,7 +472,11 @@ extension LedgerStore {
     /// current data is saved first, and its location returned.
     @discardableResult
     func restore(_ backup: Backup) throws -> URL? {
-        let safetyCopy = try? saveSafetyCopy()
+        // Nothing is replaced unless the current data is safely on disk first
+        let safetyCopy: URL
+        do { safetyCopy = try saveSafetyCopy() } catch {
+            throw StoreError.invalid("Couldn't save a copy of your current data first, so nothing was changed. Free some space on this iPhone and try again.")
+        }
         let previous = try? LedgerStore.readBackup(try backupData())
         // The old records must be gone before records with the same IDs are
         // inserted, or the two get merged and some of the backup is lost
@@ -440,6 +510,15 @@ extension LedgerStore {
             record.createdAt = e.createdAt
             record.updatedAt = e.updatedAt
             record.dismissedOccurrenceIds = e.dismissedOccurrenceIds ?? []
+            record.sourceRaw = e.sourceRaw
+            record.cardHint = e.cardHint
+            record.needsReview = e.needsReview ?? false
+            record.reference = e.reference
+            record.alsoFromRaw = e.alsoFromRaw
+            record.reviewReason = e.reviewReason
+            record.reconciledInIds = e.reconciledIn ?? []
+            record.debtId = e.debtId
+            record.debtFeesMinor = e.debtFeesMinor
             context.insert(record)
             for l in e.lines {
                 let line = LineRecord(Line(accountId: l.accountId, amount: Money(minorUnits: l.minorUnits, currency: l.currency)))
@@ -452,6 +531,7 @@ extension LedgerStore {
         for o in backup.occurrences { context.insert(o.record()) }
         for r in backup.reserves { context.insert(r.record()) }
         for a in backup.audit { context.insert(a.record()) }
+        for link in backup.cardLinks ?? [] { context.insert(link.record()) }
         if note {
             context.insert(AuditRecord(action: "data.restored", subjectId: UUID(),
                                        summary: "Restored a backup from \(backup.createdAt.formatted(date: .abbreviated, time: .shortened))"))
@@ -464,9 +544,22 @@ extension LedgerStore {
         let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("Backups", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let url = folder.appendingPathComponent("Before restore \(Self.fileStamp(now())).json")
-        try backupData().write(to: url, options: .atomic)
+        // Every restore keeps its own copy: a second restore never writes over the first
+        let stamp = Self.fileStamp(now())
+        var url = folder.appendingPathComponent("Before restore \(stamp).json")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("Before restore \(stamp) (\(n)).json")
+            n += 1
+        }
+        try backupData().write(to: url, options: [.atomic, .completeFileProtection])
         return url
+    }
+
+    /// Where copies made before a restore are kept
+    static var safetyCopyFolder: URL? {
+        try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            .appendingPathComponent("Backups", isDirectory: true)
     }
 
     static func fileStamp(_ date: Date) -> String {

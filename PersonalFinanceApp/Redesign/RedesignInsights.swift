@@ -215,13 +215,18 @@ extension Redesign {
         }
 
         private func send(_ text: String) {
-            guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-            if !app.isPlus {
+            // The keyboard's Return works while an answer is still coming; it waits like the arrow does
+            guard !text.trimmingCharacters(in: .whitespaces).isEmpty, !model.busy else { return }
+            let plus = app.isPlus
+            if !plus {
                 guard FreeAllowance.ask.left > 0 else { app.open(.paywall(.appleIntelligence)); return }
+            }
+            model.ask(text, digest: FinanceDigest(app.snapshot), plus: plus) { answered in
+                // A free question is used up only by an answer, not by a failure
+                guard answered, !plus else { return }
                 FreeAllowance.ask.spend()
                 freeLeft = FreeAllowance.ask.left
             }
-            model.ask(text, digest: FinanceDigest(app.snapshot), plus: app.isPlus)
             question = ""
         }
     }
@@ -405,7 +410,13 @@ extension Redesign {
         private func row(_ line: CategoryTotal, total: Money) -> some View {
             let share = total.isPositive ? Double(line.amount.minorUnits) / Double(total.minorUnits) : 0
             let look = app.record(line.categoryId).map(AppModel.look) ?? ("tag", IconBox.Tone.green)
-            return Button { if app.category(line.categoryId) != nil { app.open(.category(line.categoryId)) } } label: {
+            // The category's page shows the month this report is on, not whichever month Budget last had
+            let reportMonth = month ?? app.snapshot.monthKey
+            return Button {
+                guard app.category(line.categoryId) != nil else { return }
+                app.month = reportMonth
+                app.open(.category(line.categoryId))
+            } label: {
                 HStack(spacing: 12) {
                     IconBox(look, small: true)
                     VStack(alignment: .leading, spacing: 6) {
@@ -536,6 +547,68 @@ extension Redesign {
             .chartXAxis { AxisMarks(values: .stride(by: .day, count: 7)) { AxisValueLabel(format: .dateTime.day().month(.abbreviated)).font(.caption).foregroundStyle(Theme.muted) } }
             .frame(height: 180)
             .accessibilityLabel("Balance over the coming days")
+        }
+    }
+}
+
+// MARK: - Net worth over time
+
+extension Redesign {
+    /// What was owned less what was owed at the end of each day, from the entries dated up to that day
+    struct NetWorthPage: View {
+        @Environment(AppModel.self) private var app
+        @State private var range = "30 days"
+        @State private var chosen = Date()
+
+        var body: some View {
+            let s = app.snapshot
+            let length = ["30 days": 30, "90 days": 90, "1 year": 365][range] ?? 30
+            let history = s.netWorthHistory(days: length)
+            let day = min(s.calendar.startOfDay(for: chosen), s.today)
+            let worth = s.netWorth(on: day)
+            let known = s.firstRecordedDay.map { day >= $0 } ?? false
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Today").rdText(.detail).foregroundStyle(Theme.muted)
+                app.amount(s.netWorth.total.decimal).rdText(.balance)
+                Text("What you own less what you owe, at the end of the day.").rdText(.caption).foregroundStyle(Theme.muted)
+            }
+            .padding(.vertical, 24).padding(.horizontal, 4)
+
+            Pills(options: ["30 days", "90 days", "1 year"], selection: $range)
+            Group {
+                if app.hidesCharts || app.hidesAmounts { ChartHidden(height: 180) } else { chart(history, from: s.firstRecordedDay) }
+            }
+            .rdPanel(padding: 14)
+            .padding(.top, 16)
+
+            DatePicker("On", selection: $chosen, in: ...Date(), displayedComponents: .date)
+                .rdText(.body)
+                .padding(.top, 24).padding(.bottom, 8).padding(.horizontal, 4)
+            DetailCard {
+                DetailRow(label: "You owned", value: app.money(worth.assets))
+                DetailRow(label: "You owed", value: app.money(worth.liabilities))
+                DetailRow(label: "Net worth", value: app.money(worth.total))
+            }
+            Redesign.footnote(known
+                ? "Worked out from what's recorded up to the end of \(app.fullDay(day)). Accounts left out of net worth aren't counted."
+                : "This is before anything was recorded in the app, so it isn't your full picture.")
+                .padding(.top, 12)
+        }
+
+        private func chart(_ history: [(day: Date, total: Money)], from first: Date?) -> some View {
+            let shown = history.filter { point in first.map { point.day >= $0 } ?? false }
+            return Chart {
+                ForEach(shown, id: \.day) { point in
+                    LineMark(x: .value("Day", point.day), y: .value("Net worth", (point.total.decimal as NSDecimalNumber).doubleValue))
+                        .interpolationMethod(.stepEnd)
+                        .foregroundStyle(Theme.primary)
+                }
+            }
+            .chartYAxis { AxisMarks { AxisValueLabel().font(.caption).foregroundStyle(Theme.muted) } }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { AxisValueLabel(format: .dateTime.day().month(.abbreviated)).font(.caption).foregroundStyle(Theme.muted) } }
+            .frame(height: 180)
+            .accessibilityLabel("Net worth over the past days")
         }
     }
 }
@@ -686,6 +759,7 @@ extension Redesign {
             case .backup: app.show(.data)
             case .payDebt: app.open(.whatHappened)
             case .addLoan: app.open(.newAccount(loan: true))
+            case .notifications: app.show(.reminders)
             }
         }
 

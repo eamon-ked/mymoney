@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import UserNotifications
 import StoreKit
 import UniformTypeIdentifiers
 import NokaelCore
@@ -25,7 +26,7 @@ extension Redesign {
                 line
                 row("calendar", "Money ahead", "Your balance over the next weeks", plus: true) { app.show(.forecast, needs: .moneyAhead) }
                 line
-                row("square.and.arrow.down", "Import a statement", "Add a bank's CSV file in one go") {
+                row("square.and.arrow.down", "Import a statement", "Add a bank's CSV or PDF in one go") {
                     app.open(.importStatement(nil))
                 }
             }
@@ -37,7 +38,7 @@ extension Redesign {
             group("Personal") {
                 row("person", "My Profile", app.holder.isEmpty ? "Add your name" : app.holder) { app.show(.profile) }
                 line
-                row("gearshape", "Settings", "Appearance, reminders and categories") { app.show(.settings) }
+                row("gearshape", "Settings", "Appearance, notifications and categories") { app.show(.settings) }
                 line
                 row("lock.shield", "Privacy & Security", "Privacy Mode and Face ID") { app.show(.privacy) }
                 line
@@ -111,8 +112,9 @@ extension Redesign {
                     case .plus: PlusPage()
                     case .categories: CategoriesPage()
                     case .history: HistoryPage()
-                    case .reminders: RemindersPage()
+                    case .reminders: NotificationsPage()
                     case .intelligenceSettings: IntelligenceSettingsPage()
+                    case .netWorth: NetWorthPage()
                     }
                 }
                 .padding(.horizontal, 20)
@@ -155,8 +157,9 @@ extension Redesign {
             case .plus: "Nokael Plus"
             case .categories: "Categories"
             case .history: "Change history"
-            case .reminders: "Bill reminders"
+            case .reminders: "Notifications"
             case .intelligenceSettings: "Apple Intelligence"
+            case .netWorth: "Net worth"
             }
         }
     }
@@ -206,7 +209,7 @@ extension Redesign {
                 }
                 .padding(.horizontal, 16).frame(minHeight: 54)
                 line
-                link("bell", "Bill reminders", BillReminders.enabled ? "On" : "Off") { app.show(.reminders) }
+                link("bell", "Notifications", Notifications.Group.allCases.contains(where: Notifications.isOn) ? "On" : "Off") { app.show(.reminders) }
                 line
                 HStack(spacing: 12) {
                     Image(systemName: "banknote").frame(width: 22)
@@ -258,42 +261,95 @@ extension Redesign {
         }
     }
 
-    struct RemindersPage: View {
+    /// One switch per kind of notification, quiet by default; everything is planned on this phone
+    struct NotificationsPage: View {
         @Environment(AppModel.self) private var app
-        @AppStorage(BillReminders.enabledKey) private var enabled = false
-        @AppStorage(BillReminders.hourKey) private var hour = 9
-        @State private var denied = false
+        @Environment(\.openURL) private var openURL
+        @AppStorage(Notifications.hourKey) private var hour = 9
+        @AppStorage(Notifications.hideAmountsKey) private var hideAmounts = false
+        @State private var status: UNAuthorizationStatus = .notDetermined
+        /// Bumped after a switch changes, so the rows read UserDefaults again
+        @State private var changes = 0
 
         var body: some View {
-            ToggleRow(title: "Remind me before bills are due", isOn: Binding(get: { enabled && !denied }, set: { turn($0) }))
-                .accessibilityIdentifier("billReminders")
-            if enabled && !denied {
-                Field(label: "At") {
+            VStack(alignment: .leading, spacing: 0) {
+                permissionNote
+                VStack(spacing: 14) {
+                    ForEach(Notifications.Group.allCases) { group in
+                        ToggleRow(title: group.title, detail: group.detail, isOn: binding(group.key, default: true))
+                            .accessibilityIdentifier("notify-\(group.rawValue)")
+                    }
+                }
+                Text("ALSO").rdText(.overline).foregroundStyle(Theme.muted).padding(.top, 24).padding(.bottom, 8)
+                VStack(spacing: 14) {
+                    ForEach(Notifications.Extra.allCases) { extra in
+                        ToggleRow(title: extra.title, isOn: binding(extra.key, default: false))
+                    }
+                }
+                Field(label: "Reminders come at") {
                     Choice(value: $hour, options: Array(6..<22)) { h in
                         Calendar.current.date(bySettingHour: h, minute: 0, second: 0, of: Date())!.formatted(date: .omitted, time: .shortened)
                     }
                 }
-                .padding(.top, 16)
+                .padding(.top, 24)
+                ToggleRow(title: "Hide amounts", detail: "Notifications say what happened without saying how much, so a glance at the Lock Screen gives nothing away.",
+                          isOn: $hideAmounts)
+                    .padding(.top, 16)
+                if Notifications.isOn(.spending) && !hasCaptures {
+                    Redesign.footnote("Spending is announced as it happens once the Wallet or bank message automation is set up.")
+                        .padding(.top, 16).padding(.horizontal, 4)
+                    Button("Set up automatic capture") { app.show(.capture) }
+                        .buttonStyle(QuietButtonStyle())
+                }
+                Redesign.footnote("Each bill reminds you 2 days before it's due unless you change it on the bill. Everything is worked out on this iPhone; nothing is sent anywhere.")
+                    .padding(.top, 16).padding(.horizontal, 4)
             }
-            Redesign.footnote(denied ? "Notifications are off for Nokael Money. Turn them on in the iPhone's Settings under Notifications."
-                              : "Each bill reminds you 2 days before it's due unless you change it on the bill. Paid and skipped bills don't remind you.")
-                .padding(.top, 12).padding(.horizontal, 4)
-                .task { denied = await BillReminders.permissionDenied() }
-                .onChange(of: hour) { Task { await BillReminders.sync(app.snapshot) } }
+            .id(changes)
+            .task { status = await Notifications.permission() }
+            .onChange(of: hour) { resync() }
+            .onChange(of: hideAmounts) { resync() }
         }
 
-        private func turn(_ on: Bool) {
-            Task {
-                if on {
-                    let granted = await BillReminders.requestPermission()
-                    denied = !granted
-                    enabled = granted
-                } else {
-                    enabled = false
+        @ViewBuilder private var permissionNote: some View {
+            switch status {
+            case .denied:
+                note("Notifications are off for Nokael Money in the iPhone's Settings.", button: "Open Settings") {
+                    if let url = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(url) }
                 }
-                await BillReminders.sync(app.snapshot)
+            case .provisional, .notDetermined:
+                note("They arrive quietly in Notification Centre, with no banner or sound.", button: "Show banners and sounds") {
+                    Task { _ = await Notifications.requestPermission(); status = await Notifications.permission(); resync() }
+                }
+            default:
+                EmptyView()
             }
         }
+
+        private func note(_ text: String, button: String, action: @escaping () -> Void) -> some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(text).rdText(.detail).fixedSize(horizontal: false, vertical: true)
+                Button(button, action: action).buttonStyle(QuietButtonStyle())
+            }
+            .rdPanel()
+            .padding(.bottom, 20)
+        }
+
+        private var hasCaptures: Bool { app.snapshot.entryRecords.contains { $0.source == .applePay || $0.source == .sms } }
+
+        private func binding(_ key: String, default on: Bool) -> Binding<Bool> {
+            Binding(get: { _ = changes; return UserDefaults.standard.object(forKey: key) as? Bool ?? on },
+                    set: { value in
+                        UserDefaults.standard.set(value, forKey: key)
+                        changes += 1
+                        // Turning one on is the moment to ask for banners and sounds
+                        if value && status != .authorized {
+                            Task { _ = await Notifications.requestPermission(); status = await Notifications.permission() }
+                        }
+                        resync()
+                    })
+        }
+
+        private func resync() { Task { await Notifications.sync(app.snapshot) } }
     }
 
     struct IntelligenceSettingsPage: View {
@@ -591,8 +647,10 @@ extension Redesign {
             VStack(spacing: 0) {
                 ForEach(Array(trail.enumerated()), id: \.offset) { i, a in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(private: app.hidesDetails ? a.action : a.summary).rdText(.detail)
-                        if let reason = a.reason, !reason.isEmpty, !app.hidesDetails { Text(reason).rdText(.caption).foregroundStyle(Theme.muted) }
+                        Text(private: app.hidesDetails ? a.action : app.concealingAmounts(a.summary)).rdText(.detail)
+                        if let reason = a.reason, !reason.isEmpty, !app.hidesDetails {
+                            Text(private: app.concealingAmounts(reason)).rdText(.caption).foregroundStyle(Theme.muted)
+                        }
                         Text(a.date.formatted(date: .abbreviated, time: .shortened)).rdText(.caption).foregroundStyle(Theme.muted)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)

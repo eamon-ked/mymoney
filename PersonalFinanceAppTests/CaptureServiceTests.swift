@@ -47,6 +47,45 @@ struct CaptureServiceTests {
         #expect(store.snapshot.balance(account.id) == Self.aed(4955))
     }
 
+    @Test func bothBanksTellingOfAMoveBetweenYourAccountsMakeOneTransfer() async throws {
+        let other = try store.createAccount(name: "Account 0001", kind: .bank, opening: Self.aed(1000), openingDate: now)
+        func sms(_ direction: Capture.Direction, _ text: String) -> Capture {
+            Capture(source: .sms, direction: direction, amount: Self.aed(300), merchant: text, date: now, text: text)
+        }
+        let out = try await CaptureService.record(sms(.spent, "43361448434 MBTRF AED300.00 TRF OUT TO SAMUEL OTIENO BARASA"),
+                                                  in: store, isPlus: true, choices: .init(accountId: other.id))
+        guard case .saved = out else { Issue.record("expected saved, got \(out)"); return }
+        let into = try await CaptureService.record(sms(.received, "43361448434 MBTRF B/O SAMUEL OTIENO BARASA"),
+                                                   in: store, isPlus: true, choices: .init(accountId: account.id))
+        guard case .merged(let id) = into else { Issue.record("expected one transfer, got \(into)"); return }
+        let s = store.snapshot
+        #expect(store.entryRecord(id)?.kind == .transfer)
+        #expect(s.balance(other.id) == Self.aed(700) && s.balance(account.id) == Self.aed(5300))
+        #expect(s.entryRecords.filter { $0.status == .posted && ($0.kind == .expense || $0.kind == .income) }.isEmpty)
+
+        // The same amount to someone else, with its own reference, is left alone
+        let friend = try await CaptureService.record(sms(.received, "41700000001 MBTRF B/O SARA AHMED"),
+                                                     in: store, isPlus: true, choices: .init(accountId: account.id))
+        let sent = try await CaptureService.record(sms(.spent, "41700000002 MBTRF AED300 TRF OUT TO JOHN"),
+                                                   in: store, isPlus: true, choices: .init(accountId: other.id))
+        guard case .saved = friend, case .saved = sent else { Issue.record("paired without a shared reference"); return }
+    }
+
+    @Test func pairsAlreadySavedAreTidiedUp() throws {
+        let other = try store.createAccount(name: "Account 0001", kind: .bank, opening: Self.aed(1000), openingDate: now)
+        let into = try store.post(EntryFactory.income(Self.aed(150), to: account.info, category: store.fromPeopleCategory.info,
+                                                      date: now, memo: "41235832494 MBTRF B/O SAMUEL OTIENO BARASA"))
+        _ = try store.post(EntryFactory.expense(Self.aed(150), from: other.info, category: store.peopleCategory.info,
+                                                date: now, memo: "41235832494 MBTRF AED150.00 TRF OUT TO SAMUEL OTIENO BARASA"))
+        // Same amount and day but nothing in common: not paired
+        _ = try store.post(EntryFactory.expense(Self.aed(150), from: other.info, category: store.peopleCategory.info,
+                                                date: now, memo: "TRF OUT TO SARA"))
+        #expect(store.pairOwnTransfers() == 1)
+        #expect(store.entryRecord(into)?.status == .void)
+        #expect(store.snapshot.entryRecords.filter { $0.status == .posted && $0.kind == .transfer }.count == 1)
+        #expect(store.pairOwnTransfers() == 0)
+    }
+
     @Test func theBankSMSForAnApplePayTapIsNotCountedTwice() async throws {
         _ = try await CaptureService.record(applePay(45, "Carrefour", minutes: -4), in: store, isPlus: true)
         let sms = try #require(await CaptureService.read(

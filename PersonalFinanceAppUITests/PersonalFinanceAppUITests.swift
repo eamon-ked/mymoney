@@ -150,6 +150,81 @@ final class JourneyUITests: XCTestCase {
         XCTAssertTrue(element("How much is left").waitForNonExistence(timeout: 5), "Home stops asking once it's finished")
     }
 
+    /// A statement whose column names the app doesn't know: the person picks which is which, then adds
+    @MainActor
+    func testChoosingAStatementsColumns() {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/odd-columns.csv")
+        launch(["-demoData", "-screen", "import", "-importSample", file.path])
+        // Two money columns, no balance, names that say nothing: the app asks, and says why
+        expect("Which column is which?", "Columns nothing in the file tells apart ask instead of failing")
+        expect("Side 1 and Side 2 both hold money, and nothing in the file says which is money out. Pick them below.", "The reason is given")
+        func pick(_ role: String, _ column: String) {
+            let menu = app.buttons["column.\(role)"]
+            XCTAssertTrue(menu.waitForExistence(timeout: 5))
+            menu.tap()
+            let item = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", column)).firstMatch
+            if !item.waitForExistence(timeout: 2) { menu.tap() }
+            XCTAssertTrue(item.waitForExistence(timeout: 5), "\(column) is offered for \(role)")
+            item.tap()
+        }
+        // The dates and descriptions were worked out already; only the money is left
+        app.buttons["Money out and in"].tap()
+        pick("Money out", "Side 1")
+        pick("Money in", "Side 2")
+        let use = app.buttons["useColumns"]
+        XCTAssertTrue(waitEnabled(use), "Every role has a column")
+        use.tap()
+        XCTAssertTrue(app.buttons["addImported"].waitForExistence(timeout: 5), "The rows are listed")
+        expect("CARREFOUR", "The description comes from the chosen column")
+        XCTAssertTrue(app.buttons["statementColumns"].exists, "The columns can be changed again")
+    }
+
+    /// Two bank messages about one payment: one entry, opened from its record, split back into two,
+    /// one deleted, then restored from its record
+    func testBankMessagesJoinedThenSeparatedAndRestored() {
+        let viaApp = "AED210.00 transferred via Example Personal Internet Banking / Mobile App from acc. no. XXX450002. Avl. bal. AED 31.70."
+        let confirmation = "Confirmation recd. from SECOND NATIONAL BANK PJSC: AED 210.00 transferred to SAMIRA OKELLO has been credited."
+        launch(["-demoData", "-captureMessages", viaApp + "|||" + confirmation, "-screen", "capture"])
+        // The newest record is the confirmation, which joined the first
+        let newest = app.buttons["captureTrace.0"]
+        XCTAssertTrue(newest.waitForExistence(timeout: 10), "The records are listed")
+        newest.tap()
+        let open = app.buttons["openTraceEntry"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertEqual(open.label, "Open the entry it joined")
+        open.tap()
+        expect("From 2 bank messages", "The entry lists both messages")
+        expect("Samira Okello", "The person's name replaced the bank's channel")
+        let separate = app.buttons["separatePayment"]
+        XCTAssertTrue(separate.waitForExistence(timeout: 5))
+        separate.tap()
+        expect("Saved as its own payment. It's on To check.", "The joined message is its own payment again")
+        // Delete the entry, then bring it back from its record
+        let delete = app.buttons["Delete"].firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        // Wait for the undo message to go, then touch the button itself:
+        // the page's layers report themselves as on top of it to the test
+        let undo = app.buttons["Undo"].firstMatch
+        wait(for: [expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: undo)], timeout: 15)
+        for _ in 0..<2 where !delete.isHittable { app.swipeUp() }
+        delete.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.staticTexts["Delete this transaction?"].waitForExistence(timeout: 5), "Asks before deleting")
+        let inDialog = app.popovers.buttons["Delete"]
+        (inDialog.exists ? inDialog : app.sheets.buttons["Delete"]).tap()
+        expect("Transaction deleted.", "Deleted")
+        let older = app.buttons["captureTrace.1"]
+        XCTAssertTrue(older.waitForExistence(timeout: 5))
+        older.tap()
+        let deleted = app.buttons["openTraceEntry"].firstMatch
+        XCTAssertTrue(deleted.waitForExistence(timeout: 5))
+        XCTAssertEqual(deleted.label, "Open the deleted entry")
+        deleted.tap()
+        let restore = app.buttons["restoreEntry"]
+        XCTAssertTrue(restore.waitForExistence(timeout: 5))
+        restore.tap()
+        expect("Restored.", "The deleted entry is back")
+    }
+
     /// "Add another account" tapped by mistake: Back returns to the list, Cancel goes to Home,
     /// and an account started for a statement that never came isn't left behind
     @MainActor
@@ -325,6 +400,8 @@ final class JourneyUITests: XCTestCase {
             sleep(1)
         }
         app.buttons["globalAdd"].tap()
+        // The menu opens with an animation; tapping before it's there taps nothing
+        XCTAssertTrue(app.buttons["Add Expense"].waitForExistence(timeout: 3), "Bills offers an expense")
         app.buttons["Add Expense"].tap()
         XCTAssertTrue(app.textFields["amountField"].waitForExistence(timeout: 5), "The expense form opens from Bills")
     }
@@ -405,5 +482,28 @@ final class JourneyUITests: XCTestCase {
         launch(["-demoData", "-noPlus", "-tab", "more"])
         tapScrolling(button("Money ahead"), "Money ahead")
         XCTAssertTrue(element("Nokael Plus").waitForExistence(timeout: 5), "Money ahead asks for Plus")
+    }
+
+    /// Standard Privacy Mode hides amounts written into saved text too, not only figures
+    @MainActor
+    func testStandardPrivacyHidesAmountsInHistory() {
+        launch(["-demoData", "-plus"])
+        let hide = app.buttons["Hide amounts"]
+        if hide.waitForExistence(timeout: 5) { hide.tap() }
+        XCTAssertTrue(app.buttons["Show amounts"].exists, "Privacy must be on")
+        tab("More")
+        tapScrolling(button("Privacy & Security"), "Privacy & Security")
+        tapScrolling(button("Privacy Mode"), "Privacy Mode")
+        app.buttons["Standard"].tap()
+        tab("More")
+        tapScrolling(button("Backup & your data"), "Backup & your data")
+        tapScrolling(button("Change history"), "Change history")
+        let exposed = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", ".*AED.*[0-9].*")).firstMatch
+        XCTAssertFalse(exposed.exists, "Standard Privacy Mode must hide amount-bearing history text")
+        // Privacy Mode is remembered between launches: leave it off for the journeys after this one
+        tab("Home")
+        let show = app.buttons["Show amounts"]
+        if show.waitForExistence(timeout: 5) { show.tap() }
+        XCTAssertTrue(app.buttons["Hide amounts"].waitForExistence(timeout: 5), "Privacy is off again")
     }
 }

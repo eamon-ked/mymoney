@@ -21,6 +21,7 @@ final class AppServices {
         let args = CommandLine.arguments
         // UI tests and demos run on a throwaway in-memory store, never on real records
         let inMemory = args.contains("-uiTesting") || args.contains("-demoData")
+        if !inMemory { LedgerStore.replaceErasedDatabase() }
         do {
             container = try ModelContainer(for: Schema(Schema1.models),
                                            configurations: ModelConfiguration(isStoredInMemoryOnly: inMemory))
@@ -52,6 +53,8 @@ struct NokaelMoneyApp: App {
         _store = State(initialValue: services.store)
         _plus = State(initialValue: services.plus)
         UNUserNotificationCenter.current().delegate = NotificationRouter.shared
+        Notifications.registerCategories()
+        BackgroundRefresh.register()
         NokaelShortcuts.updateAppShortcutParameters()
         AmountFieldSelection.install()
     }

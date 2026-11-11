@@ -32,16 +32,16 @@ struct LoanFromStatementTests {
 
     private let csv = """
         Date,Description,Amount
-        26/09/2026,LOANRECOVERY-EMI:11392149P022001,-5781.00
-        26/10/2026,LOANRECOVERY-EMI:11392149P022001,-5781.00
+        26/09/2026,LOANRECOVERY-EMI:70345126P022001,-5781.00
+        26/10/2026,LOANRECOVERY-EMI:70345126P022001,-5781.00
         27/10/2026,ZZ UNKNOWN SHOP,-20.00
         """
 
     @Test func readsTheLoansReference() {
-        #expect(StatementImport.isInstalment("LOANRECOVERY-EMI:11392149P022001"))
+        #expect(StatementImport.isInstalment("LOANRECOVERY-EMI:70345126P022001"))
         #expect(StatementImport.isInstalment("MORTGAGE INSTALMENT 0042"))
-        #expect(!StatementImport.isInstalment("PUR CARREFOUR 0785"))
-        #expect(StatementImport.loanReference("LOANRECOVERY-EMI:11392149P022001") == "11392149P022001")
+        #expect(!StatementImport.isInstalment("PUR CARREFOUR 4417"))
+        #expect(StatementImport.loanReference("LOANRECOVERY-EMI:70345126P022001") == "70345126P022001")
         #expect(StatementImport.loanReference("LoanRecovery-EMI") == nil)
     }
 

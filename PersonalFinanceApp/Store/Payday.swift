@@ -91,7 +91,7 @@ struct PaydayPlan {
         }
 
         let current = open?.dueDate ?? today
-        let next = snapshot.occurrences.filter { $0.itemId == item?.id && $0.dueDate > current }.map(\.dueDate).min()
+        let next = snapshot.occurrences.filter { $0.itemId == item?.id && !$0.skipped && $0.dueDate > current }.map(\.dueDate).min()
         let bills = snapshot.occurrences.filter { occ in
             guard let it = snapshot.item(for: occ), it.direction == .outflow, !occ.skipped else { return false }
             return occ.dueDate >= cal.startOfDay(for: today) && (next.map { occ.dueDate < $0 } ?? true)

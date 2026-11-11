@@ -10,6 +10,7 @@
 
 import Foundation
 import StoreKit
+import UIKit
 
 /// Features that need Nokael Plus, with how the paywall introduces each
 enum PlusFeature: String, Identifiable, CaseIterable {
@@ -88,7 +89,11 @@ final class PlusStore {
     private var updates: Task<Void, Never>?
     private let forced: Bool
 
-    var isPlus: Bool { forced || !owned.isEmpty }
+    /// Until when Plus was last confirmed. A Shortcut can run while the phone is locked or offline, when
+    /// StoreKit may not answer; a purchase already confirmed keeps working until it would expire.
+    private(set) var confirmedUntil: Date? = UserDefaults.standard.object(forKey: "plusConfirmedUntil") as? Date
+
+    var isPlus: Bool { forced || !owned.isEmpty || (confirmedUntil.map { $0 > Date() } ?? false) }
 
     /// The plan that's active, for Settings
     var currentPlan: String? {
@@ -133,12 +138,23 @@ final class PlusStore {
 
     func refresh() async {
         var now: Set<String> = []
+        var until: Date?
         for await result in Transaction.currentEntitlements {
             guard case .verified(let t) = result, t.revocationDate == nil else { continue }
             if let expires = t.expirationDate, expires < Date() { continue }
             now.insert(t.productID)
+            let end = t.expirationDate ?? .distantFuture
+            until = max(until ?? end, end)
         }
         owned = now
+        if let until {
+            confirmedUntil = until
+            UserDefaults.standard.set(until, forKey: "plusConfirmedUntil")
+        } else if UIApplication.shared.isProtectedDataAvailable && UIApplication.shared.applicationState != .background {
+            // Only an answer while the phone is unlocked and the app open counts as "no longer Plus"
+            confirmedUntil = nil
+            UserDefaults.standard.removeObject(forKey: "plusConfirmedUntil")
+        }
     }
 
     /// True when the purchase went through; false if cancelled or waiting for approval

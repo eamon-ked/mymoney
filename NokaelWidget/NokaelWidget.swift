@@ -24,9 +24,13 @@ struct SummaryProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SummaryEntry>) -> Void) {
-        // The app reloads the widget on every change; midnight refreshes "due tomorrow" wording
+        // The app reloads the widget on every change; midnight refreshes "due tomorrow" wording, and a
+        // summary whose period has ended is no longer shown (see the view): it asks for the app instead
         let midnight = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: .now)) ?? .now
-        completion(Timeline(entries: [SummaryEntry(date: .now, summary: WidgetSummary.load())], policy: .after(midnight)))
+        let summary = WidgetSummary.load()
+        var entries = [SummaryEntry(date: .now, summary: summary)]
+        if let end = summary?.through, end > .now, end < midnight { entries.append(SummaryEntry(date: end.addingTimeInterval(1), summary: summary)) }
+        completion(Timeline(entries: entries, policy: .after(midnight)))
     }
 }
 
@@ -41,7 +45,7 @@ struct SafeToSpendWidgetView: View {
                     Label("Nokael Plus", systemImage: "star.circle.fill").font(.caption.weight(.semibold))
                     Text("Unlock the widget with Nokael Plus in the app").font(.caption).foregroundStyle(.secondary)
                 }
-            } else if let summary = entry.summary {
+            } else if let summary = entry.summary, summary.through >= entry.date {
                 switch family {
                 case .accessoryInline: inline(summary)
                 case .accessoryRectangular: rectangular(summary)

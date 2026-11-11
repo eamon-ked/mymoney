@@ -13,6 +13,8 @@ import NokaelCore
 // MARK: - By voice (free)
 
 struct LogSpendingIntent: AppIntent {
+    /// Money is read out or changed: the phone has to be unlocked first, even when Siri is allowed on the Lock Screen
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let title: LocalizedStringResource = "Log Spending"
     static let description = IntentDescription("Say what you spent, like \"45 at Carrefour\" or \"got 500 from Sam\".")
 
@@ -36,7 +38,8 @@ struct LogSpendingIntent: AppIntent {
             let snapshot = store.snapshot
             if let draft = try? await MoneyAI.draft(from: sentence, categories: snapshot.expenseCategories.map(\.name),
                                                     income: snapshot.incomeCategories.map(\.name),
-                                                    accounts: snapshot.accounts.filter(\.spendable).map(\.name), today: now),
+                                                    accounts: snapshot.accounts.filter(\.spendable).map(\.name), today: now,
+                                                    currency: snapshot.currency),
                let amount = draft.amount, draft.kind != .transfer {
                 let date = Calendar.current.date(byAdding: .day, value: -draft.daysAgo, to: now) ?? now
                 capture = Capture(source: .siri, direction: draft.kind == .income ? .received : .spent,
@@ -91,6 +94,8 @@ struct LogSpendingIntent: AppIntent {
 }
 
 struct AddExpenseIntent: AppIntent {
+    /// Money is read out or changed: the phone has to be unlocked first, even when Siri is allowed on the Lock Screen
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let title: LocalizedStringResource = "Add Expense"
     static let description = IntentDescription("Add spending with the amount, shop, category and account.")
 
@@ -117,10 +122,10 @@ struct AddExpenseIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let services = AppServices.shared
         let store = services.store
-        guard let value = Decimal(string: String(format: "%.2f", amount)) else {
+        guard let money = Money.spoken(amount, currency: store.currency), money.isPositive else {
             return .result(dialog: "That amount didn't look right.")
         }
-        let capture = Capture(source: .siri, direction: .spent, amount: Money(value, currency: store.currency),
+        let capture = Capture(source: .siri, direction: .spent, amount: money,
                               merchant: merchant ?? "", date: store.now(), text: "expense")
         let outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus,
                                                       choices: .init(accountId: account?.id, categoryId: category?.id))
@@ -130,6 +135,8 @@ struct AddExpenseIntent: AppIntent {
 }
 
 struct AddIncomeIntent: AppIntent {
+    /// Money is read out or changed: the phone has to be unlocked first, even when Siri is allowed on the Lock Screen
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let title: LocalizedStringResource = "Add Income"
     static let description = IntentDescription("Add money you received.")
 
@@ -146,14 +153,14 @@ struct AddIncomeIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let services = AppServices.shared
         let store = services.store
-        guard let value = Decimal(string: String(format: "%.2f", amount)) else {
+        guard let money = Money.spoken(amount, currency: store.currency), money.isPositive else {
             return .result(dialog: "That amount didn't look right.")
         }
         if PaydayPlan.mentionsSalary(payer ?? "") {
-            let said = Money(value, currency: store.currency)
+            let said = money
             return .result(dialog: IntentDialog(stringLiteral: LogSpendingIntent.recordSalary(said: said, store: store, isPlus: services.plus.isPlus)))
         }
-        let capture = Capture(source: .siri, direction: .received, amount: Money(value, currency: store.currency),
+        let capture = Capture(source: .siri, direction: .received, amount: money,
                               merchant: payer ?? "", date: store.now(), text: "income")
         let outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus,
                                                       choices: .init(accountId: account?.id))
@@ -163,13 +170,15 @@ struct AddIncomeIntent: AppIntent {
 }
 
 struct SafeToSpendIntent: AppIntent {
+    /// Money is read out or changed: the phone has to be unlocked first, even when Siri is allowed on the Lock Screen
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let title: LocalizedStringResource = "Safe to Spend"
     static let description = IntentDescription("Hear how much you can spend freely until payday.")
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ReturnsValue<String> {
         let snapshot = AppServices.shared.store.snapshot
-        let sts = snapshot.safeToSpend()
+        let sts = SafePeriod.safeToSpend(snapshot)
         guard snapshot.setupComplete, let amount = sts.amount else {
             return .result(value: "", dialog: "Finish setting up Nokael Money first.")
         }
@@ -209,20 +218,24 @@ struct LogApplePayIntent: AppIntent {
         let services = AppServices.shared
         await services.plus.refresh()
         let code = amount.currencyCode.isEmpty ? services.store.currency : amount.currencyCode.uppercased()
-        // Refunds arrive as negative amounts
-        let money = Money(amount.amount, currency: code)
+        // Refunds arrive as negative amounts; an amount that isn't real money is turned away, not rounded
+        guard let money = Money.exact(amount.amount, currency: code) else {
+            var trace = CaptureTrace(date: services.store.now(), source: .applePay)
+            trace.add(CaptureTrace.reachedTitle, .done, card.map { "On \($0)" } ?? "No card name passed in")
+            trace.add(CaptureTrace.readTitle, .failed, "The amount \(amount.amount) \(code) isn't one that can be saved")
+            services.store.noteCaptureTrace(trace)
+            services.store.noteCardPurchase(card: card, outcome: "not saved, the amount wasn't readable")
+            return .result(dialog: "That amount didn't look right, so nothing was saved.")
+        }
         let capture = Capture(source: .applePay, direction: money.isNegative ? .received : .spent, amount: money.magnitude,
                               merchant: merchant ?? "", cardHint: card, date: services.store.now(),
-                              text: [card ?? "", merchant ?? "", "\(amount.amount)"].joined(separator: "|"))
-        let outcome: CaptureService.Outcome
-        do {
-            outcome = try await CaptureService.record(capture, in: services.store, isPlus: services.plus.isPlus)
-        } catch {
-            services.store.noteCardPurchase(card: card, outcome: "couldn't be saved")
-            throw error
-        }
-        services.store.noteCardPurchase(card: card, outcome: outcome.logLine)
+                              text: [card ?? "", merchant ?? "", "\(amount.amount)"].joined(separator: "|"),
+                              isReversal: money.isNegative)
+        let run = await CaptureService.runCardPurchase(capture, store: services.store, isPlus: services.plus.isPlus)
+        let outcome = run.outcome ?? .skipped("It couldn't be saved.")
         WidgetSync.update(services.store.snapshot, isPlus: services.plus.isPlus)
+        await Notifications.captured(outcome, capture, in: services.store)
+        await Notifications.sync(services.store.snapshot)
         return .result(dialog: IntentDialog(stringLiteral: outcome.message))
     }
 }
@@ -249,26 +262,14 @@ struct LogBankMessageIntent: AppIntent {
         let services = AppServices.shared
         let store = services.store
         await services.plus.refresh()
-        // An automation wired with the whole input as Sender passes the message twice; treat that as no sender
-        let sender = sender.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .flatMap { $0.isEmpty || $0 == message.trimmingCharacters(in: .whitespacesAndNewlines) ? nil : $0 }
-        guard CaptureService.accepts(sender: sender, settings: store.settings) else {
-            store.noteBankMessage(from: sender, outcome: "ignored, not one of your banks")
-            return .result(dialog: "Not from one of your banks, so it was ignored.")
+        let sender = CaptureService.realSender(sender, message: message)
+        let run = await CaptureService.runBankMessage(message, sender: sender, store: store, isPlus: services.plus.isPlus)
+        guard let capture = run.capture, let outcome = run.outcome else {
+            return .result(dialog: IntentDialog(stringLiteral: run.trace.steps.last?.detail ?? "Nothing was saved."))
         }
-        guard let capture = await CaptureService.read(message: message, homeCurrency: store.currency, date: store.now()) else {
-            store.noteBankMessage(from: sender, outcome: "no purchase or deposit found in it")
-            return .result(dialog: "No purchase or deposit in that message.")
-        }
-        let outcome: CaptureService.Outcome
-        do {
-            outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus)
-        } catch {
-            store.noteBankMessage(from: sender, outcome: "couldn't be saved")
-            throw error
-        }
-        store.noteBankMessage(from: sender, outcome: outcome.logLine)
         WidgetSync.update(store.snapshot, isPlus: services.plus.isPlus)
+        await Notifications.captured(outcome, capture, in: store)
+        await Notifications.sync(store.snapshot)
         return .result(dialog: IntentDialog(stringLiteral: outcome.message))
     }
 }

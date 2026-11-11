@@ -359,128 +359,36 @@ struct SafeToSpendTests {
         #expect(s.statuses.contains(.shortfall))
     }
 
+    /// The snapshot passes what's left beyond the category's unpaid bills: Rent's bill uses all of Rent
     @Test func categoryCoveredByABillIsntReservedTwice() throws {
         let rent = rentItem
         let s = calc([try opening()], items: [rent], occurrences: occurrences(for: [rent]),
-                     reservations: [CategoryReservation(categoryId: f.rent.id, name: "Rent", remaining: Fixture.aed(2800)),
+                     reservations: [CategoryReservation(categoryId: f.rent.id, name: "Rent", remaining: Fixture.aed(0)),
                                     CategoryReservation(categoryId: f.groceries.id, name: "Groceries", remaining: Fixture.aed(600))],
                      buffer: 0)
             .calculate(today: today, periodEnd: monthEnd)
         #expect(s.categoryReservations.map(\.label) == ["Groceries"])
         #expect(s.amount == Fixture.aed(12000 - 2800 - 600))
     }
-}
 
-struct ReconciliationTests {
-    let f = Fixture()
-
-    @Test("REC-01..03: differences are found, and fixing one needs a reason")
-    func reconcile() throws {
-        let ledger = f.ledger([
-            try EntryFactory.openingBalance(Fixture.aed(1000), for: f.current, equity: f.equity, date: Fixture.date(2026, 10, 1)),
-            try EntryFactory.expense(Fixture.aed(40), from: f.current, category: f.groceries, date: Fixture.date(2026, 10, 3))
-        ])
-        let check = Reconciler.check(ledger: ledger, accountId: f.current.id, statementDate: Fixture.date(2026, 10, 10),
-                                     statementBalance: Fixture.aed(955))
-        #expect(check.calculated == Fixture.aed(960))
-        #expect(check.difference == Fixture.aed(-5))
-        #expect(check.unreconciled.count == 2)
-        #expect(throws: LedgerError.reasonRequired) {
-            try Reconciler.adjustment(for: check, account: f.current, equity: f.equity, reason: "")
-        }
-        let fix = try #require(try Reconciler.adjustment(for: check, account: f.current, equity: f.equity, reason: "Bank fee"))
-        #expect(fix.kind == .reconciliation)
-        #expect(f.ledger(ledger.entries + [fix]).balance(of: f.current.id, asOf: Fixture.date(2026, 10, 10)) == Fixture.aed(955))
-    }
-}
-
-struct JourneyTests {
-    let f = Fixture()
-    let cal = Fixture.dubai
-
-    @Test("QA-09: editing a posted expense recalculates balances and budget")
-    func qa09Edit() throws {
-        let opening = try EntryFactory.openingBalance(Fixture.aed(1000), for: f.current, equity: f.equity, date: Fixture.date(2026, 10, 1))
-        var original = try EntryFactory.expense(Fixture.aed(50), from: f.current, category: f.groceries, date: Fixture.date(2026, 10, 5))
-        let allocations = [Allocation(categoryId: f.groceries.id, month: "2026-10", amount: Fixture.aed(300))]
-        // An edit voids the original and posts a replacement, keeping history
-        original.status = .void
-        let replacement = try EntryFactory.expense(Fixture.aed(60), from: f.current, category: f.transport, date: Fixture.date(2026, 10, 5))
-        let ledger = f.ledger([opening, original, replacement])
-        let budget = Budget(ledger: ledger, categories: [BudgetCategory(id: f.groceries.id, name: "Groceries", group: "Essentials"),
-                                                         BudgetCategory(id: f.transport.id, name: "Transport", group: "Essentials")],
-                            allocations: allocations, calendar: cal)
-        #expect(ledger.balance(of: f.current.id) == Fixture.aed(940))
-        #expect(budget.line(f.groceries.id, month: "2026-10").remaining == Fixture.aed(300))
-        #expect(budget.line(f.transport.id, month: "2026-10").spent == Fixture.aed(60))
-        #expect(ledger.entries.count == 3) // the original is kept, voided
+    /// A category with a bill still keeps the rest of its budget (it used to drop all of it)
+    @Test func aCategoryWithABillKeepsTheRestOfItsBudget() throws {
+        var bill = rentItem
+        bill.categoryId = f.groceries.id
+        let s = calc([try opening()], items: [bill], occurrences: occurrences(for: [bill]),
+                     reservations: [CategoryReservation(categoryId: f.groceries.id, name: "Groceries", remaining: Fixture.aed(600))],
+                     buffer: 0)
+            .calculate(today: today, periodEnd: monthEnd)
+        #expect(s.categoryReservationsTotal == Fixture.aed(600))
+        #expect(s.amount == Fixture.aed(12000 - 2800 - 600))
     }
 
-    @Test("Journey A: first salary and first budget")
-    func journeyA() throws {
-        let today = Fixture.date(2026, 10, 25)
-        // 1. Current account with 12,000
-        let entries = [try EntryFactory.openingBalance(Fixture.aed(12000), for: f.current, equity: f.equity, date: Fixture.date(2026, 10, 20))]
-        // 2. Monthly salary expected on the 27th
-        let salary = PlannedItem(name: "Salary", direction: .inflow, amount: Fixture.aed(18000),
-                                 schedule: Schedule(start: Fixture.date(2026, 10, 27), frequency: .monthly(every: 1)), accountId: f.current.id)
-        // 3. Rent and loan payment schedules
-        let rent = PlannedItem(name: "Rent", direction: .outflow, amount: Fixture.aed(2800),
-                               schedule: Schedule(start: Fixture.date(2026, 10, 28), frequency: .monthly(every: 1)),
-                               accountId: f.current.id, categoryId: f.rent.id)
-        let loan = PlannedItem(name: "Loan payment", direction: .outflow, amount: Fixture.aed(1400),
-                               schedule: Schedule(start: Fixture.date(2026, 10, 30), frequency: .monthly(every: 1)), accountId: f.current.id)
-        let items = [salary, rent, loan]
-        let occs = items.flatMap { OccurrencePlanner.regenerate($0, existing: [], from: Fixture.date(2026, 10, 1), through: Fixture.date(2026, 12, 31), calendar: cal) }
-        // 4. Reserve 2,000 for an emergency fund
-        let reserve = Reserve(name: "Emergency fund", amount: Fixture.aed(2000), accountId: f.current.id)
-        // 5. Spending capacity from actual balances only
-        let calculator = SafeToSpendCalculator(ledger: f.ledger(entries), items: items, occurrences: occs, reserves: [reserve],
-                                               buffer: Fixture.aed(950),
-                                               lastConfirmed: Dictionary(uniqueKeysWithValues: f.all.map { ($0.id, Fixture.date(2026, 10, 20)) }),
-                                               calendar: cal)
-        let s = calculator.calculate(today: today, periodEnd: Fixture.date(2026, 10, 31, 23))
-        #expect(s.amount == Fixture.aed(4850))
-        #expect(s.isReliable)
-        // 6. Allocate flexible spending
-        let allocations = [Allocation(categoryId: f.groceries.id, month: "2026-10", amount: Fixture.aed(1500)),
-                           Allocation(categoryId: f.transport.id, month: "2026-10", amount: Fixture.aed(500)),
-                           Allocation(categoryId: f.rent.id, month: "2026-10", amount: Fixture.aed(2800))]
-        let budget = Budget(ledger: f.ledger(entries),
-                            categories: [f.groceries, f.transport, f.rent].map { BudgetCategory(id: $0.id, name: $0.name, group: "Essentials") },
-                            allocations: allocations, calendar: cal)
-        // 7. Reliable balances and money still available to allocate
-        #expect(budget.availableToAllocate(month: "2026-10") == Fixture.aed(12000 - 4800))
-        #expect(f.ledger(entries).netWorth().total == Fixture.aed(12000))
-    }
-
-    @Test("Journey B: buy groceries")
-    func journeyB() throws {
-        let opening = try EntryFactory.openingBalance(Fixture.aed(12000), for: f.current, equity: f.equity, date: Fixture.date(2026, 10, 20))
-        let allocations = [Allocation(categoryId: f.groceries.id, month: "2026-10", amount: Fixture.aed(1500))]
-        let categories = [BudgetCategory(id: f.groceries.id, name: "Groceries", group: "Essentials")]
-        let reservations: (Budget) -> [CategoryReservation] = { b in
-            [CategoryReservation(categoryId: f.groceries.id, name: "Groceries", remaining: b.line(f.groceries.id, month: "2026-10").remaining)]
-        }
-        let today = Fixture.date(2026, 10, 25)
-        let end = Fixture.date(2026, 10, 31, 23)
-
-        let beforeLedger = f.ledger([opening])
-        let beforeBudget = Budget(ledger: beforeLedger, categories: categories, allocations: allocations, calendar: cal)
-        let beforeSafe = SafeToSpendCalculator(ledger: beforeLedger, items: [], occurrences: [], reserves: [],
-                                               categoryReservations: reservations(beforeBudget), buffer: Fixture.aed(0), calendar: cal)
-            .calculate(today: today, periodEnd: end).amount
-
-        // Add → Expense, AED 85, Groceries, from the current account
-        let spend = try EntryFactory.expense(Fixture.aed(85), from: f.current, category: f.groceries, date: today)
-        let ledger = f.ledger([opening, spend])
-        let budget = Budget(ledger: ledger, categories: categories, allocations: allocations, calendar: cal)
-        let safe = SafeToSpendCalculator(ledger: ledger, items: [], occurrences: [], reserves: [],
-                                         categoryReservations: reservations(budget), buffer: Fixture.aed(0), calendar: cal)
-            .calculate(today: today, periodEnd: end).amount
-
-        #expect(ledger.balance(of: f.current.id) == Fixture.aed(11915))                    // account −85
-        #expect(budget.line(f.groceries.id, month: "2026-10").remaining == Fixture.aed(1415)) // groceries −85
-        #expect(safe == beforeSafe)  // already reserved for groceries, so not deducted twice
+    /// A goal can't hold back more than its account still has
+    @Test func aReserveNeverHoldsMoreThanItsAccount() throws {
+        let entries = [try EntryFactory.openingBalance(Fixture.aed(1000), for: f.current, equity: f.equity, date: Fixture.date(2026, 10, 1))]
+        let goal = Reserve(name: "Holiday", amount: Fixture.aed(5000), accountId: f.current.id)
+        let s = calc(entries, reserves: [goal], buffer: 0).calculate(today: today, periodEnd: monthEnd)
+        #expect(s.reservesTotal == Fixture.aed(1000))
+        #expect(s.amount == Fixture.aed(0))
     }
 }

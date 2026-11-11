@@ -221,7 +221,7 @@ extension Redesign {
     /// Full screens pushed over the tabs, with a back button: Activity and the pages listed in More
     enum Page: Hashable {
         case activity, reports, forecast, profile, settings, privacy, privacyMode, help
-        case capture, data, plus, categories, history, reminders, intelligenceSettings
+        case capture, data, plus, categories, history, reminders, intelligenceSettings, netWorth
     }
 
     /// What Privacy Mode hides. It only changes what's drawn; the figures underneath are never touched.
@@ -242,6 +242,9 @@ extension Redesign {
 
         /// Read before the first frame is drawn, so a hidden amount never flashes up at launch
         static func stored() -> Privacy {
+            // Demo and UI-test runs always start with amounts showing, whatever an earlier run left
+            let args = CommandLine.arguments
+            if args.contains("-demoData") || args.contains("-uiTesting") { return Privacy() }
             guard let data = UserDefaults.standard.data(forKey: key),
                   var saved = try? JSONDecoder().decode(Privacy.self, from: data) else { return Privacy() }
             if !saved.remember { saved.on = false }
@@ -287,7 +290,12 @@ extension Redesign {
         }
         /// The month Budget shows, as a BudgetMonth key
         var month: String
-        var privacy = Privacy() { didSet { privacy.store() } }
+        var privacy = Privacy() {
+            didSet {
+                privacy.store()
+                if privacy.on != oldValue.on { WidgetSync.update(snapshot, isPlus: isPlus) }
+            }
+        }
         /// Fields worked out by Help or a sentence, picked up by the next add form
         var draft: DraftEntry?
         /// What Help heard as the salary, picked up by Payday
@@ -415,6 +423,9 @@ extension Redesign {
             let entry = record.entry
             let lines = entry.lines.compactMap { line in s.account(line.accountId).map { (record: $0, amount: line.amount) } }
             let category = lines.first { $0.record.kind.isCategory }?.record
+            // An expense split across categories names them all, e.g. "Groceries & Transport"
+            let categoryLines = lines.filter { $0.record.kind.isCategory }
+            let categoryNames = categoryLines.count > 1 ? categoryLines.map(\.record.name).joined(separator: " & ") : nil
             let sheet = lines.filter { $0.record.kind.isBalanceSheet }
             let assets = sheet.filter { $0.record.kind.isAsset }
             var flow = Flow.move
@@ -447,7 +458,7 @@ extension Redesign {
                 : record.kind == .debtPayment ? ("creditcard", .green) : ("slider.horizontal.3", .green))
             return Transaction(id: record.id, name: record.memo.isEmpty ? (category?.name ?? "Entry") : record.memo,
                                amount: amount.decimal, flow: flow, kind: record.kind, categoryId: category?.id,
-                               category: category?.name ?? (record.kind == .transfer ? "Transfer" : record.kind == .debtPayment ? "Loan or card" : "Correction"),
+                               category: categoryNames ?? category?.name ?? (record.kind == .transfer ? "Transfer" : record.kind == .debtPayment ? "Loan or card" : "Correction"),
                                symbol: symbol, tone: tone, date: record.date, accountId: from, destinationId: to,
                                note: record.notes, occurrenceId: record.occurrenceId, needsReview: record.needsReview,
                                voided: record.status == .void, source: record.source?.title)
@@ -571,6 +582,20 @@ extension Redesign {
         }
 
         func money(_ value: Money, revealed: Bool = false) -> String { money(value.decimal, revealed: revealed) }
+
+        /// Saved text that has amounts written into it ("Japan trip: AED 6,000.00 set aside"), with the
+        /// amounts hidden in Privacy Mode: any number next to a currency, or with pennies
+        func concealingAmounts(_ text: String) -> String {
+            guard hidesAmounts else { return text }
+            let number = #"[0-9](?:[0-9]|[.,'\u00A0\u202F ](?=[0-9]))*"#
+            let unit = #"(?:\b[A-Z]{3}\b|\p{Sc})"#
+            let patterns = ["[−-]?" + unit + #"\s?"# + number, "[−-]?" + number + #"\s?"# + unit, #"\b[0-9]{1,3}(?:[.,'\u00A0\u202F]?[0-9]{3})*[.,][0-9]{2,3}\b"#]
+            var result = text
+            for pattern in patterns {
+                result = result.replacingOccurrences(of: pattern, with: "\(currency) \(Redesign.hiddenDigits)", options: .regularExpression)
+            }
+            return result
+        }
 
         /// An amount on its own, ready to style
         func amount(_ value: Decimal, revealed: Bool = false) -> Text { Text(private: money(value, revealed: revealed)) }
@@ -708,11 +733,11 @@ extension Redesign {
         func save(_ form: EntryForm, replacing original: UUID? = nil) -> String? {
             var id: UUID?
             let message: String = if original != nil { "Transaction updated." }
-                else if form.kind == .transfer { "Transfer recorded. Your total cash is unchanged." }
+                else if form.kind == .transfer { "Transfer recorded." }
                 else if form.kind == .adjustment { "Balance corrected." }
                 else if form.occurrenceId != nil { "Payment recorded. Your balances are up to date." }
                 else { "Transaction saved." }
-            let problem = attempt(message, undo: original == nil ? { [store] in if let id { try store.void(id) } } : nil) {
+            let problem = attempt(message, undo: original == nil ? { [store] in if let id { try store.undoSave(form, entryId: id) } } : nil) {
                 id = try store.save(form, replacing: original)
                 if let account = form.accountId, snapshot.account(account)?.kind != .lent {
                     try store.updateSettings { $0.lastUsedAccountId = account }

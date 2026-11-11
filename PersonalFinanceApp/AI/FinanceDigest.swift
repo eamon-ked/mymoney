@@ -39,6 +39,11 @@ struct FinanceDigest: Sendable {
         let category: String?
         let account: String?
         let amount: Money
+        /// Your own spending in it, as Budget and Reports count it: what reached spending categories.
+        /// Friends' shares of a split bill and the part of a card or loan payment that paid the debt down aren't.
+        var spent: Money
+        /// What reached income categories
+        var received: Money
     }
 
     struct Month: Sendable {
@@ -60,6 +65,7 @@ struct FinanceDigest: Sendable {
 
     let currency: String
     let today: Date
+    let calendar: Calendar
     let monthKey: String
     let safeToSpend: String
     let safeToSpendThrough: Date
@@ -87,9 +93,11 @@ struct FinanceDigest: Sendable {
         let calendar = snapshot.calendar
         currency = snapshot.currency
         today = snapshot.today
+        self.calendar = calendar
         monthKey = snapshot.monthKey
 
-        let sts = snapshot.safeToSpend()
+        // The same period Home shows, as chosen on the breakdown
+        let sts = SafePeriod.safeToSpend(snapshot)
         safeToSpend = snapshot.setupComplete ? (sts.amount?.compact ?? "unknown") : "not set up yet"
         safeToSpendThrough = sts.periodEnd
         cashAndBank = snapshot.cashAndBank.compact
@@ -116,16 +124,21 @@ struct FinanceDigest: Sendable {
         plannedThisMonth = lines.map { $0.1.planned }.sum(snapshot.currency).compact
         incomeCategoryNames = snapshot.incomeCategories.map(\.name)
 
-        transactions = snapshot.entries().prefix(400).map { record in
+        // All of them: totals must count every entry asked about. Only the examples listed are capped
+        transactions = snapshot.entries().map { record in
             let lines = record.lines
             let category = lines.lazy.compactMap { snapshot.account($0.accountId) }.first { $0.kind.isCategory }
             let sheet = lines.filter { snapshot.account($0.accountId)?.kind.isBalanceSheet == true }
             let amount = lines.map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }
                 .filter(\.isPositive).sum(snapshot.currency)
+            let kinds = lines.map { snapshot.account($0.accountId)?.kind }
+            let moved = lines.map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }
+            let toSpending = zip(kinds, moved).filter { $0.0 == .expense }.map(\.1).sum(snapshot.currency)
+            let toIncome = zip(kinds, moved).filter { $0.0 == .income }.map(\.1).sum(snapshot.currency)
             return Transaction(date: record.date, memo: record.memo, kind: record.kind.rawValue,
                                category: category?.name,
                                account: sheet.first.flatMap { snapshot.account($0.accountId)?.name },
-                               amount: amount)
+                               amount: amount, spent: toSpending, received: toIncome.negated)
         }
 
         let expense = snapshot.spendingCategoryInfos
@@ -265,7 +278,7 @@ struct FinanceDigest: Sendable {
 
     /// Matching transactions, newest first, with a total
     func search(text: String?, category: String?, days: Int?, limit: Int = 25) -> String {
-        let since = days.flatMap { Calendar.current.date(byAdding: .day, value: -$0, to: today) }
+        let since = days.flatMap { calendar.date(byAdding: .day, value: -$0, to: today) }
         let needle = text?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
         let cat = category?.trimmingCharacters(in: .whitespaces).lowercased() ?? ""
         func matches(_ t: Transaction, _ word: String) -> Bool {
@@ -281,11 +294,12 @@ struct FinanceDigest: Sendable {
             hits = recent.filter { t in (!needle.isEmpty && matches(t, needle)) || (!cat.isEmpty && matches(t, cat)) }
         }
         guard !hits.isEmpty else { return "No matching transactions." }
-        let spent = hits.filter { $0.kind == "expense" || $0.kind == "debtPayment" }.map(\.amount).sum(currency)
-        let received = hits.filter { $0.kind == "income" }.map(\.amount).sum(currency)
+        let spent = hits.map(\.spent).sum(currency)
+        let received = hits.map(\.received).sum(currency)
         var out = "\(hits.count) matching transactions. Total spent: \(spent.compact). Total received: \(received.compact).\n"
         out += hits.prefix(limit).map {
             "- \(day($0.date)): \($0.memo), \($0.kind)\($0.category.map { ", \($0)" } ?? "")\($0.account.map { ", \($0)" } ?? ""): \($0.amount.compact)"
+                + ($0.kind == "expense" && $0.spent != $0.amount ? " (your share \($0.spent.compact))" : "")
         }.joined(separator: "\n")
         if hits.count > limit { out += "\n(\(hits.count - limit) older ones not listed)" }
         return out

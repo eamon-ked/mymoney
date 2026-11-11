@@ -114,7 +114,7 @@ extension Redesign {
             }
             .confirmationDialog("Archive \(app.accountLabel(account.id))?", isPresented: $confirmArchive, titleVisibility: .visible) {
                 Button("Archive account", role: .destructive) { setArchived(true) }
-            } message: { Text("It leaves your lists and totals. Its history stays, and you can restore it from Accounts.") }
+            } message: { Text(archiveWarning) }
         }
 
         private func checkedLine(_ r: LedgerAccountRecord) -> String {
@@ -184,6 +184,18 @@ extension Redesign {
                 .map { app.toast = Toast(message: $0, isError: true) }
         }
 
+        /// Says what leaves the totals, so money doesn't seem to disappear
+        private var archiveWarning: String {
+            let left = app.snapshot.balance(account.id)
+            let history = "Its history stays, and you can restore it from Accounts."
+            guard !left.isZero else { return "It leaves your lists and totals. " + history }
+            let amount = app.money(left.magnitude)
+            return (account.isLiability
+                ? "\(amount) is still owed on it. Archiving takes that out of your net worth, as if it weren't owed. "
+                : "It still holds \(amount). Archiving takes that out of your net worth and safe to spend. ")
+                + "Move or settle it first if it's still yours. " + history
+        }
+
         private func setArchived(_ archived: Bool) {
             guard let r = app.record(account.id) else { return }
             app.attempt(archived ? "Account archived." : "Account restored.") { try app.store.updateAccount(r) { $0.archived = archived } }
@@ -193,7 +205,7 @@ extension Redesign {
         @ViewBuilder private func moreMenu(_ r: LedgerAccountRecord?) -> some View {
             if account.kind.holdsMoney || account.isLiability {
                 Button("Check against a statement") { app.open(.reconcile(account.id)) }
-                Button("Import a statement (CSV)") { app.open(.importStatement(account.id)) }
+                Button("Import a statement") { app.open(.importStatement(account.id)) }
                     .accessibilityIdentifier("importStatement")
             }
             Button("Change type") { app.open(.accountType(account.id)) }

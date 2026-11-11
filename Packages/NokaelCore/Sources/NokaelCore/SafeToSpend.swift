@@ -28,12 +28,17 @@ public struct Reserve: Hashable, Codable, Sendable, Identifiable {
 public struct CategoryReservation: Hashable, Sendable {
     public let categoryId: UUID
     public let name: String
+    /// What's left to spend this month apart from the category's unpaid bills, which are held back as bills
     public let remaining: Money
+    /// The unpaid bills taken out of `remaining`. One that safe to spend doesn't hold back as a bill (it falls
+    /// after the period) keeps its money in the category instead, so it's never left out of both
+    public let billIds: Set<UUID>
 
-    public init(categoryId: UUID, name: String, remaining: Money) {
+    public init(categoryId: UUID, name: String, remaining: Money, billIds: Set<UUID> = []) {
         self.categoryId = categoryId
         self.name = name
         self.remaining = remaining
+        self.billIds = billIds
     }
 }
 
@@ -139,16 +144,29 @@ public struct SafeToSpendCalculator: Sendable {
                           sourceIds: [pair.occurrence.id])
         }
 
-        // A reserve only protects money that is still counted as spendable
-        let reserved = reserves.filter { isSpendable($0.accountId) && $0.amount.isPositive }.map {
-            BreakdownItem(label: $0.name, amount: $0.amount, sourceIds: [$0.id])
+        // A reserve only protects money that is still counted as spendable, and never more than its
+        // account holds: money already spent can't be set aside again
+        var left = Dictionary(spendable.map { ($0.sourceIds[0], Money.max($0.amount, .zero(currency))) }, uniquingKeysWith: { a, _ in a })
+        let reserved: [BreakdownItem] = reserves.filter { isSpendable($0.accountId) && $0.amount.isPositive }.compactMap { reserve in
+            let room = left[reserve.accountId] ?? .zero(currency)
+            let held = Money.min(reserve.amount, room)
+            left[reserve.accountId] = room - held
+            guard held.isPositive else { return nil }
+            return BreakdownItem(label: reserve.name, amount: held, detail: held < reserve.amount ? "Only what the account holds" : nil,
+                                 sourceIds: [reserve.id])
         }
 
-        // Categories already covered by a bill in this period aren't reserved twice
-        let billCategories = Set(due.compactMap { $0.item.categoryId })
-        let categoryItems = categoryReservations
-            .filter { !billCategories.contains($0.categoryId) && $0.remaining.isPositive }
-            .map { BreakdownItem(label: $0.name, amount: $0.remaining, sourceIds: [$0.categoryId]) }
+        // What a category still has to spend beyond its own bills (see CategoryReservation), so a category with
+        // a budget and a bill keeps the rest of its budget while the bill is held back once, as a bill
+        let held = Set(due.map(\.occurrence.id))
+        let categoryItems = categoryReservations.compactMap { reservation -> BreakdownItem? in
+            let later = occurrences.filter { occ in
+                reservation.billIds.contains(occ.id) && !held.contains(occ.id) && !occ.skipped
+                    && isSpendable(items.first { $0.id == occ.itemId }?.accountId)
+            }.map(\.remaining).sum(currency)
+            let amount = reservation.remaining + later
+            return amount.isPositive ? BreakdownItem(label: reservation.name, amount: amount, sourceIds: [reservation.categoryId]) : nil
+        }
 
         let amount = spendable.map(\.amount).sum(currency)
             - obligations.map(\.amount).sum(currency)

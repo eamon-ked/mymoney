@@ -44,7 +44,7 @@ enum MoneyAI {
     // MARK: - Quick add from a sentence
 
     static func draft(from sentence: String, categories expense: [String], income: [String],
-                      accounts: [String], today: Date) async throws -> DraftEntry {
+                      accounts: [String], today: Date, currency: String) async throws -> DraftEntry {
         func choice(_ name: String, _ options: [String]) -> DynamicGenerationSchema {
             options.isEmpty ? DynamicGenerationSchema(type: String.self) : DynamicGenerationSchema(name: name, anyOf: options)
         }
@@ -72,7 +72,8 @@ enum MoneyAI {
         let kind = (try? content.value(String.self, forProperty: "kind")) ?? "expense"
         draft.kind = AddKind(rawValue: kind) ?? .expense
         if let amount = try? content.value(Double.self, forProperty: "amount"), amount > 0 {
-            draft.amount = Decimal(string: String(format: "%.2f", amount))
+            // To the currency's own precision: whole yen, three places for dinars
+            draft.amount = Decimal(string: String(format: "%.\(Currency.scale(of: currency))f", amount))
         }
         draft.memo = (try? content.value(String.self, forProperty: "description")) ?? ""
         draft.category = try? content.value(String.self, forProperty: "category")

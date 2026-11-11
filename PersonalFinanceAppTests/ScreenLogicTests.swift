@@ -59,19 +59,28 @@ struct ScreenLogicTests {
         fix.reason = "Bank fee"
         try store.save(fix)
         #expect(store.snapshot.balance(bank.id) == Self.aed(4750))
-        // Already right: nothing to record
-        #expect(throws: StoreError.invalid("That's already the recorded balance.")) { try store.save(fix) }
+        // The same form again is a retry: what it saved, nothing more
+        try store.save(fix)
+        #expect(store.snapshot.balance(bank.id) == Self.aed(4750))
+        // A new correction to what's already recorded has nothing to record
+        var again = fix
+        again.key = UUID()
+        #expect(throws: StoreError.invalid("That's already the recorded balance.")) { try store.save(again) }
     }
 
-    @Test func repeatsStartsTheBillOneStepLater() throws {
+    @Test func repeatsPaysTheFirstAndIsDueOneStepLater() throws {
         var rent = form(.expense, 3000)
         rent.memo = "Rent"
         rent.repeats = true
-        try store.save(rent)
+        let id = try store.save(rent)
         let item = try #require(store.snapshot.items.first { $0.name == "Rent" })
         #expect(item.direction == .outflow)
         #expect(item.amount == Self.aed(3000))
-        #expect(item.schedule.start == LedgerStoreTests.date(2026, 11, 26))
+        // Anchored on the day it was entered, which this entry pays, so it keeps that day of the month
+        #expect(item.schedule.start == rent.date)
+        let occurrences = store.snapshot.occurrences.filter { $0.itemId == item.id }.sorted { $0.dueDate < $1.dueDate }
+        #expect(occurrences.first?.paidEntryIds == [id])
+        #expect(occurrences.first { $0.paidEntryIds.isEmpty }?.dueDate == LedgerStoreTests.date(2026, 11, 26))
     }
 
     @Test func editingReplacesTheOriginalAndNeverRepeats() throws {

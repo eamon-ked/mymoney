@@ -88,10 +88,14 @@ public struct Entry: Hashable, Codable, Sendable, Identifiable {
     public var idempotencyKey: UUID
     /// The planned item occurrence this entry pays, if any
     public var occurrenceId: UUID?
+    /// The accounts whose statements this entry was checked against. A transfer is in two accounts,
+    /// and checking one statement says nothing about the other. Empty for entries checked before this
+    /// was kept, where `cleared` alone tells.
+    public var reconciledIn: [UUID]?
 
     public init(id: UUID = UUID(), kind: EntryKind, date: Date, status: EntryStatus = .posted,
                 cleared: ClearedState = .uncleared, memo: String = "", lines: [Line],
-                idempotencyKey: UUID = UUID(), occurrenceId: UUID? = nil) {
+                idempotencyKey: UUID = UUID(), occurrenceId: UUID? = nil, reconciledIn: [UUID]? = nil) {
         self.id = id
         self.kind = kind
         self.date = date
@@ -101,9 +105,16 @@ public struct Entry: Hashable, Codable, Sendable, Identifiable {
         self.lines = lines
         self.idempotencyKey = idempotencyKey
         self.occurrenceId = occurrenceId
+        self.reconciledIn = reconciledIn
     }
 
     public var isPosted: Bool { status == .posted }
+
+    /// Checked against this account's statement
+    public func isReconciled(in accountId: UUID) -> Bool {
+        if let accounts = reconciledIn, !accounts.isEmpty { return accounts.contains(accountId) }
+        return cleared == .reconciled
+    }
 
     public func amount(on accountId: UUID) -> Money? {
         let mine = lines.filter { $0.accountId == accountId }
@@ -229,6 +240,33 @@ public enum EntryFactory {
         let mine = total - shares.map(\.amount).sum(total.currency)
         guard mine.isPositive else { throw LedgerError.wrongAccountKind("Others' shares must be less than the total") }
         var lines = [Line(accountId: account.id, amount: -total), Line(accountId: category.id, amount: mine)]
+        lines += shares.map { Line(accountId: $0.person.id, amount: $0.amount) }
+        return try make(.expense, date: date, memo: memo, key: key, occurrenceId: occurrenceId, lines: lines)
+    }
+
+    /// One payment spread over several spending categories (and, optionally, people who owe part of it back).
+    /// The account drops by the whole amount once; each category takes its own part, and the parts must
+    /// add up to what's left after others' shares, so nothing is counted twice or left out.
+    public static func expense(_ total: Money, from account: AccountInfo, parts: [(category: AccountInfo, amount: Money)],
+                               shares: [(person: AccountInfo, amount: Money)] = [], date: Date, memo: String = "",
+                               key: UUID = UUID(), occurrenceId: UUID? = nil) throws -> Entry {
+        guard parts.count > 1 else {
+            guard let only = parts.first else { throw LedgerError.wrongAccountKind("Choose a spending category") }
+            return try splitExpense(total, from: account, category: only.category, shares: shares, date: date, memo: memo,
+                                    key: key, occurrenceId: occurrenceId)
+        }
+        guard total.isPositive, parts.allSatisfy({ $0.amount.isPositive }), shares.allSatisfy({ $0.amount.isPositive })
+        else { throw LedgerError.amountMustBePositive }
+        guard account.kind.isBalanceSheet, account.kind != .lent else { throw LedgerError.wrongAccountKind("Pay from an account") }
+        guard parts.allSatisfy({ $0.category.kind == .expense }) else { throw LedgerError.wrongAccountKind("Choose a spending category") }
+        guard Set(parts.map(\.category.id)).count == parts.count else { throw LedgerError.wrongAccountKind("Use each category once") }
+        guard shares.allSatisfy({ $0.person.kind == .lent }) else { throw LedgerError.wrongAccountKind("Split with people") }
+        let mine = total - shares.map(\.amount).sum(total.currency)
+        guard parts.map(\.amount).sum(total.currency) == mine else {
+            throw LedgerError.wrongAccountKind("The categories must add up to \(MoneyFormat.string(mine))")
+        }
+        var lines = [Line(accountId: account.id, amount: -total)]
+        lines += parts.map { Line(accountId: $0.category.id, amount: $0.amount) }
         lines += shares.map { Line(accountId: $0.person.id, amount: $0.amount) }
         return try make(.expense, date: date, memo: memo, key: key, occurrenceId: occurrenceId, lines: lines)
     }

@@ -134,9 +134,9 @@ extension Redesign {
         }
 
         private var reminderText: String {
-            guard BillReminders.enabled else { return "Off" }
+            guard Notifications.isOn(.bills) else { return "Off" }
             let days = app.snapshot.reminderDays(for: bill.itemId)
-            return BillReminders.choices.first { $0.days == days }?.label ?? "\(days) days before"
+            return Notifications.choices.first { $0.days == days }?.label ?? "\(days) days before"
         }
 
         @ViewBuilder private var paymentForm: some View {
@@ -168,15 +168,16 @@ extension Redesign {
 
         private func remind() {
             Task {
-                if !BillReminders.enabled {
-                    guard await BillReminders.requestPermission() else {
+                let allowed = await Notifications.permission() == .authorized
+                if !Notifications.isOn(.bills) || !allowed {
+                    guard await Notifications.requestPermission() else {
                         app.toast = Toast(message: "Notifications are off for Nokael Money. Turn them on in the iPhone's Settings.", isError: true)
                         return
                     }
-                    UserDefaults.standard.set(true, forKey: BillReminders.enabledKey)
+                    UserDefaults.standard.set(true, forKey: Notifications.Group.bills.key)
                 }
-                await BillReminders.sync(app.snapshot)
-                app.toast = Toast(message: "Bill reminders are on. You'll hear about this one \(reminderText.lowercased()).")
+                await Notifications.sync(app.snapshot)
+                app.toast = Toast(message: "Reminders are on. You'll hear about this one \(reminderText.lowercased()).")
             }
         }
     }
@@ -259,6 +260,7 @@ extension Redesign {
         @State private var hasEnd = false
         @State private var end = Date()
         @State private var reminderDays = 2
+        @State private var isTrial = false
         @State private var accountId: UUID?
         @State private var categoryId: UUID?
         @State private var problem: String?
@@ -289,12 +291,13 @@ extension Redesign {
                                categories: income ? app.snapshot.incomeCategories.filter { !$0.archived } : app.expenseChoices(), allowsNone: true)
                 if !income {
                     Field(label: "Remind me") {
-                        Choice(value: $reminderDays, options: BillReminders.choices.map(\.days)) { d in BillReminders.choices.first { $0.days == d }?.label ?? "" }
+                        Choice(value: $reminderDays, options: Notifications.choices.map(\.days)) { d in Notifications.choices.first { $0.days == d }?.label ?? "" }
                     }
-                    .disabled(!BillReminders.enabled)
-                    if !BillReminders.enabled {
-                        Redesign.footnote("Turn on Bill reminders in More › Settings to be reminded before bills are due.")
+                    .disabled(!Notifications.isOn(.bills))
+                    if !Notifications.isOn(.bills) {
+                        Redesign.footnote("Turn on Bills in More › Settings › Notifications to be reminded before bills are due.")
                     }
+                    ToggleRow(title: "It's a free trial", detail: isTrial ? "You'll be reminded 2 days before the first charge, in time to cancel." : nil, isOn: $isTrial)
                 }
                 Problem(text: problem)
                 Button(editing == nil ? (income ? "Add expected income" : "Add bill") : "Save", action: save)
@@ -334,6 +337,7 @@ extension Redesign {
             accountId = item.accountId
             categoryId = item.categoryId
             reminderDays = s.reminderDays(for: item.id)
+            isTrial = s.isTrial(item.id)
         }
 
         private func save() {
@@ -347,7 +351,7 @@ extension Redesign {
             let item = PlannedItem(id: editing?.id ?? UUID(), name: title, direction: direction, amount: value, isEstimate: estimate,
                                    schedule: schedule, accountId: accountId, categoryId: categoryId, debtId: editing?.debtId)
             problem = app.attempt(editing != nil ? "Saved." : income ? "Expected income added." : "Bill added to your upcoming commitments.") {
-                try app.store.savePlannedItem(item, reminderDays: income ? nil : reminderDays)
+                try app.store.savePlannedItem(item, reminderDays: income ? nil : reminderDays, isTrial: income ? nil : isTrial)
             }
         }
     }

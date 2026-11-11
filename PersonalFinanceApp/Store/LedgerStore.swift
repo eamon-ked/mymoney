@@ -52,22 +52,39 @@ enum StoreError: LocalizedError, Equatable {
 @Observable
 final class LedgerStore {
     let context: ModelContext
-    let calendar: Calendar
+    /// A context doesn't keep its database open by itself; holding it here means work still running
+    /// (a category suggestion, say) can never touch records of a database already closed
+    private let container: ModelContainer
+    /// The phone's calendar, before the week start chosen in Settings is applied
+    private let baseCalendar: Calendar
+    @ObservationIgnored private var calendarCache: (revision: Int, calendar: Calendar)?
+    /// The calendar everything is worked out in: the phone's, starting the week on the day chosen in Settings
+    var calendar: Calendar {
+        if let calendarCache, calendarCache.revision == revision { return calendarCache.calendar }
+        var calendar = baseCalendar
+        if let day = (try? context.fetch(FetchDescriptor<SettingsRecord>()))?.first?.firstWeekday, (1...7).contains(day) {
+            calendar.firstWeekday = day
+        }
+        calendarCache = (revision, calendar)
+        return calendar
+    }
     /// Injectable clock, so tests and previews can fix "today"
     var now: () -> Date
 
     /// Bumped on every change; everything derived re-reads after it
     private(set) var revision = 0
-    @ObservationIgnored private var cached: (revision: Int, snapshot: FinanceSnapshot)?
+    @ObservationIgnored private var cached: (revision: Int, day: Date, snapshot: FinanceSnapshot)?
 
     /// How far ahead bill and income occurrences are kept
     static let horizonDays = 120
 
     init(context: ModelContext, calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.context = context
-        self.calendar = calendar
+        self.container = context.container
+        self.baseCalendar = calendar
         self.now = now
         ensureSettingsAndSystemAccounts()
+        if databaseURL != nil { watchSavesAfterErase() }
         try? tidyLoanPayments()
         try? linkExpectedIncome()
     }
@@ -88,9 +105,11 @@ final class LedgerStore {
 
     var snapshot: FinanceSnapshot {
         _ = revision
-        if let cached, cached.revision == revision { return cached.snapshot }
+        // A new day makes a new snapshot even with nothing changed, so "today" is never yesterday's
+        let day = calendar.startOfDay(for: now())
+        if let cached, cached.revision == revision, cached.day == day { return cached.snapshot }
         let s = FinanceSnapshot(store: self)
-        cached = (revision, s)
+        cached = (revision, day, s)
         return s
     }
 
@@ -114,6 +133,21 @@ final class LedgerStore {
     var auditTrail: [AuditRecord] {
         _ = revision
         return ((try? context.fetch(FetchDescriptor<AuditRecord>(sortBy: [SortDescriptor(\.date, order: .reverse)]))) ?? [])
+            .filter { $0.action != Self.reversalNoted }
+    }
+
+    /// Bookkeeping only, kept out of Change history: which reversal alert undid which charge,
+    /// so the same alert arriving again isn't taken for money coming back a second time
+    static let reversalNoted = "capture.reversal"
+
+    func noteReversal(key: UUID, undid chargeId: UUID) {
+        context.insert(AuditRecord(action: Self.reversalNoted, subjectId: key, summary: chargeId.uuidString))
+    }
+
+    /// The charge an earlier copy of this reversal alert already undid
+    func reversalHandled(key: UUID) -> UUID? {
+        let action = Self.reversalNoted
+        return fetch(AuditRecord.self, #Predicate { $0.action == action && $0.subjectId == key }).first.flatMap { UUID(uuidString: $0.summary) }
     }
 
     // MARK: - Setup
@@ -310,6 +344,11 @@ final class LedgerStore {
     }
 
     func importRows(_ rows: [ImportedRow], into accountId: UUID) throws -> Int {
+        // Every row, bill payment and loan instalment is saved together, or none are
+        try inOneSave { try importRowsInBatch(rows, into: accountId) }
+    }
+
+    private func importRowsInBatch(_ rows: [ImportedRow], into accountId: UUID) throws -> Int {
         guard let account = account(accountId) else { throw StoreError.notFound }
         let keys = rows.map(\.key)
         let saved = Set(fetch(EntryRecord.self, #Predicate { keys.contains($0.idempotencyKey) })
@@ -347,6 +386,7 @@ final class LedgerStore {
         }
         context.insert(AuditRecord(action: "statement.imported", subjectId: accountId,
                                    summary: "Imported \(rows.count) statement rows into \(account.name)"))
+        settings.lastStatementImportAt = now()
         try commit()
         try linkExpectedIncome()
         for row in bills {
@@ -368,6 +408,7 @@ final class LedgerStore {
                             date: row.date, key: row.key)
             }
         }
+        pairOwnTransfers()
         return rows.filter { !saved.contains($0.key) }.count
     }
 
@@ -388,6 +429,14 @@ final class LedgerStore {
         guard let original = entryRecord(originalId), original.status == .posted else { throw StoreError.notFound }
         do { try EntryFactory.validate(replacement) } catch { throw StoreError.from(error) }
         let before = original.entry
+        // An edited bill payment follows the same rule as a new one: no more than is left on the bill,
+        // counting what's left once this payment's old amount is taken off. Checked before anything changes.
+        if let occId = replacement.occurrenceId ?? before.occurrenceId,
+           let occ = fetch(OccurrenceRecord.self, #Predicate { $0.id == occId }).first, let item = plannedItem(occ.itemId) {
+            var o = occ.occurrence
+            if before.occurrenceId == occId { o.removePayment(entryId: original.id, amount: paymentAmount(of: before, direction: item.direction)) }
+            try checkNotOverpaying(o, item: item, by: paymentAmount(of: replacement, direction: item.direction))
+        }
         original.status = .void
         original.updatedAt = now()
         if let occ = original.occurrenceId { removePayment(of: before, from: occ) }
@@ -398,6 +447,9 @@ final class LedgerStore {
         // Editing an automatic entry counts as reviewing it
         record.sourceRaw = original.sourceRaw
         record.cardHint = original.cardHint
+        // How it arrived stays with it, so a later alert for the same movement is still recognised
+        record.reference = original.reference
+        record.alsoFromRaw = original.alsoFromRaw
         if let occ = fresh.occurrenceId { applyPayment(of: fresh, to: occ) }
         return fresh
     }
@@ -417,7 +469,8 @@ final class LedgerStore {
 
     /// Saves an entry that arrived by itself (Apple Pay, a bank SMS, Siri)
     @discardableResult
-    func postCaptured(_ entry: Entry, source: Capture.Source, cardHint: String?, needsReview: Bool) throws -> UUID {
+    func postCaptured(_ entry: Entry, source: Capture.Source, cardHint: String?, needsReview: Bool,
+                      reference: String? = nil, reviewReason: String? = nil) throws -> UUID {
         let key = entry.idempotencyKey
         if let existing = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first {
             guard existing.status == .void else { return existing.id }
@@ -429,10 +482,36 @@ final class LedgerStore {
         record.sourceRaw = source.rawValue
         record.cardHint = cardHint
         record.needsReview = needsReview
+        record.reference = reference
+        record.reviewReason = needsReview ? reviewReason : nil
         context.insert(AuditRecord(action: "entry.captured", subjectId: entry.id,
                                    summary: "\(source.title) added \"\(entry.memo)\" (\(describe(entry)))"))
         try commit()
         return entry.id
+    }
+
+    /// Reasons the app gives when it removes an automatic entry itself, so the same alert arriving again
+    /// isn't saved a second time
+    static let pairedReason = "The same money as the transfer from"
+    static let reversedReason = "The bank reversed this charge"
+
+    /// The entry an alert with this key already became, if it's still in effect: the entry itself, what it was
+    /// edited or turned into, or an entry the app removed as part of a transfer or reversal. nil when the
+    /// person deleted it, so the alert arriving again is saved again.
+    func capturedBefore(key: UUID) -> UUID? {
+        guard var record = fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first else { return nil }
+        for _ in 0..<20 {
+            if record.status == .posted { return record.id }
+            let id = record.id
+            if let next = fetch(EntryRecord.self, #Predicate { $0.replacesId == id }).first {
+                record = next
+                continue
+            }
+            let voided = "entry.voided"
+            let reasons = fetch(AuditRecord.self, #Predicate { $0.action == voided && $0.subjectId == id }).compactMap(\.reason)
+            return reasons.contains { $0.hasPrefix(Self.pairedReason) || $0.hasPrefix(Self.reversedReason) } ? id : nil
+        }
+        return nil
     }
 
     /// The same purchase arrived again from somewhere else; keep what's new
@@ -452,6 +531,26 @@ final class LedgerStore {
         try? commit()
     }
 
+    /// Keeps what became of one automatic capture, step by step (never the message itself), trimming the
+    /// oldest so only the last 40 are kept
+    func noteCaptureTrace(_ trace: CaptureTrace) {
+        let action = CaptureTrace.action
+        context.insert(AuditRecord(action: action, subjectId: trace.entryId ?? UUID(), summary: trace.headline,
+                                   reason: trace.encoded))
+        let descriptor = FetchDescriptor<AuditRecord>(predicate: #Predicate { $0.action == action },
+                                                      sortBy: [SortDescriptor(\.date, order: .reverse)])
+        for old in ((try? context.fetch(descriptor)) ?? []).dropFirst(40) { context.delete(old) }
+        try? commit()
+    }
+
+    var captureTraces: [CaptureTrace] {
+        _ = revision
+        let action = CaptureTrace.action
+        let descriptor = FetchDescriptor<AuditRecord>(predicate: #Predicate { $0.action == action },
+                                                      sortBy: [SortDescriptor(\.date, order: .reverse)])
+        return ((try? context.fetch(descriptor)) ?? []).compactMap { CaptureTrace(audit: $0) }
+    }
+
     var lastBankMessage: AuditRecord? { lastAudit("sms.read") }
     var lastCardPurchase: AuditRecord? { lastAudit("applepay.read") }
 
@@ -463,16 +562,29 @@ final class LedgerStore {
         return try? context.fetch(descriptor).first
     }
 
-    func enrichCaptured(_ entryId: UUID, cardHint: String?) throws {
+    /// Another source told of an entry already saved: remember it, so a third alert can't join it too
+    func enrichCaptured(_ entryId: UUID, cardHint: String?, from source: Capture.Source? = nil, reference: String? = nil) throws {
         guard let record = entryRecord(entryId) else { throw StoreError.notFound }
-        guard record.cardHint == nil, let cardHint else { return }
-        record.cardHint = cardHint
+        if record.cardHint == nil, let cardHint { record.cardHint = cardHint }
+        if let source, record.sourceRaw != source.rawValue { record.alsoFromRaw = source.rawValue }
+        if record.reference == nil, let reference { record.reference = reference }
+        try commit()
+    }
+
+    static let joinedAlertsReason = "Two alerts for this amount at this shop were joined into one. If you paid twice, add the second payment."
+
+    /// Says why an automatic entry is waiting for a look
+    func noteReviewReason(_ entryId: UUID, _ reason: String) throws {
+        guard let record = entryRecord(entryId), record.needsReview, record.reviewReason != reason else { return }
+        record.reviewReason = reason
+        record.updatedAt = now()
         try commit()
     }
 
     func markReviewed(_ entryId: UUID) throws {
         guard let record = entryRecord(entryId), record.needsReview else { return }
         record.needsReview = false
+        record.reviewReason = nil
         record.updatedAt = now()
         try commit()
     }
@@ -499,6 +611,59 @@ final class LedgerStore {
             context.insert(CardLinkRecord(hint: hint, accountId: accountId))
         }
         try commit()
+        // Now that the account is known, halves of a move between your accounts saved from its messages can be joined
+        let since = now().addingTimeInterval(-3 * 86_400)
+        for record in fetch(EntryRecord.self, #Predicate { $0.cardHint == hint && $0.date >= since })
+        where record.status == .posted && record.sourceRaw != nil {
+            let id = record.lines.contains(where: { $0.accountId == accountId }) ? record.id : moveGuessed(record, to: accountId)
+            if let id { _ = pairOwnTransfer(id) }
+        }
+    }
+
+    /// An unchecked automatic entry in a guessed account goes to the account the person just said its number is
+    private func moveGuessed(_ record: EntryRecord, to accountId: UUID) -> UUID? {
+        guard record.needsReview, [.expense, .income].contains(record.kind), let own = ownLine(of: record),
+              own.accountId != accountId, let target = account(accountId),
+              let category = record.lines.compactMap({ account($0.accountId) }).first(where: { $0.kind.isCategory }) else { return nil }
+        let amount = Money(minorUnits: abs(own.minorUnits), currency: own.currency)
+        let reason = record.reviewReason
+        guard let entry = try? (record.kind == .expense
+                ? EntryFactory.expense(amount, from: target.info, category: category.info, date: record.date, memo: record.memo, key: UUID())
+                : EntryFactory.income(amount, to: target.info, category: category.info, date: record.date, memo: record.memo, key: UUID())),
+              let fresh = try? replace(record.id, with: entry, notes: record.notes), let moved = entryRecord(fresh) else { return nil }
+        moved.needsReview = true
+        moved.reviewReason = reason
+        try? commit()
+        return fresh
+    }
+
+    /// How an account's digits from an alert are kept among the card links ("account 730001")
+    static func accountLinkKey(_ digits: String) -> String { "account \(digits)" }
+
+    /// The account an alert's account digits belong to: one the person chose, else the only account whose
+    /// number (from a statement) or name ends with them. nil when it can't be told, never a guess.
+    func accountMatching(digits: String) -> UUID? {
+        if let linked = linkedAccount(forCard: Self.accountLinkKey(digits)) { return linked }
+        let own = fetch(LedgerAccountRecord.self).filter { $0.kind.isBalanceSheet && $0.kind != .lent && !$0.archived }
+        func trailingDigits(_ text: String) -> String { String(text.reversed().prefix { $0.isNumber }.reversed()) }
+        // A saved account number is the surest; it decides before any name ending in the same digits
+        let numbered = own.filter { account in
+            guard let number = account.accountNumber?.filter(\.isNumber), !number.isEmpty else { return false }
+            return number.hasSuffix(digits)
+        }
+        if numbered.count == 1 { return numbered[0].id }
+        guard numbered.isEmpty else { return nil }
+        // "Account …0001" made from an imported statement, when the alert shows at least those digits
+        // and the account has no number of its own that says otherwise
+        let named = own.filter { account in
+            let tail = trailingDigits(account.name)
+            return account.accountNumber?.isEmpty != false && tail.count >= 4 && digits.hasSuffix(tail)
+        }
+        return named.count == 1 ? named[0].id : nil
+    }
+
+    func linkAccount(digits: String, to accountId: UUID) throws {
+        try linkCard(Self.accountLinkKey(digits), to: accountId)
     }
 
     func unlinkCard(_ hint: String) throws {
@@ -542,7 +707,14 @@ final class LedgerStore {
         }
         let ids = Set(check.unreconciled.map(\.id))
         for record in fetch(EntryRecord.self) where ids.contains(record.id) {
-            record.cleared = .reconciled
+            // Only this account's side: the other side of a transfer waits for its own statement
+            if record.reconciledInIds.isEmpty, record.cleared == .reconciled {
+                // Checked before sides were kept apart: it counted as checked everywhere, so it stays so
+                record.reconciledInIds = record.lines.map(\.accountId).filter { self.account($0)?.kind.isBalanceSheet == true }
+            }
+            if !record.reconciledInIds.contains(accountId) { record.reconciledInIds.append(accountId) }
+            let sides = Set(record.lines.map(\.accountId).filter { self.account($0)?.kind.isBalanceSheet == true })
+            record.cleared = sides.isSubset(of: record.reconciledInIds) ? .reconciled : .cleared
             record.updatedAt = now()
         }
         account.lastReconciledAt = now()
@@ -588,17 +760,20 @@ final class LedgerStore {
 
     // MARK: - Bills and expected income
 
-    /// `reminderDays`: days before each due date to remind, negative for never; nil keeps the current choice
-    func savePlannedItem(_ item: PlannedItem, reminderDays: Int? = nil) throws {
+    /// `reminderDays`: days before each due date to remind, negative for never; nil keeps the current choice.
+    /// `isTrial` likewise; nil keeps it.
+    func savePlannedItem(_ item: PlannedItem, reminderDays: Int? = nil, isTrial: Bool? = nil) throws {
         guard !item.name.trimmingCharacters(in: .whitespaces).isEmpty else { throw StoreError.invalid("Give it a name.") }
         guard item.amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
         let id = item.id
         if let record = fetch(PlannedItemRecord.self, #Predicate { $0.id == id }).first {
             record.update(from: item)
             if let reminderDays { record.reminderDaysBefore = reminderDays }
+            if let isTrial { record.isTrial = isTrial }
         } else {
             let record = PlannedItemRecord(item)
             if let reminderDays { record.reminderDaysBefore = reminderDays }
+            record.isTrial = isTrial ?? false
             context.insert(record)
         }
         regenerateOccurrences(for: item)
@@ -616,6 +791,27 @@ final class LedgerStore {
                                categoryId: snapshot.incomeCategories.first?.id)
         try savePlannedItem(item)
         try updateSettings { $0.payFrequencyData = try? JSONEncoder().encode(frequency) }
+    }
+
+    /// Takes a bill away as if it had never been added: for undoing the add, when nothing has paid it
+    func deletePlannedItem(_ id: UUID) throws {
+        guard let record = fetch(PlannedItemRecord.self, #Predicate { $0.id == id }).first else { return }
+        let occurrences = fetch(OccurrenceRecord.self, #Predicate { $0.itemId == id })
+        guard occurrences.allSatisfy({ $0.paidMinor == 0 }) else { archive(record); try commit(); return }
+        for occ in occurrences { context.delete(occ) }
+        context.delete(record)
+        try commit()
+    }
+
+    /// The bill's occurrence due on that day, if one is planned
+    func occurrence(of itemId: UUID, on date: Date) -> UUID? {
+        fetch(OccurrenceRecord.self, #Predicate { $0.itemId == itemId })
+            .first { calendar.isDate($0.dueDate, inSameDayAs: date) }?.id
+    }
+
+    /// The live entry a request key saved, if it already did
+    func postedEntry(key: UUID) -> UUID? {
+        fetch(EntryRecord.self, #Predicate { $0.idempotencyKey == key }).first { $0.status == .posted }?.id
     }
 
     func archivePlannedItem(_ id: UUID) throws {
@@ -916,6 +1112,8 @@ final class LedgerStore {
     func payDebt(_ debtId: UUID, from fundingId: UUID, amount: Money, interest: Money, fees: Money,
                  date: Date, key: UUID, occurrenceId: UUID? = nil) throws -> UUID {
         guard let debt = account(debtId), let funding = account(fundingId) else { throw StoreError.notFound }
+        // A retry of a payment already saved returns it, before any check that its own effect would now fail
+        if let saved = postedEntry(key: key) { return saved }
         guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
         guard !interest.isNegative, !fees.isNegative else { throw StoreError.invalid("Interest and fees can't be negative.") }
         guard !(amount < interest + fees) else { throw StoreError.invalid("Interest and fees can't be more than the payment.") }
@@ -931,6 +1129,7 @@ final class LedgerStore {
                                                  date: date, memo: "\(debt.name) payment", key: key, occurrenceId: occurrenceId)
         } catch { throw StoreError.from(error) }
         let id = try post(entry)
+        try tagDebtPayment(id, debt: debt.id, fees: fees)
         try planInstalments(for: BudgetMonth.key(for: date, calendar: snapshot.calendar), category: chargeCategory(for: debt))
         return id
     }
@@ -975,7 +1174,7 @@ final class LedgerStore {
             let entry = try EntryFactory.debtPayment(principal: parts.principal, interest: parts.interest, fees: parts.fees,
                                                      from: parts.funding.info, debt: parts.debt.info, interestCategory: target.info,
                                                      date: record.date, memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
-            _ = try replace(record.id, with: entry, notes: record.notes)
+            try tagDebtPayment(try replace(record.id, with: entry, notes: record.notes), debt: parts.debt.id, fees: parts.fees)
             let move = Move(from: current, to: target.id, month: BudgetMonth.key(for: record.date, calendar: calendar))
             moved[move] = (moved[move] ?? .zero(currency)) + parts.total
         }
@@ -1038,15 +1237,32 @@ final class LedgerStore {
         guard record.kind == .debtPayment else { return nil }
         let entry = record.entry
         guard let fundingLine = entry.lines.first(where: { account($0.accountId)?.kind.isAsset == true }),
-              let funding = account(fundingLine.accountId),
-              let debtLine = entry.lines.first(where: { account($0.accountId)?.kind.isLiability == true }),
-              let debt = account(debtLine.accountId) else { return nil }
-        // Stored lines have no order; interest is the larger charge, fees the rest
-        let charges = entry.lines.filter { account($0.accountId)?.kind == .expense }.map(\.amount)
-            .sorted { $0.minorUnits > $1.minorUnits }
+              let funding = account(fundingLine.accountId) else { return nil }
         let zero = Money.zero(fundingLine.amount.currency)
-        return DebtPaymentParts(debt: debt, funding: funding, total: fundingLine.amount.negated, principal: debtLine.amount,
-                                interest: charges.first ?? zero, fees: charges.dropFirst().sum(zero.currency))
+        // An interest-only payment has no line on the debt; the entry remembers which one it paid
+        let debtLine = entry.lines.first { account($0.accountId)?.kind.isLiability == true }
+        guard let debt = (debtLine?.accountId ?? record.debtId).flatMap(account), debt.kind.isLiability else { return nil }
+        let charges = entry.lines.filter { account($0.accountId)?.kind == .expense }.map(\.amount)
+        let interest: Money, fees: Money
+        if let saved = record.debtFeesMinor {
+            fees = Money(minorUnits: saved, currency: zero.currency)
+            interest = charges.sum(zero.currency) - fees
+        } else {
+            // Saved before the split was kept: lines have no order, so the larger charge is taken as interest
+            let sorted = charges.sorted { $0.minorUnits > $1.minorUnits }
+            interest = sorted.first ?? zero
+            fees = sorted.dropFirst().sum(zero.currency)
+        }
+        return DebtPaymentParts(debt: debt, funding: funding, total: fundingLine.amount.negated, principal: debtLine?.amount ?? zero,
+                                interest: interest, fees: fees)
+    }
+
+    /// Remembers which debt a payment was for and how much of it was fees
+    private func tagDebtPayment(_ id: UUID, debt: UUID, fees: Money) throws {
+        guard let record = entryRecord(id) else { return }
+        record.debtId = debt
+        record.debtFeesMinor = fees.minorUnits
+        try context.save()
     }
 
     /// Corrects a payment recorded with the wrong amount, account or date. The original is
@@ -1073,6 +1289,7 @@ final class LedgerStore {
                                                  memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
         } catch { throw StoreError.from(error) }
         let id = try replace(entryId, with: entry, notes: record.notes)
+        try tagDebtPayment(id, debt: parts.debt.id, fees: fees)
         let category = chargeCategory(for: parts.debt)
         let newMonth = BudgetMonth.key(for: date, calendar: snapshot.calendar)
         try planInstalments(for: newMonth, category: category)
@@ -1246,14 +1463,18 @@ final class LedgerStore {
             try saveDebtTerms(terms, for: loanId, paidFrom: snapshot.paymentItem(for: loanId)?.accountId)
         }
         try updateSettings { $0.unfinishedLoans.removeAll { $0 == loanId } }
+        // The person said 0%: the instalments already recorded are loan payments too, counted in full
+        if annualRateBps == 0 { try splitEarlierPayments(loanId, confirmedZero: true) }
     }
 
     /// Instalments recorded before what's owed on a loan was known went in whole, as plain
     /// transfers. Once what's owed and the rate are known, each is recorded again as a loan
     /// payment, in date order: a month's interest on what was owed then, the rest off the loan.
     /// Only transfers of the monthly payment are taken, so a lump sum paid in stays as it was.
-    private func splitEarlierPayments(_ loanId: UUID) throws {
-        guard let loan = account(loanId), loan.kind == .loan, let rate = loan.debtTerms?.annualRateBps, rate > 0,
+    private func splitEarlierPayments(_ loanId: UUID, confirmedZero: Bool = false) throws {
+        // Elsewhere 0% can mean the rate isn't known yet, so it only splits at 0% when the person confirmed it
+        guard let loan = account(loanId), loan.kind == .loan, let rate = loan.debtTerms?.annualRateBps,
+              rate > 0 || (rate == 0 && confirmedZero),
               let opening = openingEntry(for: loanId)?.entry.amount(on: loanId)?.negated, opening.isPositive else { return }
         let splits = paymentSplits(loanId, opening: opening, rateBps: rate).splits
         guard !splits.isEmpty else { return }
@@ -1266,7 +1487,7 @@ final class LedgerStore {
                                                      from: funding.info, debt: loan.info, interestCategory: category.info,
                                                      date: record.date, memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
             } catch { throw StoreError.from(error) }
-            _ = try replace(record.id, with: entry, notes: record.notes)
+            try tagDebtPayment(try replace(record.id, with: entry, notes: record.notes), debt: loan.id, fees: split.fees)
             months.insert(BudgetMonth.key(for: record.date, calendar: snapshot.calendar))
         }
         for month in months { try planInstalments(for: month, category: category) }
@@ -1286,7 +1507,7 @@ final class LedgerStore {
             if record.kind == .transfer, paid.isPositive, paid == monthly,
                let funding = record.lines.lazy.compactMap({ self.account($0.accountId) }).first(where: { $0.kind.isAsset }) {
                 let split = DebtCalculator.split(payment: paid, owed: owed, annualRateBps: rateBps)
-                if split.interest.isPositive, !split.overpaid.isPositive {
+                if split.interest.isPositive || (rateBps == 0 && split.principal.isPositive), !split.overpaid.isPositive {
                     splits.append((record, funding, split))
                     owed -= split.principal
                     continue
@@ -1459,6 +1680,7 @@ final class LedgerStore {
                                                  date: date, memo: record.memo, key: UUID(), occurrenceId: occurrenceId)
         } catch { throw StoreError.from(error) }
         let id = try replace(entryId, with: entry, notes: record.notes)
+        try tagDebtPayment(id, debt: debt.id, fees: fees)
         let category = chargeCategory(for: debt)
         let newMonth = BudgetMonth.key(for: date, calendar: snapshot.calendar)
         try planInstalments(for: newMonth, category: category)
@@ -1566,8 +1788,7 @@ final class LedgerStore {
     func recordAsLending(_ entryId: UUID, person personId: UUID) throws -> UUID {
         guard let record = entryRecord(entryId), record.status == .posted, [.expense, .income].contains(record.kind),
               let person = account(personId), person.kind == .lent,
-              let line = record.lines.first(where: { account($0.accountId).map { $0.kind.isBalanceSheet && $0.kind != .lent } ?? false }),
-              let own = account(line.accountId) else { throw StoreError.notFound }
+              let line = ownLine(of: record), let own = account(line.accountId) else { throw StoreError.notFound }
         let amount = Money(minorUnits: line.minorUnits, currency: line.currency).magnitude
         let entry: Entry
         do {
@@ -1579,6 +1800,285 @@ final class LedgerStore {
             }
         } catch let error as StoreError { throw error } catch { throw StoreError.from(error) }
         return try replace(entryId, with: entry, notes: record.notes)
+    }
+
+    /// The line on one of your own accounts, not a person's
+    private func ownLine(of record: EntryRecord) -> LineRecord? {
+        record.lines.first { account($0.accountId).map { $0.kind.isBalanceSheet && $0.kind != .lent } ?? false }
+    }
+
+    // MARK: - Bank messages: joining, separating, restoring
+
+    static let joinedMessagesReason = "Joined from 2 bank messages about the same payment. If they were separate payments, tap These were separate payments."
+
+    /// The entry an id became after edits, if it's still in effect
+    func currentEntryId(from id: UUID) -> UUID? {
+        guard var record = entryRecord(id) else { return nil }
+        for _ in 0..<20 {
+            if record.status == .posted { return record.id }
+            let rid = record.id
+            guard let next = fetch(EntryRecord.self, #Predicate { $0.replacesId == rid }).first else { return nil }
+            record = next
+        }
+        return nil
+    }
+
+    /// A second bank message told of a movement already saved: keep the better name and the reference,
+    /// and put the entry on To check so the person can see it was joined
+    func joinMessage(_ entryId: UUID, name: String, reference: String?, accountHint: String? = nil) throws {
+        guard let record = entryRecord(entryId), record.status == .posted else { throw StoreError.notFound }
+        // The account this message names, so saying which account it is later finds this entry too
+        if record.cardHint == nil, let accountHint { record.cardHint = Self.accountLinkKey(accountHint) }
+        if !namesWho(record), CaptureMatcher.saysWho(name) { record.memo = name }
+        if record.reference == nil, let reference { record.reference = reference }
+        record.needsReview = true
+        record.reviewReason = Self.joinedMessagesReason
+        record.updatedAt = now()
+        context.insert(AuditRecord(action: "entry.joined", subjectId: entryId,
+                                   summary: "Joined a second bank message into \"\(record.memo)\""))
+        try commit()
+    }
+
+    /// Saved on its own, but maybe the same movement as another entry: it says so on To check
+    func flagMaybeSame(_ entryId: UUID, as other: UUID) throws {
+        guard let record = entryRecord(entryId), let theirs = entryRecord(other) else { return }
+        record.needsReview = true
+        record.reviewReason = "Maybe the same as \"\(theirs.memo)\" (\(describe(theirs.entry))) at \(theirs.date.formatted(date: .omitted, time: .shortened))."
+        record.updatedAt = now()
+        try commit()
+    }
+
+    /// Brings back a deleted entry, unless it was replaced by an edit (the edit is what's in effect)
+    func restore(_ entryId: UUID) throws {
+        guard let record = entryRecord(entryId), record.status == .void else { throw StoreError.notFound }
+        guard fetch(EntryRecord.self, #Predicate { $0.replacesId == entryId }).isEmpty else {
+            throw StoreError.invalid("This was changed after, so the changed one is what counts. Open that one instead.")
+        }
+        let entry = record.entry
+        if let occId = entry.occurrenceId, let occ = fetch(OccurrenceRecord.self, #Predicate { $0.id == occId }).first,
+           let item = plannedItem(occ.itemId) {
+            try checkNotOverpaying(occ.occurrence, item: item, by: paymentAmount(of: entry, direction: item.direction))
+        }
+        record.status = .posted
+        record.updatedAt = now()
+        if let occ = record.occurrenceId { applyPayment(of: entry, to: occ) }
+        context.insert(AuditRecord(action: "entry.restored", subjectId: entryId,
+                                   summary: "Restored \"\(entry.memo)\" (\(describe(entry)))"))
+        try commit()
+    }
+
+    /// A move between your accounts made from two halves goes back to being those two entries
+    func unpairTransfer(_ transferId: UUID) throws -> [UUID] {
+        guard let transfer = entryRecord(transferId), transfer.status == .posted, transfer.kind == .transfer,
+              let originalId = transfer.replacesId, let original = entryRecord(originalId), original.status == .void else {
+            throw StoreError.invalid("This wasn't made from two entries, so there's nothing to go back to. Edit it instead.")
+        }
+        let moved = transfer.lines.filter { $0.minorUnits > 0 }.reduce(Int64(0)) { $0 + $1.minorUnits }
+        let voided = "entry.voided"
+        let paired = fetch(AuditRecord.self, #Predicate { $0.action == voided }).filter {
+            ($0.reason ?? "").hasPrefix(Self.pairedReason)
+        }.map(\.subjectId)
+        let twin = paired.compactMap(entryRecord).filter { r in
+            r.status == .void && [.expense, .income].contains(r.kind) && r.id != originalId
+                && r.lines.contains { abs($0.minorUnits) == moved }
+                && abs(r.date.timeIntervalSince(transfer.date)) <= 3 * 86_400
+        }.min { abs($0.date.timeIntervalSince(transfer.date)) < abs($1.date.timeIntervalSince(transfer.date)) }
+        let before = transfer.entry
+        transfer.status = .void
+        transfer.updatedAt = now()
+        original.status = .posted
+        original.updatedAt = now()
+        original.needsReview = true
+        twin?.status = .posted
+        twin?.updatedAt = now()
+        context.insert(AuditRecord(action: "entry.unpaired", subjectId: transferId,
+                                   summary: "\"\(before.memo)\" (\(describe(before))) is no longer a move between your accounts"))
+        try commit()
+        return [original.id] + (twin.map { [$0.id] } ?? [])
+    }
+
+    /// Undoes `unpairTransfer`
+    func repairTransfer(_ transferId: UUID, halves: [UUID]) throws {
+        guard let transfer = entryRecord(transferId), transfer.status == .void else { throw StoreError.notFound }
+        for id in halves { entryRecord(id)?.status = .void }
+        transfer.status = .posted
+        transfer.updatedAt = now()
+        try commit()
+    }
+
+    /// Changes one bank-message record, e.g. once its message became an entry of its own
+    func updateCaptureTrace(_ trace: CaptureTrace) {
+        let id = trace.id
+        guard let audit = fetch(AuditRecord.self, #Predicate { $0.id == id }).first else { return }
+        audit.reason = trace.encoded
+        audit.summary = trace.headline
+        if let entry = trace.entryId { audit.subjectId = entry }
+        try? commit()
+    }
+
+    /// Removes the bank-message and Wallet records only; entries stay as they are
+    func clearCaptureTraces() throws {
+        let action = CaptureTrace.action
+        for audit in fetch(AuditRecord.self, #Predicate { $0.action == action }) { context.delete(audit) }
+        try commit()
+    }
+
+    /// The records of the messages that made or joined this entry, oldest first
+    func captureTraces(forEntry entryId: UUID) -> [CaptureTrace] {
+        captureTraces.filter { t in t.entryId.flatMap { currentEntryId(from: $0) } == entryId }.reversed()
+    }
+
+    // MARK: - Moves between your own accounts
+
+    /// Money that only moved between two of your accounts but was saved as spending or income (a bank
+    /// message calling it money sent to someone, say) is recorded again as a transfer. When the other
+    /// account already shows the same money arriving or leaving, that was the same move, so it's
+    /// folded in rather than counted twice
+    @discardableResult
+    func recordAsTransfer(_ entryId: UUID, other otherId: UUID) throws -> UUID {
+        guard let record = entryRecord(entryId), record.status == .posted, [.expense, .income].contains(record.kind),
+              let line = ownLine(of: record), let own = account(line.accountId),
+              let other = account(otherId), other.kind.isBalanceSheet, other.kind != .lent, other.id != own.id else {
+            throw StoreError.notFound
+        }
+        let amount = Money(minorUnits: line.minorUnits, currency: line.currency).magnitude
+        let entry: Entry
+        do {
+            entry = record.kind == .expense
+                ? try EntryFactory.transfer(amount, from: own.info, to: other.info, date: record.date, memo: record.memo)
+                : try EntryFactory.transfer(amount, from: other.info, to: own.info, date: record.date, memo: record.memo)
+        } catch { throw StoreError.from(error) }
+        let twin = transferTwin(of: record, in: other.id)
+        let before = record.entry
+        let fresh = try stageReplacement(entryId, with: entry, notes: record.notes)
+        if let twin {
+            let theirs = twin.entry
+            twin.status = .void
+            twin.updatedAt = now()
+            context.insert(AuditRecord(action: "entry.voided", subjectId: twin.id,
+                                       summary: "Deleted \"\(theirs.memo)\" (\(describe(theirs)))",
+                                       reason: "\(Self.pairedReason) \"\(before.memo)\""))
+        }
+        context.insert(AuditRecord(action: "entry.edited", subjectId: fresh.id,
+                                   summary: "Changed \"\(before.memo)\" (\(describe(before))) to \(describe(fresh))"))
+        try commit()
+        return fresh.id
+    }
+
+    /// The other half of a move between two of your accounts, saved on its own: the same amount going
+    /// the opposite way in that account within a few days. It's removed when the move is recorded, so a
+    /// match on amount alone isn't enough: it must carry the same bank reference, or be the only alert
+    /// there that was itself saved as money sent to or from someone and not checked yet. Pay, a refund
+    /// or anything the person entered or confirmed is never taken for it
+    func transferTwin(of record: EntryRecord, in accountId: UUID) -> EntryRecord? {
+        let candidates = possibleTransferTwins(of: record, in: accountId)
+        let reference = Self.references(of: record)
+        let byReference = candidates.filter { !reference.isDisjoint(with: Self.references(of: $0)) }
+        if !byReference.isEmpty {
+            return byReference.min { abs($0.date.timeIntervalSince(record.date)) < abs($1.date.timeIntervalSince(record.date)) }
+        }
+        let loose = candidates.filter { looksLikeOtherHalf($0, in: accountId) }
+        return loose.count == 1 ? loose[0] : nil
+    }
+
+    /// Entries of the same amount going the other way in that account within a few days, whatever they are
+    func possibleTransferTwins(of record: EntryRecord, in accountId: UUID) -> [EntryRecord] {
+        guard let line = ownLine(of: record), [.expense, .income].contains(record.kind) else { return [] }
+        let opposite: EntryKind = record.kind == .expense ? .income : .expense
+        let cal = snapshot.calendar
+        let day = cal.startOfDay(for: record.date)
+        return snapshot.entryRecords.filter { r in
+            r.status == .posted && r.id != record.id && r.kind == opposite && r.occurrenceId == nil
+                && r.lines.contains { $0.accountId == accountId && $0.minorUnits == -line.minorUnits }
+                && abs(cal.dateComponents([.day], from: day, to: cal.startOfDay(for: r.date)).day ?? .max) <= 3
+        }
+    }
+
+    /// An unchecked alert saved as money sent to or received from someone, in just that account and that category
+    private func looksLikeOtherHalf(_ r: EntryRecord, in accountId: UUID) -> Bool {
+        guard r.source != nil, r.needsReview, r.lines.count == 2, !r.reconciledInIds.contains(accountId),
+              r.cleared != .reconciled else { return false }
+        return r.lines.contains { line in
+            guard let category = account(line.accountId) else { return false }
+            return category.systemRole == "people" || category.systemRole == "fromPeople"
+        }
+    }
+
+    /// Long numbers in a bank's description, like the reference both banks print for the same move
+    static func references(_ memo: String) -> Set<Substring> {
+        Set(memo.split { !$0.isNumber }.filter { $0.count >= 6 })
+    }
+
+    /// The description's long numbers and the reference its alert gave
+    static func references(of record: EntryRecord) -> Set<Substring> {
+        references(record.memo).union(record.reference.map { references($0) } ?? [])
+    }
+
+    /// Both banks told of the same move between your own accounts, one as money out and the other as
+    /// money in, with the same reference: it becomes one transfer, neither spending nor income.
+    /// Without a shared reference it's left for the person to say
+    @discardableResult
+    func pairOwnTransfer(_ entryId: UUID) -> UUID? {
+        guard let record = entryRecord(entryId), record.status == .posted, [.expense, .income].contains(record.kind),
+              let line = ownLine(of: record), let own = account(line.accountId), own.kind.isAsset else { return nil }
+        let refs = Self.references(of: record)
+        guard !refs.isEmpty else { return pairByMessages(record, own: own) }
+        for other in snapshot.accounts where other.kind.isAsset && other.kind != .lent && other.id != own.id {
+            guard let twin = transferTwin(of: record, in: other.id), !refs.isDisjoint(with: Self.references(of: twin)) else { continue }
+            // The money-out side says where it went, so it's the one kept
+            let (out, into) = record.kind == .expense ? (record.id, other.id) : (twin.id, own.id)
+            return try? recordAsTransfer(out, other: into)
+        }
+        return pairByMessages(record, own: own)
+    }
+
+    /// Money out of one of your accounts and in to another, each told by its own bank message within minutes,
+    /// with no reference to tie them and neither naming a person: one move between your accounts.
+    /// Only when exactly one such other half exists.
+    private func pairByMessages(_ record: EntryRecord, own: LedgerAccountRecord) -> UUID? {
+        guard record.sourceRaw == Capture.Source.sms.rawValue, !namesWho(record) else { return nil }
+        var found: [(twin: EntryRecord, account: UUID)] = []
+        for other in snapshot.accounts where other.kind.isAsset && other.kind != .lent && other.id != own.id {
+            for twin in possibleTransferTwins(of: record, in: other.id)
+            where twin.sourceRaw == Capture.Source.sms.rawValue && !namesWho(twin) && twin.lines.count == 2
+                && twin.cleared != .reconciled && !twin.reconciledInIds.contains(other.id)
+                // Two different references are two different movements
+                && (Self.references(of: twin).isEmpty || Self.references(of: record).isEmpty)
+                && abs(twin.date.timeIntervalSince(record.date)) <= CaptureMatcher.messageWindow {
+                found.append((twin, other.id))
+            }
+        }
+        guard found.count == 1, let pair = found.first else { return nil }
+        let (out, into) = record.kind == .expense ? (record.id, pair.account) : (pair.twin.id, own.id)
+        let other = record.kind == .expense ? pair.twin : record
+        guard let transfer = try? recordAsTransfer(out, other: into) else { return nil }
+        // The half coming in is the same money: it goes, as recordAsTransfer does for the halves it recognises
+        if other.status == .posted {
+            let theirs = other.entry
+            other.status = .void
+            other.updatedAt = now()
+            context.insert(AuditRecord(action: "entry.voided", subjectId: other.id,
+                                       summary: "Deleted \"\(theirs.memo)\" (\(describe(theirs)))",
+                                       reason: "\(Self.pairedReason) \"\(theirs.memo)\""))
+            try? commit()
+        }
+        return transfer
+    }
+
+    /// Whether an entry's name says who, rather than being its category's name or the bank's channel
+    func namesWho(_ record: EntryRecord) -> Bool {
+        let categories = Set(record.lines.compactMap { account($0.accountId)?.name })
+        return !categories.contains(record.memo) && CaptureMatcher.saysWho(record.memo)
+    }
+
+    /// Pairs saved before pairing existed, or that came from a statement on one side
+    @discardableResult
+    func pairOwnTransfers() -> Int {
+        let posted = snapshot.entryRecords.filter { $0.status == .posted }
+        let incoming = Set(posted.filter { $0.kind == .income }.flatMap { Self.references(of: $0) })
+        guard !incoming.isEmpty else { return 0 }
+        let candidates = posted.filter { $0.kind == .expense && !Self.references(of: $0).isDisjoint(with: incoming) }.map(\.id)
+        return candidates.filter { pairOwnTransfer($0) != nil }.count
     }
 
     private func checkOwedBy(_ person: LedgerAccountRecord, covers amount: Money) throws {
@@ -1607,7 +2107,9 @@ final class LedgerStore {
                                                  interestCategory: chargeCategory(for: parts.debt).info, date: record.date,
                                                  memo: record.memo, key: UUID(), occurrenceId: record.occurrenceId)
         } catch { throw StoreError.from(error) }
-        return try replace(entryId, with: entry, notes: record.notes)
+        let id = try replace(entryId, with: entry, notes: record.notes)
+        try tagDebtPayment(id, debt: parts.debt.id, fees: fees)
+        return id
     }
 
     // MARK: - Reserves
@@ -1643,9 +2145,16 @@ final class LedgerStore {
     /// moved (a transfer); otherwise it's money already in the goal's account.
     func addToGoal(_ id: UUID, amount: Money, from fundingId: UUID?, date: Date, key: UUID) throws {
         guard let record = fetch(ReserveRecord.self, #Predicate { $0.id == id }).first, !record.archived else { throw StoreError.notFound }
-        guard record.lastChangeKey != key else { return }
+        guard !record.applied(key) else { return }
         guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
         let moving = fundingId != nil && fundingId != record.accountId
+        // Money moved in from elsewhere must come from an account that exists, or nothing is set aside
+        if moving {
+            guard let from = fundingId.flatMap({ account($0) }), from.kind.isBalanceSheet, from.kind != .lent, !from.archived,
+                  account(record.accountId) != nil else {
+                throw StoreError.invalid("Choose the account the money comes from.")
+            }
+        }
         let current = Money(minorUnits: record.minorUnits, currency: record.currency)
         try checkFree(current + amount, in: record.accountId, excluding: id, arriving: moving ? amount : nil)
         if moving, let fundingId, let from = account(fundingId), let to = account(record.accountId) {
@@ -1656,7 +2165,7 @@ final class LedgerStore {
             } catch { throw StoreError.from(error) }
         }
         record.minorUnits += amount.minorUnits
-        record.lastChangeKey = key
+        record.remember(key)
         record.updatedAt = now()
         context.insert(AuditRecord(action: "goal.added", subjectId: id,
                                    summary: "Added \(MoneyFormat.string(amount)) to \(record.name)"))
@@ -1666,13 +2175,13 @@ final class LedgerStore {
     /// Takes money out of a goal; it stays in the account and becomes spendable again
     func takeFromGoal(_ id: UUID, amount: Money, key: UUID) throws {
         guard let record = fetch(ReserveRecord.self, #Predicate { $0.id == id }).first, !record.archived else { throw StoreError.notFound }
-        guard record.lastChangeKey != key else { return }
+        guard !record.applied(key) else { return }
         guard amount.isPositive else { throw StoreError.invalid("Enter an amount greater than zero.") }
         guard amount.minorUnits <= record.minorUnits else {
             throw StoreError.invalid("Only \(MoneyFormat.string(Money(minorUnits: record.minorUnits, currency: record.currency))) is saved.")
         }
         record.minorUnits -= amount.minorUnits
-        record.lastChangeKey = key
+        record.remember(key)
         record.updatedAt = now()
         context.insert(AuditRecord(action: "goal.taken", subjectId: id,
                                    summary: "Took \(MoneyFormat.string(amount)) from \(record.name)"))
@@ -1707,15 +2216,97 @@ final class LedgerStore {
 
     /// Deletes every record on this device. Asked for explicitly by the person.
     func eraseAllData() throws {
+        erasing = true
+        defer { erasing = false }
         for type in Schema1.models { try context.delete(model: type) }
         try context.save()
+        // The database also keeps its own log of every change (row numbers and times, no amounts);
+        // clear it now, and replace the whole file at the next launch so even its counters start again
+        if #available(iOS 18, *) { try? context.deleteHistory(HistoryDescriptor<DefaultHistoryTransaction>()) }
+        // Files and remembered bits that hold the person's data too: copies made before a restore,
+        // exports waiting in the temporary folder, and what notifications remember
+        let files = FileManager.default
+        if let folder = Self.safetyCopyFolder, files.fileExists(atPath: folder.path) { try files.removeItem(at: folder) }
+        for url in (try? files.contentsOfDirectory(at: files.temporaryDirectory, includingPropertiesForKeys: nil)) ?? [] {
+            try? files.removeItem(at: url)
+        }
+        for key in ["notify.budget", "notify.askedCards", "notify.progress"] { UserDefaults.standard.removeObject(forKey: key) }
         ensureSettingsAndSystemAccounts()
+        if let database = databaseURL { try? Data().write(to: Self.erasePendingMarker(for: database)) }
         revision += 1
+    }
+
+    /// Set while erasing, so the erase's own saves don't cancel the fresh database it asks for
+    @ObservationIgnored private var erasing = false
+    @ObservationIgnored private var saveObserver: NSObjectProtocol?
+
+    /// The file this store's records are kept in (nil for the in-memory one tests and demos use)
+    private var databaseURL: URL? {
+        container.configurations.first { !$0.isStoredInMemoryOnly }?.url
+    }
+
+    /// Left beside the database after an erase; while it's there nothing new has been saved,
+    /// so the next launch can throw the file away and start a brand-new one
+    static func erasePendingMarker(for database: URL) -> URL {
+        database.deletingLastPathComponent().appendingPathComponent("erase-pending")
+    }
+
+    /// Called before the database is opened: after an erase with nothing saved since, deletes the
+    /// database files so the new one keeps nothing of the old, not even row numbers or its change log
+    static func replaceErasedDatabase(at database: URL = ModelConfiguration(isStoredInMemoryOnly: false).url) {
+        let files = FileManager.default
+        let marker = erasePendingMarker(for: database)
+        guard files.fileExists(atPath: marker.path) else { return }
+        for suffix in ["", "-wal", "-shm"] {
+            let file = URL(fileURLWithPath: database.path + suffix)
+            if files.fileExists(atPath: file.path) { try? files.removeItem(at: file) }
+        }
+        try? files.removeItem(at: marker)
+    }
+
+    /// Anything saved after an erase is the person's new data, which must never be thrown away
+    private func watchSavesAfterErase() {
+        saveObserver = NotificationCenter.default.addObserver(forName: ModelContext.didSave, object: context, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.erasing, let database = self.databaseURL else { return }
+                let marker = Self.erasePendingMarker(for: database)
+                guard FileManager.default.fileExists(atPath: marker.path) else { return }
+                try? FileManager.default.removeItem(at: marker)
+            }
+        }
     }
 
     // MARK: -
 
+    /// Saves wait while this is above zero, so a batch is kept or undone as one
+    @ObservationIgnored private var holdingSaves = 0
+
+    /// Runs several changes as one save: all of them are kept, or, if any fails, none are
+    @discardableResult
+    func inOneSave<T>(_ body: () throws -> T) throws -> T {
+        holdingSaves += 1
+        let result: T
+        do {
+            result = try body()
+        } catch {
+            holdingSaves -= 1
+            if holdingSaves == 0 {
+                context.rollback()
+                revision += 1
+            }
+            throw error
+        }
+        holdingSaves -= 1
+        if holdingSaves == 0 { try commit() }
+        return result
+    }
+
     func commit() throws {
+        // Inside a batch: what's read next must see the change, but nothing is saved yet
+        if holdingSaves > 0 {
+            revision += 1
+            return
+        }
         do {
             try context.save()
             revision += 1
@@ -1724,5 +2315,15 @@ final class LedgerStore {
             revision += 1
             throw StoreError.invalid("Couldn't save. Nothing was changed, please try again.")
         }
+    }
+}
+
+extension ReserveRecord {
+    /// Whether a change with this request key was already made
+    func applied(_ key: UUID) -> Bool { lastChangeKey == key || appliedKeys.contains(key) }
+
+    func remember(_ key: UUID) {
+        lastChangeKey = key
+        appliedKeys = Array((appliedKeys + [key]).suffix(100))
     }
 }

@@ -8,6 +8,7 @@
 //  design can't record money differently from the old one.
 //
 
+import CryptoKit
 import Foundation
 import NokaelCore
 
@@ -56,6 +57,8 @@ struct EntryForm {
     var occurrenceId: UUID?
     /// Expenses only: the people who owe part of it back, and how much each
     var shares: [(personId: UUID, amount: Money)] = []
+    /// Expenses only: the amount spread over several categories; empty means it all goes to `categoryId`
+    var parts: [(categoryId: UUID, amount: Money)] = []
     /// One per form: a double tap or a retry can't save it twice
     var key = UUID()
 
@@ -73,7 +76,9 @@ struct EntryForm {
     }
 
     /// The double-entry lines this form records
-    @MainActor func entry(in snapshot: FinanceSnapshot, equity: AccountInfo) throws -> Entry {
+    /// `replacing` is the entry being edited: a balance correction is worked out as if it weren't there,
+    /// since the edit takes its place
+    @MainActor func entry(in snapshot: FinanceSnapshot, equity: AccountInfo, replacing originalId: UUID? = nil) throws -> Entry {
         let amount = try checkedAmount()
         let title = memo.trimmingCharacters(in: .whitespaces)
         guard let account = snapshot.account(accountId)?.info else {
@@ -82,11 +87,22 @@ struct EntryForm {
         var entry: Entry
         switch kind {
         case .expense:
-            guard let category = snapshot.account(categoryId)?.info else { throw StoreError.invalid("Choose what it was for.") }
             let people = try shares.map { share in
                 guard let person = snapshot.account(share.personId)?.info else { throw StoreError.notFound }
                 return (person: person, amount: share.amount)
             }
+            if parts.count > 1 {
+                let split = try parts.map { part in
+                    guard let category = snapshot.account(part.categoryId)?.info else { throw StoreError.invalid("Choose a category for each part.") }
+                    return (category: category, amount: part.amount)
+                }
+                do {
+                    entry = try EntryFactory.expense(amount, from: account, parts: split, shares: people, date: date,
+                                                     memo: title.isEmpty ? split.map(\.category.name).joined(separator: " & ") : title, key: key)
+                } catch { throw StoreError.from(error) }
+                break
+            }
+            guard let category = snapshot.account(categoryId)?.info else { throw StoreError.invalid("Choose what it was for.") }
             entry = try EntryFactory.splitExpense(amount, from: account, category: category, shares: people, date: date,
                                                   memo: title.isEmpty ? category.name : title, key: key)
         case .income:
@@ -98,7 +114,14 @@ struct EntryForm {
             entry = try EntryFactory.transfer(amount, from: account, to: to, date: date,
                                               memo: title.isEmpty ? "Transfer to \(to.name)" : title, key: key)
         case .adjustment:
-            let delta = amount - snapshot.ledger.balance(of: account.id, asOf: date)
+            var recorded = snapshot.ledger.balance(of: account.id, asOf: date)
+            if let original = snapshot.entryRecords.first(where: { $0.id == originalId }), original.status == .posted,
+               original.date <= date {
+                for line in original.lines where line.accountId == account.id {
+                    recorded = recorded - Money(minorUnits: line.minorUnits, currency: line.currency)
+                }
+            }
+            let delta = amount - recorded
             guard !delta.isZero else { throw StoreError.invalid("That's already the recorded balance.") }
             entry = try EntryFactory.adjustment(delta, account: account, equity: equity, date: date, reason: reason, key: key)
         }
@@ -107,13 +130,25 @@ struct EntryForm {
     }
 
     /// The repeating bill or income saved with a new entry when `repeats` is on
+    /// It starts on the entry's own date, so a bill entered on the 31st keeps returning to the 31st after
+    /// a short month; the entry itself pays that first one. Its id comes from the form's key, so saving
+    /// the same form again can never make a second schedule.
     @MainActor func repeatItem(in snapshot: FinanceSnapshot) -> PlannedItem? {
-        guard repeats, kind == .expense || kind == .income, let amount = try? checkedAmount(),
-              let next = snapshot.calendar.date(byAdding: frequency.step, to: date) else { return nil }
-        return PlannedItem(name: memo.isEmpty ? (snapshot.account(categoryId)?.name ?? kind.title) : memo,
+        guard repeats, kind == .expense || kind == .income, let amount = try? checkedAmount() else { return nil }
+        return PlannedItem(id: repeatItemId,
+                           name: memo.isEmpty ? (snapshot.account(categoryId)?.name ?? kind.title) : memo,
                            direction: kind == .income ? .inflow : .outflow, amount: amount,
-                           schedule: Schedule(start: next, frequency: frequency),
+                           schedule: Schedule(start: date, frequency: frequency),
                            accountId: accountId, categoryId: categoryId)
+    }
+
+    /// The repeating bill's id, the same every time this form is saved
+    var repeatItemId: UUID {
+        var bytes = Array(SHA256.hash(data: Data("repeat|\(key.uuidString)".utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 }
 
@@ -134,10 +169,28 @@ extension LedgerStore {
     /// Records the form, or replaces `originalId` with it when editing
     @discardableResult
     func save(_ form: EntryForm, replacing originalId: UUID? = nil) throws -> UUID {
-        let entry = try form.entry(in: snapshot, equity: equityAccount.info)
-        if let originalId { return try replace(originalId, with: entry, notes: form.notes) }
-        let id = try post(entry, notes: form.notes)
-        if let item = form.repeatItem(in: snapshot) { try savePlannedItem(item) }
-        return id
+        if let originalId {
+            let entry = try form.entry(in: snapshot, equity: equityAccount.info, replacing: originalId)
+            return try replace(originalId, with: entry, notes: form.notes)
+        }
+        // The same form again (a double tap, a retry): what it saved the first time, nothing more
+        if let saved = postedEntry(key: form.key) { return saved }
+        // The entry and its repeating bill are kept together, or neither is
+        return try inOneSave {
+            var entry = try form.entry(in: snapshot, equity: equityAccount.info)
+            if let item = form.repeatItem(in: snapshot) {
+                try savePlannedItem(item)
+                if entry.occurrenceId == nil { entry.occurrenceId = occurrence(of: item.id, on: form.date) }
+            }
+            return try post(entry, notes: form.notes)
+        }
+    }
+
+    /// Undoes a new entry, and the repeating bill saved with it
+    func undoSave(_ form: EntryForm, entryId: UUID) throws {
+        try inOneSave {
+            try void(entryId)
+            if form.repeats { try deletePlannedItem(form.repeatItemId) }
+        }
     }
 }

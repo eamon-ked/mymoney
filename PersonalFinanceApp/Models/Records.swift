@@ -121,9 +121,21 @@ final class EntryRecord {
     var cardHint: String? = nil
     /// Saved automatically and not yet looked at
     var needsReview: Bool = false
+    /// The bank's reference from the alert, so the same movement is recognised and two moves never merge
+    var reference: String? = nil
+    /// A second automatic source matched to this entry (the bank's SMS for an Apple Pay tap)
+    var alsoFromRaw: String? = nil
+    /// What to check, when an automatic entry had to guess ("Which account is ••730001?")
+    var reviewReason: String? = nil
     /// Bills the person said this isn't a payment for, so they aren't suggested again.
     /// An edit makes a new entry, which is looked at afresh.
     var dismissedOccurrenceIds: [UUID] = []
+    /// The accounts whose statements it was checked against (see `Entry.reconciledIn`)
+    var reconciledInIds: [UUID] = []
+    /// For a debt payment: the card or loan it paid, kept even when none of it went to the balance owed
+    var debtId: UUID? = nil
+    /// For a debt payment: how much of its charges were fees (the rest was interest)
+    var debtFeesMinor: Int64? = nil
 
     init(from entry: Entry, notes: String = "", replacesId: UUID? = nil) {
         self.id = entry.id
@@ -154,7 +166,8 @@ final class EntryRecord {
     var entry: Entry {
         Entry(id: id, kind: kind, date: date, status: status, cleared: cleared, memo: memo,
               lines: lines.map { Line(accountId: $0.accountId, amount: Money(minorUnits: $0.minorUnits, currency: $0.currency)) },
-              idempotencyKey: idempotencyKey, occurrenceId: occurrenceId)
+              idempotencyKey: idempotencyKey, occurrenceId: occurrenceId,
+              reconciledIn: reconciledInIds.isEmpty ? nil : reconciledInIds)
     }
 }
 
@@ -221,6 +234,8 @@ final class PlannedItemRecord {
     var archived: Bool
     var createdAt: Date
     var updatedAt: Date
+    /// A free trial: its first charge gets a warning in time to cancel
+    var isTrial: Bool = false
 
     init(_ item: PlannedItem) {
         self.id = item.id
@@ -326,6 +341,8 @@ final class ReserveRecord {
     var targetDate: Date?
     /// The last add/take-out request, so a double tap only counts once
     var lastChangeKey: UUID?
+    /// Recent request keys already applied, so a retry of an older change can't apply it again
+    var appliedKeys: [UUID] = []
     var archived: Bool
     var createdAt: Date
     var updatedAt: Date
@@ -399,11 +416,14 @@ final class SettingsRecord {
     var dismissedFindings: [String] = []
     /// Loans started from a statement, still waiting for what's owed
     var unfinishedLoans: [UUID] = []
+    /// When a statement was last imported, so a monthly reminder only comes when one is due
+    var lastStatementImportAt: Date? = nil
 
     init(currency: String = "AED", localeIdentifier: String = "en_AE") {
         self.currency = currency
         self.localeIdentifier = localeIdentifier
-        self.firstWeekday = 2 // Monday
+        // The phone's own week until the person picks another day
+        self.firstWeekday = Calendar.current.firstWeekday
         self.bufferMinor = 0
         self.staleAfterDays = 30
         self.onboardingStep = 0

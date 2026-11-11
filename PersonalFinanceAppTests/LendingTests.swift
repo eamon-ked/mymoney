@@ -85,6 +85,37 @@ struct LendingTests {
         #expect(store.snapshot.balance(current.id) == Self.aed(9400))
     }
 
+    @Test func moneySentToYourselfBecomesOneTransfer() throws {
+        let savings = try store.createAccount(name: "Account 0001", kind: .bank, opening: Self.aed(1000), openingDate: today)
+        let sent = store.peopleCategory, from = store.fromPeopleCategory
+        // Both banks sent a message: one says it went out, the other that it came in
+        let decoy = try store.post(EntryFactory.income(Self.aed(150), to: current.info, category: from.info, date: today,
+                                                       memo: "41235832494 MBTRF B/O SAMUEL OTIENO BARASA"))
+        let incoming = try store.post(EntryFactory.income(Self.aed(150), to: current.info, category: from.info, date: today,
+                                                          memo: "43833163656 MBTRF B/O SAMUEL OTIENO BARASA"))
+        let out = try store.post(EntryFactory.expense(Self.aed(150), from: savings.info, category: sent.info, date: today,
+                                                      memo: "43833163656 MBTRF AED150.00 TRF OUT TO SAMUEL OTIENO BARASA"))
+        #expect(store.transferTwin(of: try #require(store.entryRecord(out)), in: current.id)?.id == incoming)
+        let id = try store.recordAsTransfer(out, other: current.id)
+        let s = store.snapshot
+        #expect(store.entryRecord(id)?.kind == .transfer)
+        #expect(store.entryRecord(incoming)?.status == .void)
+        #expect(store.entryRecord(decoy)?.status == .posted)
+        #expect(spent(sent).isZero)
+        #expect(s.balance(savings.id) == Self.aed(850))
+        #expect(s.balance(current.id) == Self.aed(10_300))  // the transfer and the other, unrelated 150
+    }
+
+    @Test func incomeFromYourOtherAccountWithNoTwinStillMoves() throws {
+        let savings = try store.createAccount(name: "Savings", kind: .bank, opening: Self.aed(1000), openingDate: today)
+        let id = try store.post(EntryFactory.income(Self.aed(300), to: current.info, category: store.fromPeopleCategory.info,
+                                                    date: today, memo: "B/O ME"))
+        try store.recordAsTransfer(id, other: savings.id)
+        #expect(store.snapshot.balance(savings.id) == Self.aed(700))
+        #expect(store.snapshot.balance(current.id) == Self.aed(10_300))
+        #expect(throws: StoreError.self) { try store.recordAsTransfer(id, other: savings.id) }
+    }
+
     @Test func moneySentToSomeoneIsGuessedAsSpendingOnPeople() async throws {
         let s = store.snapshot
         #expect(CategoryRules.guess("IPP TRF TO MOHAMMED", income: false, categories: s.expenseCategories.map(\.name)) == "Sent to people")

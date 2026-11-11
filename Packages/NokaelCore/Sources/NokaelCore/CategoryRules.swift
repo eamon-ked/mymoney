@@ -69,7 +69,7 @@ public enum CategoryRules {
         return salaryWords.contains { $0.contains(" ") ? joined.contains(" \($0) ") : words.contains($0) }
     }
 
-    /// Words that put money in from someone, not a business: "B/O Sheila Ankunda", "Transfer from J Smith"
+    /// Words that put money in from someone, not a business: "B/O Grace Achieng", "Transfer from J Smith"
     static let fromPersonWords = ["b o", "from", "received from", "inward", "ipp", "aani", "p2p", "zelle", "venmo", "interac",
                                   "upi", "imps", "paynow", "pix", "bizum", "blik", "swish", "fast payment", "remittance"]
     /// Words that mark the sender as a business. Long ones also count inside a run-together name

@@ -32,8 +32,11 @@ final class AskModel {
     private(set) var engine: AIEngine = .onDevice
     private var session: LanguageModelSession?
     private var task: Task<Void, Never>?
+    /// Bumped by New conversation, so an answer still arriving for the old one is dropped
+    private var generation = 0
 
-    func ask(_ question: String, digest: FinanceDigest, plus: Bool) {
+    /// `answered` is told whether an answer came back, so a free question is only used up by one that did
+    func ask(_ question: String, digest: FinanceDigest, plus: Bool, answered: @escaping (Bool) -> Void = { _ in }) {
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !busy else { return }
         if session == nil {
@@ -43,37 +46,46 @@ final class AskModel {
         messages.append(Message(fromPerson: true, text: question))
         messages.append(Message(fromPerson: false, text: ""))
         let index = messages.count - 1
+        let turn = generation
         busy = true
         task = Task {
+            var ok = false
             do {
-                try await stream(question, into: index)
+                try await stream(question, into: index, turn: turn)
+                ok = true
             } catch is CancellationError {
-            } catch where engine == .cloud {
+            } catch where engine == .cloud && turn == generation {
                 // Offline, out of today's allowance or not available: carry on, on this iPhone
                 engine = .onDevice
                 session = MoneyAI.assistantSession(digest, engine: .onDevice)
                 do {
-                    try await stream(question, into: index)
+                    try await stream(question, into: index, turn: turn)
+                    ok = true
                 } catch is CancellationError {
                 } catch {
-                    fail(index, error)
+                    fail(index, error, turn: turn)
                 }
             } catch {
-                fail(index, error)
+                fail(index, error, turn: turn)
             }
+            // Only the conversation that asked hears back; New conversation already reset everything
+            guard turn == generation else { return }
             busy = false
+            answered(ok)
         }
     }
 
-    private func stream(_ question: String, into index: Int) async throws {
+    private func stream(_ question: String, into index: Int, turn: Int) async throws {
         guard let session else { return }
-        messages[index].text = ""
         for try await partial in session.streamResponse(to: question) {
+            try Task.checkCancellation()
+            guard turn == generation, messages.indices.contains(index) else { throw CancellationError() }
             messages[index].text = partial.content
         }
     }
 
-    private func fail(_ index: Int, _ error: Error) {
+    private func fail(_ index: Int, _ error: Error, turn: Int) {
+        guard turn == generation, messages.indices.contains(index) else { return }
         messages[index].text = AppleIntelligence.message(for: error)
         messages[index].failed = true
         // A full context window can't recover; the next question starts fresh
@@ -81,7 +93,9 @@ final class AskModel {
     }
 
     func reset() {
+        generation += 1
         task?.cancel()
+        task = nil
         messages = []
         session = nil
         busy = false

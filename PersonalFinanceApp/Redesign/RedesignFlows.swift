@@ -170,7 +170,9 @@ extension Redesign {
                 usedFree = id
                 return
             }
-            review = StatementReview(accountId: id, store: app.store)
+            let review = StatementReview(accountId: id, store: app.store)
+            review.askAI = AppleIntelligence.isReady
+            self.review = review
         }
     }
 
@@ -179,6 +181,8 @@ extension Redesign {
         @Environment(AppModel.self) private var app
         @State private var choosingFile = false
         @State private var showMatched = false
+        @State private var showColumns = false
+        @State private var password = ""
 
         var body: some View {
             VStack(alignment: .leading, spacing: 16) {
@@ -196,6 +200,21 @@ extension Redesign {
                     Button("Done") { app.close() }.buttonStyle(PrimaryButtonStyle())
                 } else if review.fileText == nil {
                     intro
+                } else if review.needsColumns, let layout = review.layout {
+                    DetailCard { DetailRow(label: "File", value: review.fileName) }
+                    Text("Which column is which?").rdText(.heading).padding(.top, 8)
+                    if let reading = review.reading {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text(reading).rdText(.detail).foregroundStyle(Theme.muted)
+                        }
+                    } else {
+                        Text(columnsQuestion(layout)).rdText(.body).foregroundStyle(Theme.muted)
+                    }
+                    ColumnsPicker(review: review, layout: layout) {}
+                    Problem(text: review.error)
+                    Button("Choose another file") { choosingFile = true }.rdText(.label).foregroundStyle(Theme.primary)
+                        .frame(maxWidth: .infinity)
                 } else {
                     rows
                 }
@@ -208,7 +227,7 @@ extension Redesign {
                 }
             }
             #endif
-            .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.commaSeparatedText, .plainText, .text]) { result in
+            .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.commaSeparatedText, .pdf, .plainText, .text]) { result in
                 switch result {
                 case .success(let url): review.load(url)
                 case .failure: review.error = "Couldn't open that file."
@@ -219,11 +238,54 @@ extension Redesign {
         @ViewBuilder private var intro: some View {
             IconBox(symbol: "doc.text.magnifyingglass")
             Text("Bring in \(app.hidesAccountNames ? "this account" : review.account?.name ?? "this account")'s statement").rdText(.heading)
-            Text("Download a statement from your bank's website or app as a CSV file, then choose it here. Rows you've already recorded are recognised and left alone.")
+            Text("Download a statement from your bank's website or app as a CSV or PDF file, then choose it here. Rows you've already recorded are recognised and left alone.")
                 .rdText(.body).foregroundStyle(Theme.muted)
-            Button("Choose CSV file") { choosingFile = true }.buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("chooseStatement")
-            Problem(text: review.error)
-            Redesign.explainer("The file needs a header row with a date, a description and either an amount or separate money in and money out columns. It stays on this iPhone.")
+            if let reading = review.reading {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text(reading).rdText(.detail).foregroundStyle(Theme.muted)
+                }
+            } else if review.needsPassword {
+                Field(label: "\(review.fileName) has a password") {
+                    SecureField("Password", text: $password)
+                        .textContentType(.password).submitLabel(.go)
+                        .onSubmit(unlock)
+                        .accessibilityIdentifier("statementPassword")
+                }
+                Problem(text: review.error)
+                Button("Open", action: unlock).buttonStyle(PrimaryButtonStyle()).disabled(password.isEmpty)
+                Button("Choose another file") { choosingFile = true }.rdText(.label).foregroundStyle(Theme.primary)
+                    .frame(maxWidth: .infinity)
+            } else {
+                Button("Choose file") { choosingFile = true }.buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("chooseStatement")
+                Problem(text: review.error)
+            }
+            Redesign.explainer("The app works out which column is which from what's in them, in any language. If it picks the wrong ones, you can choose them. The file stays on this iPhone.")
+        }
+
+        private func unlock() {
+            guard !password.isEmpty else { return }
+            let typed = password
+            password = ""
+            Task { await review.unlock(typed) }
+        }
+
+        /// Why the person is asked, in words
+        private func columnsQuestion(_ layout: StatementLayout) -> String {
+            switch layout.question {
+            case .outOrIn(let a, let b):
+                return "\(layout.name(a)) and \(layout.name(b)) both hold money, and nothing in the file says which is money out. Pick them below."
+            case .whichAmount:
+                return "Several columns hold amounts, and nothing in the file says which is each row's amount. Pick them below."
+            case nil:
+                return "The app couldn't tell from what's in the file. Pick them from the examples below."
+            }
+        }
+
+        /// "Date, Details, Amount": the columns in use, by the file's own names
+        private var columnsSummary: String {
+            guard let layout = review.layout, let c = review.columnsInUse else { return "Choose" }
+            return [c.date, c.description, c.amount, c.debit, c.credit].compactMap { $0 }.map(layout.name).joined(separator: ", ")
         }
 
         @ViewBuilder private var rows: some View {
@@ -233,14 +295,41 @@ extension Redesign {
                 DetailRow(label: "Rows", value: "\(review.rows.count)")
                 Redesign.hairline
                 DetailRow(label: "Already recorded", value: "\(review.matched.count)")
+                if review.layout != nil && !review.needsColumns {
+                    Redesign.hairline
+                    Button { withAnimation { showColumns.toggle() } } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 16) {
+                            Text("Columns").foregroundStyle(Theme.muted)
+                            Spacer()
+                            Text(private: columnsSummary).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+                            Image(systemName: showColumns ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(Theme.muted)
+                        }
+                        .rdText(.detail).padding(.vertical, 15).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("statementColumns")
+                }
+                if let check = review.balanceCheck {
+                    Redesign.hairline
+                    DetailRow(label: "Match the balance", value: "\(check.addUp) of \(check.rows)")
+                        .accessibilityIdentifier("balanceCheck")
+                }
+            }
+            if review.columns == nil, review.suggested != nil {
+                Text("Apple Intelligence chose the money columns. Check them under Columns.")
+                    .rdText(.caption).foregroundStyle(Theme.muted)
+            } else if let check = review.balanceCheck, !check.allAddUp {
+                Text("Some rows don't match the running balance. Check the columns, or rows may be missing from the file.")
+                    .rdText(.caption).foregroundStyle(Theme.muted)
+            }
+            if let layout = review.layout, showColumns {
+                ColumnsPicker(review: review, layout: layout) { showColumns = false }
             }
             ToggleRow(title: "Purchases show as positive numbers",
                       detail: "Card statements often list purchases without a minus sign. Turn this on if money out appears as money in below.",
                       isOn: $review.flipSigns)
             Problem(text: review.error)
-            if let theirs = review.fileCurrency, let account = review.account, theirs != account.currency {
-                Problem(text: "This statement is in \(theirs), but \(account.name) is in \(account.currency). Its amounts will be read as \(account.currency).")
-            }
+            if review.error == nil, let problem = review.currencyProblem { Problem(text: problem) }
 
             if review.suggesting > 0 {
                 HStack(spacing: 10) {
@@ -268,7 +357,7 @@ extension Redesign {
                 Divided(items: review.inbox) { row in
                     InboxRow(row: row, target: binding(row), skipped: skipBinding(row),
                              options: review.options(for: row), label: review.label(for: row),
-                             prompt: review.prompt(for: row),
+                             prompt: review.prompt(for: row), lookalike: review.lookalike(for: row),
                              addAccount: review.ownTransfers.contains(row.id) ? { review.addOwnAccount(for: row) } : nil,
                              addLoan: review.loanRows.contains(row.id) ? { review.addLoan(for: row) } : nil)
                 }
@@ -310,7 +399,7 @@ extension Redesign {
                 Button(review.ready.isEmpty ? "Choose a category to add"
                        : "Add \(review.ready.count) \(review.ready.count == 1 ? "entry" : "entries")") { review.add() }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(review.ready.isEmpty)
+                    .disabled(review.ready.isEmpty || review.currencyProblem != nil)
                     .accessibilityIdentifier("addImported")
             }
         }
@@ -374,6 +463,109 @@ extension Redesign {
         }
     }
 
+    /// Which of the file's columns holds the date, the description and the money, chosen by the person
+    private struct ColumnsPicker: View {
+        let review: StatementReview
+        let layout: StatementLayout
+        let done: () -> Void
+        @State private var draft = StatementColumns()
+        @State private var separate = false
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 0) {
+                role("Date", \.date)
+                Redesign.hairline
+                role("Description", \.description)
+                Redesign.hairline
+                Picker("Money", selection: $separate) {
+                    Text("One amount").tag(false)
+                    Text("Money out and in").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.vertical, 12)
+                .onChange(of: separate) { _, on in
+                    if on { draft.amount = nil } else { draft.debit = nil; draft.credit = nil }
+                }
+                if separate {
+                    role("Money out", \.debit)
+                    Redesign.hairline
+                    role("Money in", \.credit)
+                } else {
+                    role("Amount", \.amount)
+                }
+                Redesign.hairline
+                role("Balance", \.balance, optional: true)
+            }
+            .padding(.horizontal, 16)
+            .rdPanel(padding: 0)
+            .onAppear {
+                draft = review.columnsInUse ?? StatementColumns()
+                separate = draft.amount == nil && (draft.debit != nil || draft.credit != nil)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                if !draft.missing.isEmpty {
+                    Text("Still to choose: \(draft.missing.joined(separator: ", ")).").rdText(.caption).foregroundStyle(Theme.muted)
+                }
+                Button("Use these columns") {
+                    review.columns = draft == layout.guess ? nil : draft
+                    done()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(!draft.isComplete)
+                .accessibilityIdentifier("useColumns")
+                if review.columns != nil, layout.guess != nil {
+                    Button("Go back to the app's choice") {
+                        review.columns = nil
+                        done()
+                    }
+                    .rdText(.label).foregroundStyle(Theme.primary).frame(maxWidth: .infinity)
+                }
+                Text("Remembered for this account's next statement with the same columns.")
+                    .rdText(.caption).foregroundStyle(Theme.muted)
+            }
+            .padding(.top, 4)
+        }
+
+        /// One column holds one thing: choosing it here takes it away from any other role
+        private func choose(_ column: Int, for key: WritableKeyPath<StatementColumns, Int?>) {
+            let keys: [WritableKeyPath<StatementColumns, Int?>] = [\.date, \.description, \.amount, \.debit, \.credit, \.balance]
+            for other in keys where other != key && draft[keyPath: other] == column { draft[keyPath: other] = nil }
+            draft[keyPath: key] = column
+        }
+
+        private func role(_ title: String, _ key: WritableKeyPath<StatementColumns, Int?>, optional: Bool = false) -> some View {
+            Menu {
+                if optional {
+                    Button("None") { draft[keyPath: key] = nil }
+                }
+                ForEach(layout.names.indices, id: \.self) { i in
+                    Button { choose(i, for: key) } label: {
+                        Text(layout.name(i))
+                        if let sample = layout.sample(i) { Text(sample) }
+                    }
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 16) {
+                    Text(title).foregroundStyle(Theme.muted)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(private: draft[keyPath: key].map(layout.name) ?? (optional ? "None" : "Choose"))
+                            .fontWeight(.medium)
+                            .foregroundStyle(draft[keyPath: key] == nil && !optional ? Theme.primary : Theme.foreground)
+                        if let i = draft[keyPath: key], let sample = layout.sample(i) {
+                            Text(private: sample).rdText(.caption).foregroundStyle(Theme.muted).lineLimit(1)
+                        }
+                    }
+                    Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(Theme.muted)
+                }
+                .rdText(.detail).padding(.vertical, 12).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("column.\(title)")
+        }
+    }
+
     /// One statement row waiting for a decision
     private struct InboxRow: View {
         let row: StatementRow
@@ -382,6 +574,8 @@ extension Redesign {
         let options: [(String, [StatementReview.Option])]
         let label: String?
         var prompt = "Choose a category"
+        /// An entry of the same amount close by under another name: maybe this row, maybe not
+        var lookalike: EntryRecord? = nil
         /// Money moved to an account of theirs that isn't in the app yet
         var addAccount: (() -> Void)? = nil
         /// Pays a loan that isn't in the app yet
@@ -409,6 +603,10 @@ extension Redesign {
                             .rdText(.amount).foregroundStyle(row.amount.isNegative ? Theme.foreground : Theme.primary)
                     }
                     Text(app.fullDay(row.date)).rdText(.caption).foregroundStyle(Theme.muted)
+                    if let lookalike {
+                        Text(private: "Maybe already recorded as \(app.hidesDetails || lookalike.memo.isEmpty ? "an entry" : lookalike.memo) on \(app.fullDay(lookalike.date))")
+                            .rdText(.caption).foregroundStyle(Theme.amber)
+                    }
                     if skipped {
                         Text("Left out · tick to add it").rdText(.captionStrong).foregroundStyle(Theme.muted)
                     } else {
@@ -453,7 +651,11 @@ extension Redesign {
         @Environment(\.openURL) private var openURL
         @State private var newSender = ""
         @State private var testText = ""
-        @State private var testResult: String?
+        @State private var testSender = ""
+        @State private var testRun: CaptureTrace?
+        @State private var confirmClear = false
+        @State private var traceProblem: String?
+        @State private var openTrace: UUID?
         @State private var byHand = false
 
         private var settings: SettingsRecord { app.store.settings }
@@ -479,6 +681,7 @@ extension Redesign {
                 applePay
                 sms
                 tryIt
+                history
             }
         }
 
@@ -590,20 +793,15 @@ extension Redesign {
             VStack(alignment: .leading, spacing: 0) {
                 Redesign.overline("Bank SMS alerts")
                 VStack(alignment: .leading, spacing: 14) {
-                    // The ready-made shortcut listens for one keyword; everywhere else it's set up by hand with the local keyword
-                    if BankSenders.keyword(region: region) == Self.bankAlertShortcutKeyword {
-                        Button("Add the bank alerts automation") { Task { openURL(await Self.resolved(Self.bankAlertShortcut)) } }
-                            .buttonStyle(PrimaryButtonStyle())
-                            .accessibilityIdentifier("addBankAutomation")
-                        Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs whenever a message mentions \(Self.bankAlertShortcutKeyword).")
-                            .rdText(.detail).foregroundStyle(Theme.muted)
-                        Button(byHand ? "Hide the steps" : "Set it up by hand instead") { withAnimation { byHand.toggle() } }
-                            .rdText(.detail).foregroundStyle(Theme.primary)
-                        if byHand { Steps(steps: manualSteps) }
-                    } else {
-                        Text("Set up the automation in Shortcuts:").rdText(.detailStrong)
-                        Steps(steps: manualSteps)
-                    }
+                    // One ready-made shortcut for every country: it listens for the ways banks write currencies
+                    Button("Add the bank alerts automation") { Task { openURL(await Self.resolved(Self.bankAlertShortcut)) } }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .accessibilityIdentifier("addBankAutomation")
+                    Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs when a message mentions money.")
+                        .rdText(.detail).foregroundStyle(Theme.muted)
+                    Button(byHand ? "Hide the steps" : "Set it up by hand instead") { withAnimation { byHand.toggle() } }
+                        .rdText(.detail).foregroundStyle(Theme.primary)
+                    if byHand { Steps(steps: manualSteps) }
                 }
                 .rdPanel()
                 lastSeen(app.store.lastBankMessage.map { ($0.date, $0.summary) }, label: "Last alert",
@@ -615,15 +813,118 @@ extension Redesign {
 
         private var tryIt: some View {
             VStack(alignment: .leading, spacing: 12) {
-                Redesign.overline("Try a message").padding(.bottom, -12)
+                Redesign.overline("Test a message").padding(.bottom, -12)
                 Field(label: "Paste a bank message") {
                     TextField("Message", text: $testText, axis: .vertical).lineLimit(3...6).padding(.vertical, 12)
+                        .accessibilityIdentifier("captureTestMessage")
                 }
-                Button("Read it") { Task { await test() } }
+                Field(label: "Sender, as it shows in Messages (optional)") {
+                    TextField("e.g. ADCBAlert", text: $testSender).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                Button("Test it") { Task { await test() } }
                     .buttonStyle(QuietButtonStyle())
                     .disabled(testText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if let testResult { Text(private: testResult).rdText(.detail).foregroundStyle(Theme.muted) }
-                Redesign.footnote("Shows what would be saved. Nothing is added.").padding(.horizontal, 4)
+                    .accessibilityIdentifier("captureTestButton")
+                if let testRun { TraceSteps(trace: testRun, hidden: hidesTraces).rdPanel() }
+                Redesign.footnote("Goes through every step a real alert does, including your banks, Nokael Plus, duplicates and which account, without Apple Intelligence. Nothing is saved.")
+                    .padding(.horizontal, 4)
+            }
+            .padding(.bottom, 24)
+        }
+
+        /// The steps name amounts, shops, accounts and references, so any Privacy Mode hides them
+        private var hidesTraces: Bool { app.hidesAmounts || app.hidesDetails }
+
+        /// What became of the last few alerts and taps, step by step
+        @ViewBuilder private var history: some View {
+            let traces = app.store.captureTraces
+            VStack(alignment: .leading, spacing: 0) {
+                Redesign.overline("What happened to each one")
+                if traces.isEmpty {
+                    Text("Nothing has reached Nokael Money yet. Each bank message and Wallet tap will show here with what became of it.")
+                        .rdText(.detail).foregroundStyle(Theme.muted).rdPanel()
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(traces.prefix(15).enumerated()), id: \.element.id) { i, trace in
+                            Button {
+                                withAnimation(.snappy) { openTrace = openTrace == trace.id ? nil : trace.id }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: trace.saved ? "checkmark.circle.fill" : "exclamationmark.circle")
+                                        .foregroundStyle(trace.saved ? Theme.primary : Theme.muted)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(trace.source.title) · \(trace.date.formatted(.relative(presentation: .named)))").rdText(.detailStrong)
+                                        Text(private: hidesTraces ? "Hidden in Privacy Mode." : trace.headline).rdText(.caption)
+                                            .foregroundStyle(Theme.muted).lineLimit(openTrace == trace.id ? nil : 2)
+                                    }
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+                                        .rotationEffect(.degrees(openTrace == trace.id ? 90 : 0))
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("captureTrace.\(i)")
+                            .padding(.top, 10)
+                            .padding(.bottom, openTrace == trace.id ? 0 : 10)
+                            if openTrace == trace.id {
+                                TraceSteps(trace: trace, hidden: hidesTraces).padding(.vertical, 10)
+                                traceActions(trace).padding(.bottom, 10)
+                            }
+                            if i < min(traces.count, 15) - 1 { Redesign.hairline }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .rdPanel(padding: 0)
+                    Button("Clear these records") { confirmClear = true }
+                        .rdText(.detail).foregroundStyle(Theme.primary).frame(minHeight: 44)
+                        .accessibilityIdentifier("clearCaptureRecords")
+                        .confirmationDialog("Clear these records?", isPresented: $confirmClear, titleVisibility: .visible) {
+                            Button("Clear records", role: .destructive) {
+                                traceProblem = app.attempt("Records cleared. Your entries are as they were.", closing: false) {
+                                    try app.store.clearCaptureTraces()
+                                }
+                            }
+                        } message: { Text("Only this list goes. Every entry the messages made stays.") }
+                    Problem(text: traceProblem)
+                }
+            }
+            .padding(.bottom, 24)
+        }
+
+        /// What can be done with one record: open what it made or joined, or add a payment it didn't save
+        @ViewBuilder private func traceActions(_ trace: CaptureTrace) -> some View {
+            let current = trace.entryId.flatMap(app.store.currentEntryId(from:))
+            let deleted = current == nil ? trace.entryId.flatMap { app.store.entryRecord($0) } : nil
+            VStack(alignment: .leading, spacing: 4) {
+                if let current {
+                    Button(trace.joined == true ? "Open the entry it joined" : "Open entry") { app.open(.transaction(current)) }
+                        .accessibilityIdentifier("openTraceEntry")
+                } else if let deleted {
+                    Button("Open the deleted entry") { app.open(.transaction(deleted.id)) }
+                        .accessibilityIdentifier("openTraceEntry")
+                }
+                if trace.joined == true || (current == nil && deleted == nil),
+                   trace.readDetails(currency: app.store.currency) != nil {
+                    Button(trace.joined == true ? "This was a separate payment" : "Add this payment") { addOnItsOwn(trace) }
+                        .accessibilityIdentifier("addTracePayment")
+                }
+            }
+            .rdText(.detail).foregroundStyle(Theme.primary)
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        private func addOnItsOwn(_ trace: CaptureTrace) {
+            Task {
+                do {
+                    let id = try await CaptureService.saveOnItsOwn(trace, in: app.store)
+                    traceProblem = app.attempt("Added. It's on To check so you can look at its account and category.", closing: false,
+                                               undo: { try CaptureService.undoSaveOnItsOwn(id, trace: trace, in: app.store) }) {}
+                } catch {
+                    traceProblem = StoreError.from(error).errorDescription
+                }
             }
         }
 
@@ -644,7 +945,6 @@ extension Redesign {
 
         /// A shared shortcut carrying the Message trigger and the Read Bank Message action. The link
         /// goes through our site (legal-docs/_redirects), so a new version ships without an app update.
-        static let bankAlertShortcutKeyword = "AED"
         static let bankAlertShortcut = URL(string: "https://mymoney-legal-docs.pages.dev/s/bank-alerts")!
 
         /// Where our redirect points now. Opened directly, an iCloud shortcut link goes straight to
@@ -662,20 +962,14 @@ extension Redesign {
                 "Open Shortcuts, tap Automation, then +, and choose Message (“When I receive a message”).",
                 "Add the filter Message contains “\(BankSenders.keyword(region: region))”, with no sender, and choose Run Immediately if asked.",
                 "Add “Read Bank Message” from Nokael Money.",
-                "Set Message to Shortcut Input, and Sender to Shortcut Input › Sender, then go back to save.",
+                "Set Message to Shortcut Input, and Sender to Shortcut Input › Sender. Turn off Show When Run, then go back to save.",
             ]
         }
 
         private func test() async {
-            guard let capture = await CaptureService.read(message: testText, homeCurrency: app.currency, date: Date()) else {
-                testResult = "No purchase or deposit found. This message would be ignored."
-                return
-            }
-            var parts = [(capture.direction == .spent ? "Spent " : "Received ") + MoneyFormat.string(capture.amount)]
-            if !capture.merchant.isEmpty { parts.append((capture.direction == .spent ? "at " : "from ") + capture.merchant) }
-            if let card = capture.cardHint { parts.append(cardTitle(card)) }
-            if let id = capture.cardHint.flatMap(app.store.linkedAccount(forCard:)) { parts.append("into \(app.accountLabel(id))") }
-            testResult = parts.joined(separator: " · ")
+            let sender = testSender.trimmingCharacters(in: .whitespaces)
+            testRun = await CaptureService.runBankMessage(testText, sender: sender.isEmpty ? nil : sender, store: app.store,
+                                                          isPlus: app.isPlus, dryRun: true, useAI: false).trace
         }
 
         private func setSenders(_ senders: [String], on: Bool) {
@@ -688,7 +982,8 @@ extension Redesign {
         }
 
         private func cardTitle(_ hint: String) -> String {
-            hint.count == 4 && hint.allSatisfy(\.isNumber) ? "Card ending \(hint)" : hint.capitalized
+            hint.count == 4 && hint.allSatisfy(\.isNumber) ? "Card ending \(hint)"
+                : hint.hasPrefix("account ") ? "Account ending \(hint.dropFirst(8))" : hint.capitalized
         }
 
         static let regions: [(code: String, name: String)] = {
@@ -738,6 +1033,14 @@ extension Redesign {
             default: break
             }
             let s = app.snapshot
+            // UI tests: -captureMessages "first|||second" runs bank messages through, as the automation would
+            if let messages = defaults.string(forKey: "captureMessages") {
+                Task {
+                    for message in messages.components(separatedBy: "|||") {
+                        _ = await CaptureService.runBankMessage(message, sender: nil, store: app.store, isPlus: true, useAI: false)
+                    }
+                }
+            }
             switch defaults.string(forKey: "screen") {
             case "forecast": app.show(.forecast)
             case "reports": app.show(.reports)
@@ -762,3 +1065,36 @@ extension Redesign {
     }
 }
 #endif
+
+extension Redesign {
+    /// Each step of a capture with a tick, a cross or a dash
+    struct TraceSteps: View {
+        let trace: CaptureTrace
+        var hidden = false
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(trace.steps) { step in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: symbol(step.mark)).foregroundStyle(step.mark == .done ? Theme.primary : Theme.muted)
+                            .accessibilityLabel(step.mark == .done ? "Done" : step.mark == .failed ? "Stopped here" : "Not reached")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(step.title).rdText(.detailStrong)
+                            Text(private: hidden && step.mark == .done ? "Hidden in Privacy Mode." : step.detail)
+                                .rdText(.caption).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        private func symbol(_ mark: CaptureTrace.Mark) -> String {
+            switch mark {
+            case .done: return "checkmark.circle.fill"
+            case .failed: return "xmark.circle"
+            case .notReached: return "minus.circle"
+            }
+        }
+    }
+}

@@ -261,7 +261,7 @@ extension Redesign {
                         Button { app.go(.bills) } label: {
                             HStack(alignment: .top, spacing: 8) {
                                 Image(systemName: "info.circle")
-                                Text(private: "\(app.money(app.shortfall)) still to cover. Review your upcoming bills.")
+                                Text("Review your upcoming bills to see what can move.")
                                     // Two lines either way, so hiding the amount doesn't pull the page up
                                     .lineLimit(2, reservesSpace: true)
                                 Spacer()
@@ -348,7 +348,13 @@ extension Redesign {
                     .frame(minHeight: 18)
                 HStack(spacing: 10) {
                     if app.setupComplete {
-                        app.amount(app.safe).rdText(.display).minimumScaleFactor(0.6).lineLimit(1)
+                        // Short of money shows as a negative figure, never as a calm zero
+                        if app.shortfall > 0 {
+                            app.amount(-app.shortfall).rdText(.display).minimumScaleFactor(0.6).lineLimit(1)
+                                .foregroundStyle(Theme.destructive)
+                        } else {
+                            app.amount(app.safe).rdText(.display).minimumScaleFactor(0.6).lineLimit(1)
+                        }
                     } else {
                         Text("—").rdText(.display)
                     }
@@ -356,7 +362,7 @@ extension Redesign {
                 }
                 .padding(.top, 10)
                 Text(!app.setupComplete ? "Add an account you spend from to see this."
-                     : app.shortfall > 0 ? "Your cash is reserved for upcoming commitments."
+                     : app.shortfall > 0 ? "Short of what's coming up. Nothing is safe to spend until it's covered."
                      : app.snapshot.nextIncomeDate == nil ? "Until the end of the month. Add your payday for a truer number."
                      : "Your commitments are covered. This is yours to spend.")
                     .rdText(.caption).lineSpacing(3).frame(maxWidth: 250, alignment: .leading).padding(.top, 10)
@@ -656,14 +662,20 @@ extension Redesign {
                     Button { app.open(.breakdown) } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "info.circle")
-                            Text(private: "\(app.money(app.safe)) safe to spend")
+                            Text(private: app.shortfall > 0 ? "\(app.money(app.shortfall)) short of what's coming up" : "\(app.money(app.safe)) safe to spend")
                             Image(systemName: "chevron.right")
                         }
                         .rdText(.caption).foregroundStyle(Theme.primary)
                     }
                     .padding(.top, 12)
-                    Text(private: "Net worth \(app.money(app.snapshot.netWorth.total))")
-                        .rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 6)
+                    Button { app.show(.netWorth) } label: {
+                        HStack(spacing: 4) {
+                            Text(private: "Net worth \(app.money(app.snapshot.netWorth.total))")
+                            Image(systemName: "chevron.right")
+                        }
+                        .rdText(.caption).foregroundStyle(Theme.muted)
+                    }
+                    .padding(.top, 6)
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)

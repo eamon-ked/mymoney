@@ -104,6 +104,17 @@ extension Redesign {
                 guard let route else { return }
                 switch route {
                 case .bills: app.go(.bills)
+                case .entry(let id): app.open(.transaction(id))
+                case .addExpense(let memo):
+                    var draft = DraftEntry()
+                    draft.memo = memo
+                    app.draft = draft
+                    app.open(.entry(.expense))
+                case .payday: app.go(.home); app.open(.payday)
+                case .forecast: app.go(.home); app.show(.forecast)
+                case .backup: app.go(.more); app.show(.data)
+                case .importStatement: app.go(.accounts); app.open(.importStatement(nil))
+                case .person(let id): app.open(.account(id))
                 case .tab(let t):
                     switch t {
                     case .home: app.go(.home)
@@ -126,9 +137,11 @@ extension Redesign {
         }
 
         private func authenticate() {
-            let context = LAContext()
-            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Nokael Money") { success, _ in
-                Task { @MainActor in unlocked = success }
+            // The async form: iOS answers on a background thread, which a reply closure here would crash on
+            Task { @MainActor in
+                let context = LAContext()
+                let success = (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Nokael Money")) ?? false
+                unlocked = success
             }
         }
     }

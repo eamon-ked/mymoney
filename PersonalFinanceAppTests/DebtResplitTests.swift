@@ -46,7 +46,7 @@ struct DebtResplitTests {
         let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-373000), openingDate: today)
         try store.saveDebtTerms(DebtTerms(annualRateBps: 500, monthlyPayment: Self.aed(5781), dueDay: nil), for: loan.id, paidFrom: nil)
 
-        let memo = "LOANRECOVERY-EMI:11392149P022001"
+        let memo = "LOANRECOVERY-EMI:70345126P022001"
         #expect(StatementImport.loan(for: memo, loans: [(loan.id, loan.name)]) == loan.id)
         _ = try store.importRows([.init(date: today, memo: memo, amount: Self.aed(-5781), target: .transfer(loan.id), key: UUID())],
                                  into: bank.id)
@@ -65,7 +65,7 @@ struct DebtResplitTests {
         let bank = try store.createAccount(name: "Checking", kind: .bank, opening: Self.aed(12089.73), openingDate: today)
         let loan = try store.createAccount(name: "Construction loan", kind: .loan, opening: Self.aed(-248787.39), openingDate: today)
         try store.saveDebtTerms(DebtTerms(annualRateBps: 750, monthlyPayment: Self.aed(5781), dueDay: nil), for: loan.id, paidFrom: nil)
-        let row = LedgerStore.ImportedRow(date: today, memo: "LOANRECOVERY-EMI:11392149P022001", amount: Self.aed(-5781),
+        let row = LedgerStore.ImportedRow(date: today, memo: "LOANRECOVERY-EMI:70345126P022001", amount: Self.aed(-5781),
                                           target: .transfer(loan.id), key: UUID())
 
         #expect(try store.importRows([row], into: bank.id) == 1)
@@ -100,7 +100,7 @@ struct DebtResplitTests {
 
         let occ = try #require(store.snapshot.upcomingBills(days: 45).first)
         try store.pay(occurrenceId: occ.id, amount: Self.aed(5781), accountId: bank.id, categoryId: nil,
-                      date: LedgerStoreTests.date(2026, 10, 26), key: UUID())
+                      date: today, key: UUID())
 
         let line = store.snapshot.budget.line(interest.id, month: month)
         #expect(line.spent == Self.aed(5781))

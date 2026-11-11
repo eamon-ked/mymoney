@@ -147,6 +147,12 @@ public struct Budget: Sendable {
         Set(ledger.accounts.values.filter { $0.kind.isBalanceSheet && $0.onBudget }.map(\.id))
     }
 
+    /// The accounts whose money can still be given a job. An archived account is out of sight in every
+    /// total, so its money can't be handed out here either; what was spent from it still counts.
+    private var heldAccountIds: Set<UUID> {
+        Set(ledger.accounts.values.filter { $0.kind.isBalanceSheet && $0.onBudget && !$0.archived }.map(\.id))
+    }
+
     /// Spending in a category during a month, counting only money from budget accounts, or a bill
     /// a friend paid for you (what you owe them is still your spending).
     /// A loan instalment counts in full against its loan's category: the part that
@@ -199,7 +205,7 @@ public struct Budget: Sendable {
     /// is planned than the budget accounts hold.
     public func availableToAllocate(month: String) -> Money {
         guard let end = BudgetMonth.end(of: month, calendar: calendar) else { return .zero(currency) }
-        let held = budgetAccountIds.map { ledger.balance(of: $0, asOf: end.addingTimeInterval(-0.001)) }.sum(currency)
+        let held = heldAccountIds.map { ledger.balance(of: $0, asOf: end.addingTimeInterval(-0.001)) }.sum(currency)
         // Only what's still left in categories is set aside. Overspending is already gone from
         // the accounts, so counting it here as a negative would add spent money back as unplanned.
         let setAside = categories.map { line($0.id, month: month).remaining }.filter(\.isPositive).sum(currency)

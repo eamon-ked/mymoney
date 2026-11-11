@@ -27,7 +27,8 @@ struct CaptureTests {
             #expect(c.amount == aed(amount), "\(text)")
             #expect(c.direction == .spent, "\(text)")
             #expect(c.merchant.hasPrefix(merchant), "\(c.merchant) for \(text)")
-            #expect(c.cardHint == card, "\(text)")
+            // Cards and accounts are told apart: "account ending 4321" is an account, "card ending 1234" a card
+            #expect((c.cardHint ?? c.accountHint) == card, "\(text)")
             #expect(c.source == .sms)
         }
     }
@@ -85,6 +86,22 @@ struct CaptureTests {
         }
     }
 
+    /// A friend's text mentions money too; a bank's alert carries digits, dates or cents a friend's doesn't
+    @Test func personalTextsDontReadLikeBankAlerts() {
+        let now = Date(timeIntervalSince1970: 1_794_000_000)
+        func bank(_ t: String, _ c: String) -> Bool { AlertParser.readsLikeBankAlert(t, homeCurrency: c, arrived: now) }
+        #expect(!bank("I paid $50 for dinner, you owe me half", "USD"))
+        #expect(!bank("I sent you AED 100", "AED"))
+        #expect(!bank("Got it for $20 at Target lol", "USD"))
+        #expect(!bank("Rs 500 for the cab, will pay you back", "INR"))
+        #expect(!bank("Nimekutumia KES 300", "KES"))
+        #expect(bank("AED45.00 spent at EXAMPLE SHOP", "AED"))
+        #expect(bank("Rs 500 debited from A/c XX1234", "INR"))
+        #expect(bank("Confirmation recd. from EXAMPLEBANK: AED 390.00 transferred to JANE DOE has been credited.", "AED"))
+        #expect(bank("Paid £30 with card ending 4821", "GBP"))
+        #expect(bank("ご利用 1,500円 EXAMPLE STORE", "JPY"))
+    }
+
     @Test func theAutomationKeywordFitsTheCountry() {
         #expect(BankSenders.keyword(region: "AE") == "AED")
         #expect(BankSenders.keyword(region: "DE") == "EUR")
@@ -103,7 +120,7 @@ struct CaptureTests {
 
     @Test func aLongAccountNumberIsNeitherTheShopNorMissed() throws {
         let c = try #require(read("AED 250.00 withdrawn from acc XXX123456 on 27 Oct 2026. Avl Bal AED 1,000.00"))
-        #expect(c.amount == aed(250) && c.merchant.isEmpty && c.cardHint == "3456")
+        #expect(c.amount == aed(250) && c.merchant.isEmpty && c.accountHint == "123456" && c.cardHint == nil)
     }
 
     @Test func readsMoneyComingIn() throws {

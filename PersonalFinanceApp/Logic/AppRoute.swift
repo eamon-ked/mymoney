@@ -3,7 +3,7 @@
 //  Nokael Money
 //
 //  The places the app can be asked to open from outside a screen: a tapped
-//  reminder today, and anything else later. Whatever the screens look like,
+//  notification, and anything else later. Whatever the screens look like,
 //  the root view handles every AppRoute and clears `AppRouter.shared.pending`.
 //
 
@@ -16,6 +16,13 @@ enum AppRoute: Equatable {
     case tab(AppTab)
     /// Bills and expected income, from a tapped bill reminder
     case bills
+    /// A saved entry, to check or change: a purchase announced while the app was closed
+    case entry(UUID)
+    /// Add spending by hand, with the shop filled in: one that couldn't be saved by itself
+    case addExpense(memo: String)
+    case payday, forecast, backup, importStatement
+    /// Money with a person
+    case person(UUID)
 }
 
 /// Holds a route until the screens are ready for it, so a reminder tapped

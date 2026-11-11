@@ -3,7 +3,7 @@
 //  Nokael Money
 //
 //  What the app keeps doing whatever is on screen: refreshing the widget and
-//  the bill reminders after every change, and keeping bill schedules filled
+//  the notifications after every change, and keeping bill schedules filled
 //  ahead. Attached once, around the root view in NokaelMoneyApp, so redesigned
 //  screens can't drop it by accident.
 //
@@ -20,11 +20,13 @@ struct AppDuties: ViewModifier {
         content
             .task(id: store.revision) {
                 WidgetSync.update(store.snapshot, isPlus: plus.isPlus)
-                await BillReminders.sync(store.snapshot)
+                if store.settings.onboardingDone { await Notifications.startQuietly() }
+                await Notifications.sync(store.snapshot)
             }
             .onChange(of: plus.isPlus) { _, isPlus in WidgetSync.update(store.snapshot, isPlus: isPlus) }
             .onAppear {
                 store.extendSchedules()
+                store.pairOwnTransfers()
                 #if DEBUG
                 // Capture helper: -captureSMS "<message>" and -captureApplePay "card|merchant|amount"
                 Task { await debugCaptures() }
@@ -32,6 +34,7 @@ struct AppDuties: ViewModifier {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { store.extendSchedules() }
+                if phase == .background { BackgroundRefresh.schedule() }
             }
     }
 
@@ -47,22 +50,25 @@ struct AppDuties: ViewModifier {
             _ = try? store.payDebt(loan.id, from: bank.id, amount: Money(1500, currency: store.currency), interest: interest,
                                    fees: .zero(store.currency), date: store.now(), key: UUID())
         }
+        // Notification helper: -notifyIn <seconds> sends the next planned notices that soon, to see how they look
+        if case let seconds = defaults.integer(forKey: "notifyIn"), seconds > 0 {
+            await Notifications.sendSoon(store.snapshot, in: seconds)
+        }
         if let pay = defaults.string(forKey: "captureApplePay") {
             let parts = pay.split(separator: "|").map(String.init)
             if parts.count == 3, let amount = Decimal(string: parts[2]) {
                 let capture = Capture(source: .applePay, direction: .spent, amount: Money(amount, currency: store.currency),
                                       merchant: parts[1], cardHint: parts[0], date: store.now().addingTimeInterval(-120), text: pay)
-                let outcome = try? await CaptureService.record(capture, in: store, isPlus: plus.isPlus)
-                print("captureApplePay:", outcome.map { "\($0)" } ?? "error")
+                let run = await CaptureService.runCardPurchase(capture, store: store, isPlus: plus.isPlus)
+                print("captureApplePay:", run.outcome.map { "\($0)" } ?? run.trace.headline)
+                if let outcome = run.outcome { await Notifications.captured(outcome, capture, in: store) }
             }
         }
         if let text = defaults.string(forKey: "captureSMS") {
-            if let capture = await CaptureService.read(message: text, homeCurrency: store.currency, date: store.now()) {
-                let outcome = try? await CaptureService.record(capture, in: store, isPlus: plus.isPlus)
-                print("captureSMS:", outcome.map { "\($0)" } ?? "error")
-            } else {
-                print("captureSMS: not a transaction")
-            }
+            let run = await CaptureService.runBankMessage(text, sender: defaults.string(forKey: "captureSender"), store: store,
+                                                          isPlus: plus.isPlus, useAI: !defaults.bool(forKey: "noAI"))
+            print("captureSMS:", run.trace.steps.map { "\($0.title) \($0.mark.rawValue): \($0.detail)" }.joined(separator: " | "))
+            if let outcome = run.outcome, let capture = run.capture { await Notifications.captured(outcome, capture, in: store) }
         }
     }
     #endif

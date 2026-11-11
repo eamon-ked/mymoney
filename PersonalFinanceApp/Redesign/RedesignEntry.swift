@@ -38,6 +38,15 @@ extension Redesign {
         @State private var readNote: String?
         @State private var splitting = false
         @State private var shares: [ShareRow] = []
+        @State private var byCategory = false
+        @State private var parts: [PartRow] = []
+
+        /// One category's part of an expense spread over several
+        struct PartRow: Identifiable {
+            let id = UUID()
+            var categoryId: UUID?
+            var amount = ""
+        }
 
         /// Someone's part of a split bill: a person already in People, or a new name
         struct ShareRow: Identifiable {
@@ -112,7 +121,7 @@ extension Redesign {
                 if kind == .expense && !friendPaid { split }
                 if kind == .transfer {
                     AccountChoice(label: "To account", selection: $toAccountId, accounts: app.accounts.filter { $0.id != accountId })
-                    Redesign.explainer("Money moves between your own accounts. Total cash and safe to spend stay the same. Paying a card or a loan, or money lent and paid back, counts here too. This is a record only, not a bank transfer.")
+                    Redesign.explainer(transferMeaning + " This is a record only, not a bank transfer.")
                 } else if kind == .adjustment {
                     if let id = accountId, let target = money {
                         let current = app.snapshot.balance(id)
@@ -124,8 +133,11 @@ extension Redesign {
                     Field(label: "Reason (needed)") { TextField("e.g. Bank fee I missed", text: $reason) }
                     Redesign.explainer("For corrections only. To check against a bank statement, open the account and choose Check against a statement.")
                 } else {
-                    CategoryChoice(label: "Category", selection: Binding(get: { categoryId }, set: { categoryId = $0; categoryTouched = true }),
-                                   categories: kind == .income ? app.snapshot.incomeCategories.filter { !$0.archived } : app.expenseChoices())
+                    if !(kind == .expense && byCategory) {
+                        CategoryChoice(label: "Category", selection: Binding(get: { categoryId }, set: { categoryId = $0; categoryTouched = true }),
+                                       categories: kind == .income ? app.snapshot.incomeCategories.filter { !$0.archived } : app.expenseChoices())
+                    }
+                    if kind == .expense && !friendPaid { categorySplit }
                 }
                 Field(label: kind == .adjustment ? "As of" : "Date") {
                     DatePicker("", selection: $date, displayedComponents: .date).labelsHidden()
@@ -214,7 +226,8 @@ extension Redesign {
             do {
                 var draft = try await MoneyAI.draft(from: text, categories: app.snapshot.expenseCategories.map(\.name),
                                                     income: app.snapshot.incomeCategories.map(\.name),
-                                                    accounts: fromAccounts.map(\.name), today: Date())
+                                                    accounts: fromAccounts.map(\.name), today: Date(),
+                                                    currency: app.snapshot.currency)
                 // Only an amount that was actually said; the model sometimes invents one
                 if !text.contains(where: \.isNumber) { draft.amount = nil }
                 fill(draft)
@@ -272,6 +285,52 @@ extension Redesign {
         // MARK: Splitting
 
         /// Part of a bill others will pay back: their shares become what they owe you; only your share is spending
+        /// One payment spread over several categories, e.g. groceries and household at the same shop
+        @ViewBuilder private var categorySplit: some View {
+            ToggleRow(title: "Split across categories", detail: byCategory ? nil : "One payment, counted in more than one category.",
+                      isOn: Binding(get: { byCategory }, set: { on in
+                          withAnimation(.snappy) {
+                              byCategory = on
+                              if on && parts.isEmpty { parts = [PartRow(categoryId: categoryId, amount: amount), PartRow()] }
+                              if !on, let first = parts.first?.categoryId { categoryId = first }
+                          }
+                      }))
+                .accessibilityIdentifier("categorySplitToggle")
+            if byCategory {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach($parts) { $row in
+                        HStack(alignment: .center, spacing: 10) {
+                            Choice(value: $row.categoryId, options: [nil] + app.expenseChoices().map { Optional($0.id) }) { id in
+                                id.map { app.accountLabel($0) } ?? "Choose a category"
+                            }
+                            Spacer(minLength: 0)
+                            TextField("0", text: $row.amount).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                                .frame(width: 96).accessibilityIdentifier("partAmount")
+                            Button { withAnimation(.snappy) { parts.removeAll { $0.id == row.id }; if parts.count < 2 { byCategory = false; categoryId = parts.first?.categoryId ?? categoryId } } } label: {
+                                Image(systemName: "minus.circle").foregroundStyle(Theme.muted)
+                            }
+                            .buttonStyle(.plain).accessibilityLabel("Remove")
+                        }
+                        Redesign.hairline
+                    }
+                    Button("Add category") { withAnimation(.snappy) { parts.append(PartRow()) } }
+                        .rdText(.captionStrong).foregroundStyle(Theme.primary).buttonStyle(.plain)
+                        .accessibilityIdentifier("addPart")
+                    if let left = leftToPlace {
+                        Text(private: left.isZero ? "All placed." : left.isPositive ? "\(app.money(left)) still to place." : "\(app.money(left.magnitude)) too much.")
+                            .rdText(.caption).foregroundStyle(left.isZero ? Theme.muted : Theme.destructive)
+                    }
+                }
+                .rdPanel(padding: 14)
+            }
+        }
+
+        /// Your share of the amount less what the category parts already cover
+        private var leftToPlace: Money? {
+            guard let total = splitting ? myShare : money else { return nil }
+            return total - parts.compactMap { app.parse($0.amount) }.sum(app.currency)
+        }
+
         @ViewBuilder private var split: some View {
             ToggleRow(title: "Split with others", detail: splitting ? nil : "Others will pay you back their part.",
                       isOn: Binding(get: { splitting }, set: { on in
@@ -343,6 +402,19 @@ extension Redesign {
             }
         }
 
+        /// What this particular move does, since it depends on the two accounts
+        private var transferMeaning: String {
+            let s = app.snapshot
+            guard let from = s.account(accountId), let to = s.account(toAccountId) else {
+                return "Money moves between your own accounts. Paying a card or a loan, or money lent and paid back, counts here too."
+            }
+            if to.kind.isLiability { return "This pays down \(to.name): your money goes down and so does what you owe, so your net worth stays the same." }
+            if from.kind.isLiability { return "This borrows from \(from.name): your money goes up and so does what you owe." }
+            if from.spendable && !to.spendable { return "Safe to Spend goes down, because \(to.name) isn't counted as spendable. Your total stays the same." }
+            if !from.spendable && to.spendable { return "Safe to Spend goes up, because \(to.name) is spendable. Your total stays the same." }
+            return "Money moves between your own accounts. Your total and Safe to Spend stay the same."
+        }
+
         // MARK: Loading and suggestions
 
         private func load() {
@@ -354,12 +426,18 @@ extension Redesign {
                 if kind == .adjustment {
                     let line = entry.lines.first { s.account($0.accountId)?.kind.isBalanceSheet == true }
                     accountId = line?.accountId
-                    amount = accountId.map { MoneyFormat.editable(s.balance($0)) } ?? ""
-                    reason = editing.notes
+                    // What the account held once corrected, on the correction's own day, and the reason given then
+                    amount = accountId.map { MoneyFormat.editable(s.ledger.balance(of: $0, asOf: entry.date)) } ?? ""
+                    reason = entry.memo
                 } else {
                     amount = MoneyFormat.editable(entry.lines.filter { $0.amount.isPositive }.map(\.amount).sum(app.currency))
                     let sheet = entry.lines.filter { s.account($0.accountId)?.kind.isBalanceSheet == true }
                     categoryId = entry.lines.first { s.account($0.accountId)?.kind.isCategory == true }?.accountId
+                    let categoryLines = entry.lines.filter { s.account($0.accountId)?.kind == .expense && $0.amount.isPositive }
+                    if kind == .expense && categoryLines.count > 1 {
+                        parts = categoryLines.map { PartRow(categoryId: $0.accountId, amount: MoneyFormat.editable($0.amount)) }
+                        byCategory = true
+                    }
                     if kind == .transfer {
                         accountId = sheet.first { $0.amount.isNegative }?.accountId
                         toAccountId = sheet.first { $0.amount.isPositive }?.accountId
@@ -428,6 +506,19 @@ extension Redesign {
             }
             guard !saving else { return }
             do { form.shares = try resolvedShares() } catch { problem = error.localizedDescription; return }
+            if kind == .expense && byCategory && !friendPaid {
+                var split: [(categoryId: UUID, amount: Money)] = []
+                for row in parts {
+                    guard let id = row.categoryId else { problem = "Choose a category for each part."; return }
+                    guard let value = app.parse(row.amount), value.isPositive else { problem = "Enter an amount for each category."; return }
+                    split.append((id, value))
+                }
+                if let left = leftToPlace, !left.isZero {
+                    problem = left.isPositive ? "\(app.money(left)) still needs a category." : "The categories add up to more than the amount."; return
+                }
+                form.parts = split
+                form.categoryId = split.first?.categoryId
+            }
             saving = true
             problem = app.save(form, replacing: editing?.id)
             if problem != nil { saving = false }
@@ -499,6 +590,8 @@ extension Redesign {
             }
 
             if let record, record.needsReview, !t.voided { review(record) }
+            else if let record, !t.voided { linkOffer(record).padding(.top, 16) }
+            if let record, !t.voided { messages(record) }
 
             if let occ = t.occurrenceId, let bill = app.bill(occ) {
                 Button { app.open(.bill(bill.id)) } label: {
@@ -522,8 +615,29 @@ extension Redesign {
             Text("Note").rdText(.detail).foregroundStyle(Theme.muted).padding(.top, 24).padding(.bottom, 4)
             Text(app.note(of: t)).rdText(.body).padding(.bottom, 24)
 
+            if let record, t.voided {
+                Button("Restore") {
+                    problem = app.attempt("Restored.", closing: false, undo: { try app.store.void(record.id) }) {
+                        try app.store.restore(record.id)
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .accessibilityIdentifier("restoreEntry")
+            }
             if let record, !t.voided {
                 VStack(spacing: 12) {
+                    if record.kind == .transfer, record.source != nil, let was = record.replacesId,
+                       app.store.entryRecord(was)?.status == .void {
+                        Button("Not a move between my accounts") {
+                            var halves: [UUID] = []
+                            problem = app.attempt("Back to the two entries it was made from.",
+                                                  undo: { try app.store.repairTransfer(record.id, halves: halves) }) {
+                                halves = try app.store.unpairTransfer(record.id)
+                            }
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .accessibilityIdentifier("unpairTransfer")
+                    }
                     if [.expense, .income, .transfer, .adjustment, .reconciliation, .debtPayment, .openingBalance].contains(record.kind) {
                         Button("Edit details") { edit(record) }.buttonStyle(PrimaryButtonStyle())
                             .accessibilityLabel("Edit")
@@ -554,27 +668,93 @@ extension Redesign {
         }
 
         private func review(_ record: EntryRecord) -> some View {
-            let account = record.lines.compactMap { app.record($0.accountId) }.first { $0.kind.isBalanceSheet }
             return VStack(alignment: .leading, spacing: 10) {
                 Text("Check this entry").rdText(.detailStrong)
+                if let reason = record.reviewReason { Text(reason).rdText(.detail) }
+                if let other = app.store.captureTraces(forEntry: record.id).compactMap(\.maybeSameAs).first,
+                   app.store.entryRecord(other)?.status == .posted {
+                    HStack(spacing: 12) {
+                        Button("Same payment") {
+                            problem = app.attempt("Joined. It's counted once.", undo: { try app.store.restore(record.id) }) {
+                                try CaptureService.confirmSame(record.id, as: other, in: app.store)
+                            }
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .accessibilityIdentifier("samePayment")
+                        Button("Separate payments") {
+                            problem = app.attempt("Kept as two payments.", closing: false) {
+                                try CaptureService.keepSeparate(record.id, in: app.store)
+                            }
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .accessibilityIdentifier("separatePayments")
+                    }
+                }
                 Redesign.footnote("Saved automatically\(t.source.map { " from \($0)" } ?? ""). If the category or account is wrong, tap Edit details.")
                 Button { problem = app.attempt("Marked as checked.") { try app.store.markReviewed(record.id) } } label: {
                     Label("Looks right", systemImage: "checkmark.circle")
                 }
                 .buttonStyle(QuietButtonStyle())
-                if let hint = record.cardHint, let account, app.store.linkedAccount(forCard: hint) != account.id {
-                    let card = hint.count == 4 && hint.allSatisfy(\.isNumber) ? "card ending \(hint)" : hint
-                    Button {
-                        problem = app.attempt("Done. \(card.capitalized) will go to \(app.accountLabel(account.id)).") {
-                            try app.store.linkCard(hint, to: account.id)
-                            try app.store.markReviewed(record.id)
-                        }
-                    } label: { Text("Always use \(app.accountLabel(account.id)) for \(card)").multilineTextAlignment(.center) }
-                    .buttonStyle(QuietButtonStyle())
-                }
+                linkOffer(record)
             }
             .rdPanel()
             .padding(.top, 16)
+        }
+
+        /// The bank messages that made or joined this entry: what each said, and a way to make a joined one
+        /// its own payment again. Never the message itself.
+        @ViewBuilder private func messages(_ record: EntryRecord) -> some View {
+            let traces = app.store.captureTraces(forEntry: record.id).filter { $0.source == .sms }
+            if traces.count > 1 || traces.contains(where: { $0.joined == true }) {
+                let hidden = app.hidesAmounts || app.hidesDetails
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("From \(traces.count) bank messages").rdText(.detailStrong)
+                    ForEach(traces) { trace in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(trace.date.formatted(date: .abbreviated, time: .shortened)).rdText(.caption).foregroundStyle(Theme.muted)
+                            Text(private: hidden ? "Hidden in Privacy Mode." : trace.steps.first { $0.title == CaptureTrace.readTitle }?.detail ?? "")
+                                .rdText(.detail).fixedSize(horizontal: false, vertical: true)
+                            if trace.joined == true {
+                                Button("This was a separate payment") { separate(trace) }
+                                    .rdText(.detail).foregroundStyle(Theme.primary).frame(minHeight: 44)
+                                    .accessibilityIdentifier("separatePayment")
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .rdPanel()
+                .padding(.top, 16)
+            }
+        }
+
+        private func separate(_ trace: CaptureTrace) {
+            Task {
+                do {
+                    let id = try await CaptureService.saveOnItsOwn(trace, in: app.store)
+                    problem = app.attempt("Saved as its own payment. It's on To check.", closing: false,
+                                          undo: { try CaptureService.undoSaveOnItsOwn(id, trace: trace, in: app.store) }) {}
+                } catch {
+                    problem = StoreError.from(error).errorDescription
+                }
+            }
+        }
+
+        /// The card or account number this automatic entry came from, offered for linking to the account it's on now.
+        /// It stays after an edit, so correcting the account once can make it the account for every purchase after.
+        @ViewBuilder private func linkOffer(_ record: EntryRecord) -> some View {
+            let account = record.lines.compactMap { app.record($0.accountId) }.first { $0.kind.isBalanceSheet && $0.kind != .lent }
+            if let hint = record.cardHint, let account, app.store.linkedAccount(forCard: hint) != account.id {
+                let card = hint.count == 4 && hint.allSatisfy(\.isNumber) ? "card ending \(hint)"
+                    : hint.hasPrefix("account ") ? "account ••\(hint.dropFirst(8))" : hint
+                Button {
+                    problem = app.attempt("Done. \(card.prefix(1).uppercased() + card.dropFirst()) will go to \(app.accountLabel(account.id)).") {
+                        try app.store.linkCard(hint, to: account.id)
+                        try app.store.markReviewed(record.id)
+                    }
+                } label: { Text("Always use \(app.accountLabel(account.id)) for \(card)").multilineTextAlignment(.center) }
+                .buttonStyle(QuietButtonStyle())
+            }
         }
 
         /// What else an entry could really have been
@@ -586,8 +766,18 @@ extension Redesign {
                 && record.lines.contains { app.record($0.accountId)?.kind.isAsset == true }
             let couldLend = throughOwn && (record.kind == .expense || record.kind == .income)
             let couldSplit = throughOwn && record.kind == .expense
+            let own = record.lines.first { app.record($0.accountId).map { $0.kind.isBalanceSheet && $0.kind != .lent } ?? false }?.accountId
+            // Cards and loans have their own payment choice below, with interest
+            let otherAccounts = s.accounts.filter { $0.kind.isAsset && $0.kind != .lent && $0.id != own }
             if couldPayDebt || couldLend {
                 Menu {
+                    if couldLend && !otherAccounts.isEmpty {
+                        Section(record.kind == .expense ? "I moved it to my account" : "It came from my account") {
+                            ForEach(otherAccounts) { a in
+                                Button(app.accountLabel(a.id)) { moveBetweenOwn(record, other: a) }
+                            }
+                        }
+                    }
                     if couldSplit {
                         Button("Split it with others") { app.open(.splitEntry(record.id)) }
                     }
@@ -627,6 +817,19 @@ extension Redesign {
                     }
                 }
             }
+        }
+
+        private func moveBetweenOwn(_ record: EntryRecord, other: LedgerAccountRecord) {
+            let name = app.accountLabel(other.id)
+            let twin = app.store.transferTwin(of: record, in: other.id)
+            let lookalike = twin == nil && !app.store.possibleTransferTwins(of: record, in: other.id).isEmpty
+            let moved = "Recorded as a transfer \(record.kind == .expense ? "to" : "from") \(name)."
+            let done = twin != nil
+                ? moved + " The matching entry in \(name) was the same money, so it was removed."
+                : lookalike
+                    ? moved + " \(name) has another entry of the same amount. It was kept; if it was this same money, delete it."
+                    : moved
+            problem = app.attempt(done) { try app.store.recordAsTransfer(record.id, other: other.id) }
         }
 
         private func history(_ record: EntryRecord) -> some View {

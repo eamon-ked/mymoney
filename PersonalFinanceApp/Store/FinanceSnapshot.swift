@@ -180,7 +180,26 @@ struct FinanceSnapshot {
 
     var hasAccounts: Bool { !accounts.isEmpty }
 
-    func balance(_ accountId: UUID) -> Money { ledger.balance(of: accountId) }
+    /// What the account holds today. An entry dated later isn't there yet: it shows in the forecast on its day
+    func balance(_ accountId: UUID) -> Money { ledger.balance(of: accountId, asOf: endOfDay(today)) }
+
+    /// Posted entries dated after today that move spendable money, as forecast events on their day
+    private var futureMovements: (items: [PlannedItem], occurrences: [Occurrence]) {
+        let spendable = Set(accounts.filter(\.spendable).map(\.id))
+        let tonight = endOfDay(today)
+        var items: [PlannedItem] = [], occs: [Occurrence] = []
+        for record in entryRecords where record.status == .posted && record.date > tonight {
+            let moved = record.lines.filter { spendable.contains($0.accountId) }
+                .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(currency)
+            guard !moved.isZero, let account = record.lines.first(where: { spendable.contains($0.accountId) })?.accountId else { continue }
+            let item = PlannedItem(id: record.id, name: record.memo.isEmpty ? "Entry" : record.memo,
+                                   direction: moved.isPositive ? .inflow : .outflow, amount: moved.magnitude,
+                                   schedule: Schedule(start: record.date, frequency: .monthly(every: 1)), accountId: account)
+            items.append(item)
+            occs.append(Occurrence(itemId: item.id, dueDate: record.date, expected: moved.magnitude))
+        }
+        return (items, occs)
+    }
 
     /// Entries newest first. One account's history includes its opening balance;
     /// the overall activity list leaves opening balances out.
@@ -265,7 +284,24 @@ struct FinanceSnapshot {
         return parts
     }
 
-    var netWorth: NetWorth { ledger.netWorth() }
+    /// What's owned less what's owed at the end of today. Entries dated later aren't money held yet
+    var netWorth: NetWorth { netWorth(on: today) }
+
+    /// Net worth at the end of a given day, from the entries dated up to then
+    func netWorth(on day: Date) -> NetWorth { ledger.netWorth(asOf: endOfDay(day)) }
+
+    /// The first day anything was recorded; before it the app doesn't know the full picture
+    var firstRecordedDay: Date? {
+        entryRecords.filter { $0.status == .posted }.map(\.date).min().map { calendar.startOfDay(for: $0) }
+    }
+
+    /// End-of-day net worth for each of the last `days` days, oldest first, ending today
+    func netWorthHistory(days: Int) -> [(day: Date, total: Money)] {
+        (0..<max(days, 1)).reversed().compactMap { back in
+            calendar.date(byAdding: .day, value: -back, to: calendar.startOfDay(for: today))
+        }
+        .map { ($0, netWorth(on: $0).total) }
+    }
 
     /// Cash, bank and savings accounts counted in net worth: the same accounts as "Own" on Accounts, less investments
     var cashAccounts: [LedgerAccountRecord] {
@@ -291,10 +327,16 @@ struct FinanceSnapshot {
         return result
     }
 
-    /// Safe-to-spend runs until the day before the next expected income, or month end
+    /// Safe-to-spend runs until the day before the next expected income, or month end. Only income that
+    /// lands in spendable money counts: pay into protected savings doesn't refill what bills come out of
     var nextIncomeDate: Date? {
-        occurrences
-            .filter { occ in items.first { $0.id == occ.itemId }?.direction == .inflow && occ.dueDate > today && !occ.remaining.isZero }
+        let spendable = Set(accounts.filter(\.spendable).map(\.id))
+        return occurrences
+            .filter { occ in
+                guard let item = items.first(where: { $0.id == occ.itemId }), item.direction == .inflow else { return false }
+                if let account = item.accountId, !spendable.contains(account) { return false }
+                return occ.dueDate > today && !occ.remaining.isZero && !occ.skipped
+            }
             .map(\.dueDate).min()
     }
 
@@ -311,9 +353,23 @@ struct FinanceSnapshot {
     }
 
     var categoryReservations: [CategoryReservation] {
-        accountRecords.filter { $0.kind == .expense && !$0.archived && $0.reserveInSafeToSpend }.map {
-            CategoryReservation(categoryId: $0.id, name: $0.name, remaining: budget.line($0.id, month: monthKey).withoutBills)
+        accountRecords.filter { $0.kind == .expense && !$0.archived && $0.reserveInSafeToSpend }.map { category in
+            let line = budget.line(category.id, month: monthKey)
+            // The same bills the budget line counts as unpaid this month
+            let bills = occurrences.filter { occ in
+                guard !occ.skipped, occ.remaining.isPositive, let item = item(for: occ), item.direction == .outflow,
+                      BudgetMonth.key(for: occ.dueDate, calendar: calendar) == monthKey else { return false }
+                return budgetCategoryId(of: item) == category.id
+            }
+            return CategoryReservation(categoryId: category.id, name: category.name, remaining: line.remaining - line.unpaidBills,
+                                       billIds: Set(bills.map(\.id)))
         }
+    }
+
+    /// The category a bill is planned in: a loan's goes to its loan's category, and a card's isn't planned
+    private func budgetCategoryId(of item: PlannedItem) -> UUID? {
+        guard let debtId = item.debtId else { return item.categoryId }
+        return account(debtId)?.kind == .loan ? loanCategories[debtId] : nil
     }
 
     /// The one way safe-to-spend is worked out, so Home, its breakdown, Siri and the widget always agree.
@@ -359,11 +415,16 @@ struct FinanceSnapshot {
     /// Days before each bill's due date to remind; negative means never
     func reminderDays(for itemId: UUID) -> Int { itemRecords[itemId]?.reminderDaysBefore ?? 2 }
 
-    func billReminders(hour: Int, now: Date) -> [BillReminder] {
-        ReminderPlanner.plan(items: items, occurrences: occurrences,
-                             daysBefore: itemRecords.mapValues(\.reminderDaysBefore),
-                             now: now, hour: hour, calendar: calendar)
+    /// Reminders before bills, and the "did it go out?" the morning after
+    func billNotices(hour: Int, now: Date) -> [PlannedNotice] {
+        NotificationPlanner.bills(items: items, occurrences: occurrences, daysBefore: itemRecords.mapValues(\.reminderDaysBefore),
+                                  now: now, hour: hour, calendar: calendar)
     }
+
+    /// Bills marked as free trials, warned about before their first charge
+    var trialItemIds: Set<UUID> { Set(itemRecords.values.filter(\.isTrial).map(\.id)) }
+
+    func isTrial(_ itemId: UUID) -> Bool { itemRecords[itemId]?.isTrial ?? false }
 
     // MARK: - Debts
 
@@ -397,8 +458,9 @@ struct FinanceSnapshot {
     func cashForecast(days: Int) -> CashForecast {
         let spendable = accounts.filter(\.spendable)
         let end = endOfDay(calendar.date(byAdding: .day, value: days, to: today) ?? today)
-        return CashForecaster.forecast(start: spendable.map { balance($0.id) }.sum(currency), items: items,
-                                       occurrences: occurrences, spendableAccountIds: Set(spendable.map(\.id)),
+        let future = futureMovements
+        return CashForecaster.forecast(start: spendable.map { balance($0.id) }.sum(currency), items: items + future.items,
+                                       occurrences: occurrences + future.occurrences, spendableAccountIds: Set(spendable.map(\.id)),
                                        today: today, through: end, calendar: calendar)
     }
 

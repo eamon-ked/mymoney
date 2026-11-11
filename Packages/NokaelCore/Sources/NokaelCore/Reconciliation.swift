@@ -18,7 +18,7 @@ public enum Reconciler {
     /// Compares the ledger with a bank statement. Never changes the ledger by itself.
     public static func check(ledger: Ledger, accountId: UUID, statementDate: Date, statementBalance: Money) -> ReconciliationCheck {
         let calculated = ledger.balance(of: accountId, asOf: statementDate)
-        let open = ledger.posted.filter { $0.date <= statementDate && $0.touches(accountId) && $0.cleared != .reconciled }
+        let open = ledger.posted.filter { $0.date <= statementDate && $0.touches(accountId) && !$0.isReconciled(in: accountId) }
         return ReconciliationCheck(accountId: accountId, statementDate: statementDate, calculated: calculated,
                                    statement: statementBalance, difference: statementBalance - calculated,
                                    unreconciled: open)

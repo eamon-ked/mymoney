@@ -32,6 +32,9 @@ final class StatementReview {
     private(set) var rows: [StatementRow] = []
     /// Row id → the entry already recorded for it
     private(set) var matched: [Int: UUID] = [:]
+    /// Row id → an entry of the same amount close by under another name. Maybe the same, maybe not:
+    /// these rows stay in the list, left out until the person ticks them
+    private(set) var maybeRecorded: [Int: UUID] = [:]
     var targets: [Int: Target] = [:]
     var skipped: Set<Int> = []
     /// Card statements often list purchases without a minus sign
@@ -55,6 +58,31 @@ final class StatementReview {
     private(set) var fileCurrency: String?
     /// What the statement says the account held before its first row and after its last
     private(set) var balances: StatementBalances?
+    /// The file's column names and the app's guess at which is which
+    private(set) var layout: StatementLayout?
+    /// The person's own choice of columns; nil uses the app's guess
+    var columns: StatementColumns? {
+        didSet {
+            guard columns != oldValue else { return }
+            remember(columns)
+            parse()
+        }
+    }
+    /// The columns in use: the person's choice, else Apple Intelligence's answer, else the guess
+    var columnsInUse: StatementColumns? { columns ?? suggested ?? layout?.guess }
+    /// Apple Intelligence's answer to what the values couldn't settle; used only when the file then reads
+    private(set) var suggested: StatementColumns?
+    /// Ask Apple Intelligence when the values leave a question; off in tests and on iPhones without it
+    var askAI = false
+    /// How many rows' amounts account for the change in the balance, with the columns in use
+    private(set) var balanceCheck: BalanceCheck?
+    /// The file was read but the app couldn't tell which column is which: the person picks them
+    private(set) var needsColumns = false
+    /// A PDF that's locked with a password, kept until it's unlocked
+    @ObservationIgnored private var lockedPDF: Data?
+    private(set) var needsPassword = false
+    /// "Reading page 3 of 12…" while a PDF is read
+    private(set) var reading: String?
     @ObservationIgnored private var suggestTask: Task<Void, Never>?
 
     init(accountId: UUID, store: LedgerStore) {
@@ -89,12 +117,47 @@ final class StatementReview {
     func load(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+        guard let data = try? Data(contentsOf: url) else {
+            error = "Couldn't read that file."
+            return
+        }
+        if StatementPDF.isPDF(data) {
+            Task { await loadPDF(data, named: url.lastPathComponent, password: nil) }
+            return
+        }
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
             error = "Couldn't read that file."
             return
         }
         load(text, named: url.lastPathComponent)
+    }
+
+    /// A PDF statement: its tables become rows, then the same review as a CSV
+    func loadPDF(_ data: Data, named name: String, password: String?) async {
+        error = nil
+        reading = "Reading the statement…"
+        defer { reading = nil }
+        do {
+            let grid = try await StatementPDF.grid(from: data, password: password) { page, pages in
+                self.reading = pages > 1 ? "Reading page \(page) of \(pages)…" : "Reading the statement…"
+            }
+            lockedPDF = nil
+            needsPassword = false
+            load(StatementImport.csvText(grid), named: name)
+        } catch StatementPDF.Problem.locked {
+            lockedPDF = data
+            fileName = name
+            needsPassword = true
+            if password != nil { error = "That password didn't open it. Try again." }
+        } catch {
+            self.error = (error as? LocalizedError)?.errorDescription ?? "Couldn't read that PDF."
+        }
+    }
+
+    /// Opens a locked PDF with the password the person typed
+    func unlock(_ password: String) async {
+        guard let lockedPDF else { return }
+        await loadPDF(lockedPDF, named: fileName, password: password)
     }
 
     func load(_ text: String, named name: String) {
@@ -102,35 +165,100 @@ final class StatementReview {
         fileText = text
         ownNumber = StatementImport.accountNumber(in: text)
         fileCurrency = StatementImport.currency(in: text)
+        layout = StatementImport.layout(in: text, currency: store.currency, calendar: store.calendar)
+        suggested = nil
+        // A choice made for an earlier file with the same column names
+        let saved = layout.flatMap(remembered)
+        if saved == nil, askAI, let layout, let question = layout.question {
+            Task { await ask(question, layout: layout, text: text) }
+        }
         // Card statements usually list purchases as positive numbers
         var flip = false
         if account?.kind.isLiability == true,
-           let raw = try? StatementImport.read(text, currency: store.currency, calendar: store.calendar) {
+           let raw = try? StatementImport.read(text, currency: store.currency, columns: saved, calendar: store.calendar) {
             flip = raw.filter(\.amount.isPositive).count > raw.count / 2
         }
+        if saved != columns { columns = saved }
         if flip != flipSigns { flipSigns = flip } else { parse() }
     }
 
     private func parse() {
         guard let fileText else { return }
         do {
-            rows = try StatementImport.read(fileText, currency: store.currency, flipSigns: flipSigns, calendar: store.calendar)
-            balances = StatementImport.balances(in: fileText, currency: store.currency, flipSigns: flipSigns, calendar: store.calendar)
+            let chosen = columns ?? suggested
+            rows = try StatementImport.read(fileText, currency: store.currency, flipSigns: flipSigns, columns: chosen,
+                                            calendar: store.calendar)
+            balances = StatementImport.balances(in: fileText, currency: store.currency, flipSigns: flipSigns, columns: chosen,
+                                                calendar: store.calendar)
+            balanceCheck = StatementImport.balanceCheck(fileText, currency: store.currency, columns: chosen, calendar: store.calendar)
             error = nil
+            needsColumns = false
         } catch {
             rows = []
+            balanceCheck = nil
             matched = [:]
-            self.error = (error as? LocalizedError)?.errorDescription ?? "Couldn't read that file."
-            self.fileText = nil
+            maybeRecorded = [:]
+            targets = [:]
+            balances = nil
+            // Columns the app couldn't tell apart, or a choice that doesn't read: the person can choose again
+            let canChoose = layout != nil && (columns != nil || error as? ImportError == .unrecognisedColumns)
+            needsColumns = canChoose
+            self.error = canChoose && columns == nil ? nil : (error as? LocalizedError)?.errorDescription ?? "Couldn't read that file."
+            if !canChoose { self.fileText = nil }
             return
         }
         let recorded = snapshot.entries(touching: accountId).filter { $0.kind != .openingBalance }.map { record in
             RecordedMovement(entryId: record.id, date: record.date,
                              amount: record.lines.filter { $0.accountId == accountId }
-                                .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency))
+                                .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency),
+                             memo: record.memo)
         }
         matched = StatementImport.match(rows, with: recorded, calendar: store.calendar)
+        maybeRecorded = StatementImport.possibleMatches(rows, with: recorded, matched: matched, calendar: store.calendar)
+        skipped = Set(maybeRecorded.keys)
         suggest()
+    }
+
+    /// Apple Intelligence answers what the values left open. Its answer is kept only when every row
+    /// then reads and, where there's a balance, the amounts still add up to it.
+    private func ask(_ question: ColumnQuestion, layout: StatementLayout, text: String) async {
+        #if canImport(FoundationModels)
+        guard #available(iOS 26.0, *) else { return }
+        reading = "Working out the columns…"
+        defer { reading = nil }
+        guard let answer = try? await MoneyAI.statementColumns(question, layout: layout, partial: layout.guess ?? StatementColumns()),
+              answer.isComplete, fileText == text, columns == nil,
+              (try? StatementImport.read(text, currency: store.currency, columns: answer, calendar: store.calendar)) != nil
+        else { return }
+        if let check = StatementImport.balanceCheck(text, currency: store.currency, columns: answer, calendar: store.calendar),
+           Double(check.addUp) < Double(check.rows) * 0.8 { return }
+        suggested = answer
+        parse()
+        #endif
+    }
+
+    // MARK: - Remembered columns
+
+    private func columnsKey(_ layout: StatementLayout) -> String {
+        let digest = SHA256.hash(data: Data(layout.signature.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "importColumns.\(accountId.uuidString).\(digest)"
+    }
+
+    private func remembered(_ layout: StatementLayout) -> StatementColumns? {
+        guard let data = UserDefaults.standard.data(forKey: columnsKey(layout)),
+              let saved = try? JSONDecoder().decode(StatementColumns.self, from: data),
+              saved.isComplete, [saved.date, saved.description, saved.amount, saved.debit, saved.credit, saved.balance]
+                .allSatisfy({ ($0 ?? 0) < layout.names.count }) else { return nil }
+        return saved
+    }
+
+    private func remember(_ columns: StatementColumns?) {
+        guard let layout else { return }
+        if let columns, columns.isComplete, columns != layout.guess, let data = try? JSONEncoder().encode(columns) {
+            UserDefaults.standard.set(data, forKey: columnsKey(layout))
+        } else if columns == nil || columns == layout.guess {
+            UserDefaults.standard.removeObject(forKey: columnsKey(layout))
+        }
     }
 
     /// A bill it pays, else a transfer naming another account, else the category used last time for that shop
@@ -188,10 +316,11 @@ final class StatementReview {
         let pending = inbox.filter { targets[$0.id] == nil && !ownTransfers.contains($0.id) && !loanRows.contains($0.id) }
         suggesting = pending.count
         guard !pending.isEmpty else { return }
-        suggestTask = Task {
+        // Holds the review only while a suggestion is being worked out, so closing the screen stops it
+        suggestTask = Task { [weak self] in
             var memo: [String: UUID] = [:]
             for row in pending {
-                if Task.isCancelled { return }
+                guard let self, !Task.isCancelled else { return }
                 let income = !row.amount.isNegative
                 let key = "\(income)|\(row.description.lowercased())"
                 let id: UUID?
@@ -207,6 +336,11 @@ final class StatementReview {
                 suggesting -= 1
             }
         }
+    }
+
+    /// "Maybe already recorded: Carrefour, 6 Nov" for a row that has a lookalike entry
+    func lookalike(for row: StatementRow) -> EntryRecord? {
+        maybeRecorded[row.id].flatMap { store.entryRecord($0) }
     }
 
     // MARK: - Choosing
@@ -276,7 +410,14 @@ final class StatementReview {
 
     // MARK: - Adding
 
+    /// A statement in another currency: its amounts can't be added as this account's money
+    var currencyProblem: String? {
+        guard let theirs = fileCurrency, let account, theirs != account.currency else { return nil }
+        return "This statement is in \(theirs), but \(account.name) is in \(account.currency). Nokael Money doesn't convert between currencies, so it can't be added here."
+    }
+
     func add() {
+        if let currencyProblem { error = currencyProblem; return }
         let picks = ready.compactMap { row -> LedgerStore.ImportedRow? in
             guard let target = targets[row.id] else { return nil }
             return LedgerStore.ImportedRow(date: row.date, memo: row.description, amount: row.amount, target: target,

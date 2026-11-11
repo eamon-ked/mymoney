@@ -30,6 +30,8 @@ public struct ForecastDay: Hashable, Sendable, Identifiable {
     public let events: [ForecastEvent]
     /// Spendable balance at the end of the day
     public let balance: Money
+    /// The lowest it goes during the day: bills go out before pay comes in
+    public var low: Money = .zero("XXX")
 
     public var net: Money { events.map(\.amount).sum(balance.currency) }
 }
@@ -79,12 +81,14 @@ public enum CashForecaster {
         var days: [ForecastDay] = []
         for date in byDay.keys.sorted() {
             let dayEvents = byDay[date]!.sorted { ($0.amount.isNegative ? 0 : 1, $0.name) < ($1.amount.isNegative ? 0 : 1, $1.name) }
+            var low = balance
             for e in dayEvents {
                 balance += e.amount
+                low = min(low, balance)
                 if balance < lowest { lowest = balance; lowestDate = date }
                 if balance.isNegative && firstShortfall == nil { firstShortfall = date }
             }
-            days.append(ForecastDay(date: date, events: dayEvents, balance: balance))
+            days.append(ForecastDay(date: date, events: dayEvents, balance: balance, low: low))
         }
         return CashForecast(start: start, days: days, lowest: lowest, lowestDate: lowestDate, firstShortfall: firstShortfall)
     }

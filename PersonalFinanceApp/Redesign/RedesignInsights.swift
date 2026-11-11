@@ -842,7 +842,7 @@ extension Redesign {
 
                         \(AppGuide.reference)
                         """)
-                    if let reply = try? await session.respond(to: text, options: GenerationOptions(sampling: .greedy)) {
+                    if let reply = try? await session.respond(to: text, options: GenerationOptions(samplingMode: .greedy)) {
                         answer = reply.content.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                 }

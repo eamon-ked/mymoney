@@ -65,7 +65,7 @@ enum MoneyAI {
             Turn one sentence about money into a ledger entry. Today is \(today.formatted(.dateTime.weekday(.wide).day().month(.wide).year())). \
             Expense categories: \(expense.joined(separator: ", ")). Income categories: \(income.joined(separator: ", ")).
             """)
-        let response = try await session.respond(to: sentence, schema: schema, options: GenerationOptions(sampling: .greedy))
+        let response = try await session.respond(to: sentence, schema: schema, options: GenerationOptions(samplingMode: .greedy))
         let content = response.content
 
         var draft = DraftEntry()
@@ -93,7 +93,7 @@ enum MoneyAI {
         let session = LanguageModelSession(instructions: """
             Pick the budget category a purchase or payment belongs in.\(shown.isEmpty ? "" : " Past choices:\n\(shown)")
             """)
-        let response = try await session.respond(to: memo, schema: schema, options: GenerationOptions(sampling: .greedy))
+        let response = try await session.respond(to: memo, schema: schema, options: GenerationOptions(samplingMode: .greedy))
         return try response.content.value(String.self)
     }
 
@@ -122,7 +122,7 @@ enum MoneyAI {
             Read one text message or app notification from a bank and say whether it reports money moving, how much, and where. \
             Ignore available balances and credit limits; they are not the amount moved.
             """)
-        let out = try await session.respond(to: text, generating: AlertOutput.self, options: GenerationOptions(sampling: .greedy)).content
+        let out = try await session.respond(to: text, generating: AlertOutput.self, options: GenerationOptions(samplingMode: .greedy)).content
         guard out.isTransaction, out.amount > 0 else { return nil }
         let code = out.currency.uppercased().count == 3 ? out.currency.uppercased() : homeCurrency
         // Rounded to the currency's own decimals (KWD has three, JPY none)

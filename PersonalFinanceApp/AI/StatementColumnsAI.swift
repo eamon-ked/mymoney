@@ -32,7 +32,7 @@ extension MoneyAI {
             let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "Column", anyOf: [label(a), label(b)]), dependencies: [])
             let answer = try await session.respond(
                 to: "\(table)\n\nColumns \(label(a)) and \(label(b)) hold money. Which one is money going out of the account (spent, withdrawn, paid)?",
-                schema: schema, options: GenerationOptions(sampling: .greedy))
+                schema: schema, options: GenerationOptions(samplingMode: .greedy))
             let out1 = try answer.content.value(String.self)
             let outColumn = out1 == label(a) ? a : b
             out.amount = nil
@@ -43,14 +43,14 @@ extension MoneyAI {
             let amount = try GenerationSchema(root: DynamicGenerationSchema(name: "Column", anyOf: columns.map(label)), dependencies: [])
             let a = try await session.respond(
                 to: "\(table)\n\nWhich column is the amount of money each row moved (not the balance left afterwards)?",
-                schema: amount, options: GenerationOptions(sampling: .greedy))
+                schema: amount, options: GenerationOptions(samplingMode: .greedy))
             let chosen = try a.content.value(String.self)
             guard let amountColumn = columns.first(where: { label($0) == chosen }) else { return nil }
             let rest = columns.filter { $0 != amountColumn }
             let balance = try GenerationSchema(root: DynamicGenerationSchema(name: "Balance", anyOf: rest.map(label) + [none]), dependencies: [])
             let b = try await session.respond(
                 to: "Which column is the balance left in the account after each row, or none?",
-                schema: balance, options: GenerationOptions(sampling: .greedy))
+                schema: balance, options: GenerationOptions(samplingMode: .greedy))
             let balanceName = try b.content.value(String.self)
             out.debit = nil
             out.credit = nil

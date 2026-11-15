@@ -200,8 +200,10 @@ struct LogApplePayIntent: AppIntent {
         """)
     static let isDiscoverable = true
 
+    // Text, not a currency amount: a currency amount makes Shortcuts save one currency inside the shortcut,
+    // and the same shared shortcut has to work in every country. The currency is read from the purchase itself.
     @Parameter(title: "Amount")
-    var amount: IntentCurrencyAmount
+    var amount: String
 
     @Parameter(title: "Merchant")
     var merchant: String?
@@ -217,19 +219,18 @@ struct LogApplePayIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let services = AppServices.shared
         await services.plus.refresh()
-        let code = amount.currencyCode.isEmpty ? services.store.currency : amount.currencyCode.uppercased()
         // Refunds arrive as negative amounts; an amount that isn't real money is turned away, not rounded
-        guard let money = Money.exact(amount.amount, currency: code) else {
+        guard let money = AlertParser.cardAmount(amount, homeCurrency: services.store.currency) else {
             var trace = CaptureTrace(date: services.store.now(), source: .applePay)
             trace.add(CaptureTrace.reachedTitle, .done, card.map { "On \($0)" } ?? "No card name passed in")
-            trace.add(CaptureTrace.readTitle, .failed, "The amount \(amount.amount) \(code) isn't one that can be saved")
+            trace.add(CaptureTrace.readTitle, .failed, "The amount “\(amount)” isn't one that can be saved")
             services.store.noteCaptureTrace(trace)
             services.store.noteCardPurchase(card: card, outcome: "not saved, the amount wasn't readable")
             return .result(dialog: "That amount didn't look right, so nothing was saved.")
         }
         let capture = Capture(source: .applePay, direction: money.isNegative ? .received : .spent, amount: money.magnitude,
                               merchant: merchant ?? "", cardHint: card, date: services.store.now(),
-                              text: [card ?? "", merchant ?? "", "\(amount.amount)"].joined(separator: "|"),
+                              text: [card ?? "", merchant ?? "", "\(money.decimal)"].joined(separator: "|"),
                               isReversal: money.isNegative)
         let run = await CaptureService.runCardPurchase(capture, store: services.store, isPlus: services.plus.isPlus)
         let outcome = run.outcome ?? .skipped("It couldn't be saved.")

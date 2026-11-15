@@ -226,14 +226,24 @@ extension Notifications {
 final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     static let shared = NotificationRouter()
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async
-        -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+    // iOS wants each completion handler called on the main thread. The async versions of these methods
+    // call it from a background thread once the work is done, and UIKit then stops the app with an
+    // assertion: that was the crash when a notification was tapped. So the handlers are called here,
+    // on the main actor.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        nonisolated(unsafe) let done = completionHandler
+        Task { @MainActor in done([.banner, .list, .sound]) }
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier
         nonisolated(unsafe) let info = response.notification.request.content.userInfo
-        await Notifications.respond(to: action, info: info)
+        nonisolated(unsafe) let done = completionHandler
+        Task { @MainActor in
+            await Notifications.respond(to: action, info: info)
+            done()
+        }
     }
 }

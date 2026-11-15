@@ -3,4 +3,5 @@
 # While one isn't ready, point it at /shortcuts/coming-soon.html instead.
 # 302, not 301, so phones never cache the old target.
 
-/s/bank-alerts  https://www.icloud.com/shortcuts/5e4d5d85e39f4d31a8282ca9da95aabe  302
+/s/bank-alerts  https://www.icloud.com/shortcuts/f49dbbdb68c14d38b031af71909cdf7e  302
+/s/apple-pay    https://www.icloud.com/shortcuts/b97206e4b5a84fd18209cc5cb3912e48  302

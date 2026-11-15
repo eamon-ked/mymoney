@@ -50,13 +50,18 @@ extension StatementImport {
             h.lowercased().replacingOccurrences(of: #"\(.*\)"#, with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
         }
-        func find(_ candidates: [String]) -> Int? {
+        func find(_ candidates: [String], unless skip: (String) -> Bool = { _ in false }) -> Int? {
             for c in candidates { if let i = names.firstIndex(of: c) { return i } }
-            for c in candidates where c.count > 3 { if let i = names.firstIndex(where: { $0.contains(c) }) { return i } }
+            for c in candidates where c.count > 3 { if let i = names.firstIndex(where: { $0.contains(c) && !skip($0) }) { return i } }
             return nil
         }
+        // "Reference no" and "Transaction ID" name a code, not what the row was for
+        func namesACode(_ name: String) -> Bool {
+            name.contains("#") || name.components(separatedBy: CharacterSet.letters.inverted)
+                .contains { ["no", "nr", "num", "number", "id", "code"].contains($0) }
+        }
         let debit = find(debitNames), credit = find(creditNames)
-        return StatementColumns(date: find(dateNames), description: find(descriptionNames),
+        return StatementColumns(date: find(dateNames), description: find(descriptionNames, unless: namesACode),
                                 amount: debit != nil && credit != nil ? nil : find(amountNames), debit: debit, credit: credit,
                                 balance: names.firstIndex { balanceNames.contains($0) })
     }

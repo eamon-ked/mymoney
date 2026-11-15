@@ -369,6 +369,23 @@ public enum AlertParser {
         return false
     }
 
+    /// The amount of one card purchase, as Shortcuts passes it in from Wallet: "AED 45.00", "$45.00",
+    /// "45,00 €" or a bare "45.5". The currency comes from the text; with none there, or with a sign several
+    /// currencies share, it is the person's own. A minus sign or brackets mean a refund.
+    public static func cardAmount(_ text: String, homeCurrency: String) -> Money? {
+        let home = homeCurrency.uppercased()
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let refund = trimmed.hasPrefix("(") || trimmed.range(of: #"[-−–]\s?[^0-9\s]{0,4}\s?[0-9]"#, options: .regularExpression) != nil
+        let plain = trimmed.replacingOccurrences(of: #"[-−–()]"#, with: "", options: .regularExpression)
+        var found = amounts(in: plain, homeCurrency: home, skippingBalances: false).first
+        if found == nil, plain.range(of: #"^[0-9][0-9.,'\u00A0\u202F ]*$"#, options: .regularExpression) != nil {
+            // A bare number has no currency to read, so the amount reader gets the person's own in front
+            found = amounts(in: "\(home) \(plain)", homeCurrency: home, skippingBalances: false).first
+        }
+        guard let money = found else { return nil }
+        return refund ? Money(minorUnits: -money.minorUnits, currency: money.currency) : money
+    }
+
     /// Every amount that has a currency next to it and isn't a balance or limit.
     /// Reads "1,234.56", "1.234,56", "1 234,56" and "1'234.56".
     static func amounts(in text: String, homeCurrency: String, skippingBalances: Bool = true) -> [Money] {

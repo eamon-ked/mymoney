@@ -747,6 +747,8 @@ extension Redesign {
                 app.open(.entry(kind == .income ? .income : kind == .transfer ? .transfer : kind == .adjustment ? .adjustment : .expense))
             case .importStatement: app.open(.importStatement(nil))
             case .capture: app.show(.capture)
+            case .captureApplePay: app.show(.captureApplePay)
+            case .captureBank: app.show(.captureBank)
             case .tab(let tab):
                 switch tab {
                 case .home: app.go(.home)
@@ -860,6 +862,8 @@ extension Redesign {
                  "Open the bill and choose Link Existing Payment if the payment is already in Activity. If it isn't, choose Record Payment. Paid bills are removed from unpaid commitments."),
                 ("Can I correct a mistake?",
                  "Use Undo in the confirmation right after saving. You can also open any transaction in Activity and edit or delete it. To fix a balance, tap +, then More…, then A balance is wrong."),
+                ("Why do I have to turn the automation on myself?",
+                 "Apple adds a shared automation switched off, so nothing runs without your say-so. Open Shortcuts, tap Automation and switch it on. It's a one-time step."),
                 ("Will this move real money?",
                  "No. Nokael records what you've already done. No bank is connected, and no payments or transfers are sent."),
             ]

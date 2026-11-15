@@ -195,7 +195,7 @@ public enum StatementImport {
                                     "datum", "buchungstag", "buchungsdatum", "date d'opération", "date opération", "fecha", "data",
                                     "data operazione", "التاريخ", "تاريخ العملية"]
     static let descriptionNames = ["description", "details", "transaction details", "narrative", "narration", "merchant",
-                                           "payee", "particulars", "memo", "name", "reference", "remarks",
+                                           "payee", "particulars", "memo", "name", "reference", "remarks", "transaction",
                                            "beschreibung", "verwendungszweck", "buchungstext", "empfänger", "libellé", "libelle",
                                            "concepto", "descripción", "descripcion", "descrição", "descricao", "histórico",
                                            "descrizione", "omschrijving", "البيان", "الوصف", "التفاصيل"]

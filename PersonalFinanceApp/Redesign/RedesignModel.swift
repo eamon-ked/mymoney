@@ -212,7 +212,7 @@ extension Redesign {
         case account(UUID), bill(UUID), link(UUID), category(UUID), transaction(UUID)
         case payDebt(UUID, occurrence: UUID?), editDebtPayment(UUID), entryAsDebtPayment(UUID)
         case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), finishLoan(UUID), lend(UUID?, LendAction)
-        case importStatement(UUID?), newAccount(loan: Bool), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
+        case importStatement(UUID?), newAccount(loan: Bool, kind: AccountKind? = nil), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
         case loansInCategory(UUID), goal(UUID), reserve(UUID?, goal: Bool), goalMoney(UUID, adding: Bool)
         case payday, help, intelligence, ask, paywall(PlusFeature), billLink(UUID)
         var id: Self { self }
@@ -222,6 +222,7 @@ extension Redesign {
     enum Page: Hashable {
         case activity, reports, forecast, profile, settings, privacy, privacyMode, help
         case capture, data, plus, categories, history, reminders, intelligenceSettings, netWorth
+        case captureBank, captureApplePay, captureSiri, captureActivity
     }
 
     /// What Privacy Mode hides. It only changes what's drawn; the figures underneath are never touched.

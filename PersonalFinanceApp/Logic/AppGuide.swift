@@ -15,6 +15,8 @@ enum GuideAction: Hashable {
     case add(AddKind)
     case importStatement
     case capture
+    case captureApplePay
+    case captureBank
     case tab(AppTab)
     case backup
     case payDebt
@@ -67,14 +69,29 @@ enum AppGuide {
                    tip: "CSV is the most reliable. A PDF works best when it's the bank's own download rather than a scan or photo.",
                    action: .importStatement, actionTitle: "Import a statement now",
                    keywords: ["import", "statement", "csv", "pdf", "columns", "excel", "spreadsheet", "bank file", "download", "history", "past", "old transactions"]),
-        GuideTopic(id: "capture", title: "Save Apple Pay purchases and bank SMS automatically", symbol: "wallet.pass.fill",
-                   steps: ["Open the More tab, then Siri & automatic capture.",
-                           "Follow the steps for Apple Pay: one Shortcuts automation, set up once.",
-                           "For bank alerts, tick your bank, then follow the SMS steps.",
-                           "New purchases appear on Home under Needs you. Tap one to check it."],
-                   tip: "iOS doesn't let any app read old messages; capture starts from the moment you set it up. Use a statement import for earlier ones.",
-                   action: .capture, actionTitle: "Set it up now",
-                   keywords: ["apple pay", "wallet", "sms", "message", "messages", "alert", "automatic", "auto", "sync", "card", "siri", "voice"]),
+        GuideTopic(id: "applePay", title: "Save Apple Pay purchases automatically", symbol: "wallet.pass.fill",
+                   steps: ["Open the More tab, then Automatic capture, then Apple Pay.",
+                           "Tap Add the Apple Pay shortcut."]
+                           + applePaySetupSteps
+                           + ["Pay with Apple Pay once. The purchase appears on Home under Needs you."],
+                   tip: "Shortcuts adds the automation switched off, so you turn it on once.",
+                   action: .captureApplePay, actionTitle: "Set up Apple Pay now",
+                   keywords: ["apple pay", "wallet", "tap to pay", "card purchase", "transaction automation", "automation", "automatic", "auto", "card"]),
+        GuideTopic(id: "bankMessages", title: "Save bank messages automatically", symbol: "message.fill",
+                   steps: ["Open the More tab, then Automatic capture, then Bank messages.",
+                           "Tap Add the bank alerts shortcut."]
+                           + bankSetupSteps(keyword: nil)
+                           + ["Back in Nokael Money, add your bank under Your banks. New purchases appear on Home under Needs you."],
+                   tip: "iOS doesn't let any app read old messages, so capture starts from the moment you set it up. Use a statement import for earlier ones.",
+                   action: .captureBank, actionTitle: "Set up bank messages now",
+                   keywords: ["sms", "message", "messages", "bank alert", "alert", "text message", "message automation", "automation", "automatic", "auto", "sync"]),
+        GuideTopic(id: "automationOff", title: "Purchases aren't saved automatically", symbol: "exclamationmark.arrow.circlepath",
+                   steps: ["Open Shortcuts. Tap \u{2039} at the top left until you reach Library, then tap Automation.",
+                           "Check the Wallet one, or the message one with your currency, is switched on.",
+                           "Not listed? Add the shortcut again from More › Automatic capture."],
+                   tip: "Automatic capture shows when the last purchase or message arrived, so you can see it working.",
+                   action: .capture, actionTitle: "Open Automatic capture",
+                   keywords: ["not working", "isn't working", "doesn't work", "not saving", "nothing saved", "not saved", "turned off", "disabled", "switch on", "turn on", "enable", "automation off", "stopped"]),
         GuideTopic(id: "loan", title: "Pay a loan or credit card", symbol: "creditcard.fill",
                    steps: ["On Home, tap + at the bottom right, choose More…, then “I paid a loan or card”.",
                            "Pick the loan or card if you have more than one.",
@@ -102,13 +119,14 @@ enum AppGuide {
                    tip: "To compare with a statement instead, open the account in Accounts, tap More, then Check against a statement.",
                    action: .add(.adjustment), actionTitle: "Correct a balance now",
                    keywords: ["balance", "wrong balance", "correct", "adjust", "reconcile", "doesn't match", "bank says"]),
-        GuideTopic(id: "addLoan", title: "Add a loan or credit card", symbol: "creditcard.fill",
-                   steps: ["On Home, tap + at the bottom right, choose More…, then “I have a loan or card”.",
-                           "Enter what you still owe today and the monthly payment.",
+        GuideTopic(id: "addLoan", title: "Add something you owe", symbol: "creditcard.fill",
+                   steps: ["On Accounts, tap + at the bottom right and choose Add Debt.",
+                           "Pick who you owe: a person, a loan or a credit card.",
+                           "Enter what you still owe today. For a loan or card, add the monthly payment too.",
                            "Pick the day it's paid, and it's added to your bills automatically."],
                    tip: "The interest rate is optional. Each payment then lowers what you owe.",
-                   action: .addLoan, actionTitle: "Add a loan or card now",
-                   keywords: ["add a loan", "add my loan", "new loan", "took a loan", "got a loan", "add a card", "add credit card", "new credit card", "mortgage", "car loan", "personal loan"]),
+                   action: .addLoan, actionTitle: "Add what you owe now",
+                   keywords: ["add a debt", "add debt", "i owe", "owe someone", "owe a friend", "add a loan", "add my loan", "new loan", "took a loan", "got a loan", "add a card", "add credit card", "new credit card", "mortgage", "car loan", "personal loan"]),
         GuideTopic(id: "account", title: "Add a bank account or cash", symbol: "building.columns.fill",
                    steps: ["Open the Accounts tab.",
                            "Tap + at the bottom right.",
@@ -157,13 +175,47 @@ enum AppGuide {
                    keywords: ["backup", "back up", "restore", "new phone", "export", "lose"]),
     ]
 
+    // MARK: Turning on an automation
+
+    /// The bank shortcut's name once added (the link in legal-docs/_redirects); change it here if it's renamed
+    static let bankShortcutName = "Nokael Money Bank Alerts"
+
+    /// After tapping the button that opens a shared shortcut: it brings its automation, but Shortcuts adds
+    /// that switched off. These follow Shortcuts screen by screen, so the setup pages and Help agree.
+    static let applePaySetupSteps = [
+        "Tap Add Shortcut.",
+        "Tap \u{2039} at the top left to go to Library.",
+        "Tap Automation.",
+        "Turn on \u{201C}When I tap a Wallet pass or payment card\u{201D}. It's near the bottom.",
+    ]
+
+    /// What the shared bank shortcut's message automations look for, one automation each. Keep in
+    /// step with the shortcut the /s/bank-alerts link opens.
+    static let sharedMessageKeywords: Set<String> = ["円", "¥", "JPY", "Rs", "INR", "€", "EUR", "£", "GBP", "$", "USD",
+                                                     "OMR", "BHD", "KWD", "QAR", "SAR", "AED"]
+
+    /// The same for bank messages: turn on the automation for the person's currency. A currency the
+    /// shortcut doesn't cover gets an automation of its own.
+    static func bankSetupSteps(keyword: String?) -> [String] {
+        let open = ["Tap Add Shortcut.", "Tap \u{2039} at the top left to go to Library.", "Tap Automation."]
+        guard let keyword else {
+            return open + ["Turn on the \u{201C}When I Get a Message Containing\u{201D} one with your currency, such as \u{2018}EUR\u{2019} or \u{2018}£\u{2019}."]
+        }
+        guard sharedMessageKeywords.contains(keyword) else {
+            return open + ["Tap +, choose Message, enter \u{201C}\(keyword)\u{201D} in Message Contains, choose Run Immediately and tap Next.",
+                           "Pick \u{201C}\(bankShortcutName)\u{201D}."]
+        }
+        return open + ["Turn on \u{201C}When I Get a Message Containing \u{2018}\(keyword)\u{2019}\u{201D}."]
+    }
+
     /// Best topics for what the person typed, most relevant first
     static func match(_ text: String) -> [GuideTopic] {
         let lower = text.lowercased()
         let scored = topics.map { topic in
             (topic, topic.keywords.reduce(0) { $0 + (lower.contains($1) ? ($1.contains(" ") ? 3 : 2) : 0) }
                 + (lower.contains(topic.title.lowercased()) ? 4 : 0)
-                + (topic.id == "addLoan" && addsALoan(lower) ? 6 : 0))
+                + (topic.id == "addLoan" && addsALoan(lower) ? 6 : 0)
+                + (topic.id == "automationOff" && notWorking(lower) ? 6 : 0))
         }
         return scored.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
     }
@@ -173,6 +225,12 @@ enum AppGuide {
         ["loan", "card", "mortgage", "debt"].contains(where: lower.contains)
             && ["add", "new", "took", "got a", "have a", "set up", "setup", "enter", "where"].contains(where: lower.contains)
             && !["pay", "paid", "instal"].contains(where: lower.contains)
+    }
+
+    /// "My Apple Pay automation isn't working" is about fixing it, not setting it up
+    private static func notWorking(_ lower: String) -> Bool {
+        ["not working", "isn't working", "isnt working", "doesn't work", "doesnt work", "not saving", "not saved",
+         "nothing saved", "stopped", "disabled", "turned off", "not showing", "isn't showing"].contains(where: lower.contains)
     }
 
     /// Every topic as plain text, for the on-device model

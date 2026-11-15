@@ -48,16 +48,28 @@ enum StatementPDF {
         guard document.pageCount <= maxPages else { throw Problem.tooLong(pages: document.pageCount) }
 
         // A statement made by the bank's system carries its own text: read its table exactly
-        var columns: [Column]? = nil
-        var fromText: [[String]] = []
-        for index in 0..<document.pageCount {
-            guard let page = document.page(at: index) else { continue }
-            progress(index + 1, document.pageCount)
-            await Task.yield()
-            let (rows, found) = textTable(textLines(on: page), columns: columns)
-            columns = found ?? columns
-            if fromText.isEmpty, let header = columns, !rows.isEmpty { fromText.append(header.map(\.name)) }
-            fromText += rows
+        func table(_ lines: (PDFPage) -> [TextLine]?) async -> [[String]] {
+            var columns: [Column]? = nil
+            var grid: [[String]] = []
+            for index in 0..<document.pageCount {
+                guard let page = document.page(at: index), let lines = lines(page) else { continue }
+                progress(index + 1, document.pageCount)
+                await Task.yield()
+                let (rows, found) = textTable(lines, columns: columns)
+                columns = found ?? columns
+                if grid.isEmpty, let header = columns, !rows.isEmpty { grid.append(header.map(\.name)) }
+                grid += rows
+            }
+            return grid
+        }
+        var fromText = await table { textLines(on: $0) }
+        // PDFKit mixes up the letters of some statements. Where the rows don't follow their own running
+        // balance, the page's drawing instructions are read instead, and kept when they do add up.
+        let asRead = balanceShare(fromText)
+        if asRead < 0.95 {
+            let drawn = await table { StatementPDFDrawn.textLines(on: $0) }
+            let asDrawn = balanceShare(drawn)
+            if drawn.count > 1, asDrawn >= 0.9, asDrawn > asRead { fromText = drawn }
         }
         if fromText.count > 1 { return fromText }
 
@@ -79,6 +91,13 @@ enum StatementPDF {
         return grid
     }
 
+    /// How many of a table's rows follow from the row before by its running balance: 0 to 1,
+    /// and 0 when the table has no balance to check against
+    static func balanceShare(_ grid: [[String]]) -> Double {
+        guard grid.count > 3, let check = StatementImport.layout(in: StatementImport.csvText(grid))?.check, check.rows > 0 else { return 0 }
+        return Double(check.addUp) / Double(check.rows)
+    }
+
     // MARK: - The PDF's own text
 
     /// A piece of text on the page and where it sits (PDF coordinates: y grows upwards)
@@ -92,44 +111,65 @@ enum StatementPDF {
         var name: String
         var minX: CGFloat
         var maxX: CGFloat
+        /// The column each row's date sits in, once a page has shown which it is
+        var holdsDates = false
     }
 
     /// Every line of text on the page, each table cell's lines separately
     static func textLines(on page: PDFPage) -> [TextLine] {
         guard let all = page.selection(for: page.bounds(for: .mediaBox)) else { return [] }
-        return all.selectionsByLine().flatMap { line -> [TextLine] in
+        let pieces = all.selectionsByLine().flatMap { line -> [TextLine] in
             let text = (line.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let rect = line.bounds(for: page)
             guard !text.isEmpty, !rect.isEmpty else { return [] }
             return split(TextLine(text: text, rect: rect), words: words(along: rect, on: page))
         }
+        // PDFKit sometimes offers part of a line a second time: each piece of text counts once
+        var once: [TextLine] = []
+        for piece in pieces where !once.contains(where: { $0.text == piece.text && abs($0.rect.minX - piece.rect.minX) < 1 && abs($0.rect.midY - piece.rect.midY) < 1 }) {
+            once.append(piece)
+        }
+        return once
     }
 
-    /// The words along a line and where each sits, as PDFKit finds them one by one
+    /// The words along a line and where each sits, built from where the page's letters sit.
+    /// (Asking PDFKit for the word at a point crashes on some pages that hold right-to-left
+    /// text, so the page is only ever asked what a rectangle holds.)
     private static func words(along rect: CGRect, on page: PDFPage) -> [TextLine] {
-        var found: [TextLine] = []
-        var x = rect.minX + 0.5
-        while x < rect.maxX {
-            if let word = page.selectionForWord(at: CGPoint(x: x, y: rect.midY)),
-               let s = word.string?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
-                let b = word.bounds(for: page)
-                // A word has no spaces in it, apart from a date written out (PDFKit sometimes offers several
-                // words as one), and one further along
-                // is taken only when there's nothing but space before it (PDFKit sometimes skips words)
-                func clear(to end: CGFloat) -> Bool {
-                    end <= x + 1 || (page.selection(for: CGRect(x: x, y: rect.minY, width: end - x - 0.5, height: rect.height))?.string ?? "")
-                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-                let oneWord = !s.contains(where: \.isWhitespace) || s.range(of: leadingDate + "$", options: .regularExpression) != nil
-                if b.maxX > x, abs(b.midY - rect.midY) < rect.height / 2, oneWord, clear(to: b.minX) {
-                    found.append(TextLine(text: s, rect: b))
-                    x = b.maxX + 0.5
-                    continue
-                }
+        func held(in r: CGRect) -> (text: String, rect: CGRect)? {
+            guard let found = page.selection(for: r),
+                  let text = found.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+            let b = found.bounds(for: page)
+            return b.width > 0 ? (text, b) : nil
+        }
+        // Lines set close together overlap: where a rectangle reaches into the next line, only the middle of this one is asked about
+        func onThisLine(x: CGFloat, width: CGFloat) -> (text: String, rect: CGRect)? {
+            let all = held(in: CGRect(x: x, y: rect.minY + 1, width: width, height: max(1, rect.height - 2)))
+            guard let all, all.text.contains(where: \.isNewline) || all.rect.height > rect.height + 1 else { return all }
+            return held(in: CGRect(x: x, y: rect.midY - rect.height / 4, width: width, height: rect.height / 2))
+        }
+        // The letters along the line, left to right: what each thin slice of it holds
+        var letters: [CGRect] = []
+        var x = rect.minX - 1
+        while x < rect.maxX + 1 {
+            if let letter = onThisLine(x: x, width: 1)?.rect, letters.last != letter, abs(letter.midY - rect.midY) < rect.height / 2 {
+                letters.append(letter)
             }
             x += 1
         }
-        return found
+        // A word is a run of letters with no space between them
+        var runs: [CGRect] = []
+        for letter in letters.sorted(by: { $0.minX < $1.minX }) {
+            if let last = runs.last, letter.minX - last.maxX <= rect.height * 0.15 {
+                runs[runs.count - 1] = last.union(letter)
+            } else {
+                runs.append(letter)
+            }
+        }
+        return runs.compactMap { run in
+            guard let word = onThisLine(x: run.minX, width: run.width)?.text, !word.contains(where: \.isNewline) else { return nil }
+            return TextLine(text: word, rect: CGRect(x: run.minX, y: rect.minY, width: run.width, height: rect.height))
+        }
     }
 
     /// A line the PDF keeps together across columns ("150 0.00 1728.8"), cut where the gap
@@ -209,6 +249,11 @@ enum StatementPDF {
                 groups.append([line])
             }
         }
+        // On a later page only dates in the table's own date column start rows: the dates in a page's
+        // heading ("Statement date") line up with each other too
+        if let column = known?.first(where: \.holdsDates) {
+            groups = groups.filter { $0[0].rect.maxX > column.minX - 4 && $0[0].rect.minX < column.maxX + 4 }
+        }
         let most = groups.map(\.count).max() ?? 0
         guard let dates = groups.first(where: { $0.count >= max(known == nil ? 2 : 1, (most + 1) / 2) }) else { return ([], known) }
         let firstTop = dates.map(\.rect.maxY).max()!
@@ -236,7 +281,11 @@ enum StatementPDF {
                    let y = band[0].rect.midY
                    return y > top && y - top < height * 1.2 && !band.contains { isValue($0.text) }
                }), upper.allSatisfy({ u in names.contains { min($0.rect.maxX, u.rect.maxX) > max($0.rect.minX, u.rect.minX) } }) {
-                for u in upper {
+                // Names given twice, in two languages: the line the app knows is enough
+                let both = [upper.sorted { $0.rect.minX < $1.rect.minX }, names]
+                let known = both.first { StatementImport.columns(header: $0.map(\.text)) != nil }
+                if let known { names = known }
+                for u in upper where known == nil {
                     guard let i = names.indices.max(by: { a, b in
                         min(names[a].rect.maxX, u.rect.maxX) - max(names[a].rect.minX, u.rect.minX)
                             < min(names[b].rect.maxX, u.rect.maxX) - max(names[b].rect.minX, u.rect.minX)
@@ -248,7 +297,7 @@ enum StatementPDF {
             headerBottom = bottom
         }
         if columns == nil { columns = alignedColumns(lines.filter { $0.rect.maxY <= firstTop + 1.5 }, dates: dates) }
-        guard let columns, columns.count >= 3 else { return ([], nil) }
+        guard var columns, columns.count >= 3 else { return ([], nil) }
 
         let centers = columns.map { ($0.minX + $0.maxX) / 2 }
         func overlaps(_ r: CGRect) -> [CGFloat] { columns.map { min($0.maxX, r.maxX) - max($0.minX, r.minX) } }
@@ -301,25 +350,91 @@ enum StatementPDF {
         }
         let body = pieces.indices.map { (line: pieces[$0].line, column: placed[$0]!) }
 
-        // Each row starts with a date in the date column
+        // Each row holds a date in the date column
         let placedDates = body.filter { p in dates.contains { $0.rect == p.line.rect } }.map(\.column)
         let dateColumn = Dictionary(grouping: placedDates, by: { $0 }).max { $0.value.count < $1.value.count }?.key ?? 0
-        let starts = body.filter { $0.column == dateColumn && isDate($0.line.text) }
-            .map(\.line.rect.maxY).sorted(by: >)
-        guard !starts.isEmpty else { return ([], columns) }
-        let gaps = zip(starts, starts.dropFirst()).map { $0 - $1 }.sorted()
-        let usual = gaps.isEmpty ? 40 : gaps[gaps.count / 2]
-        var rows: [[String]] = []
-        for (k, top) in starts.enumerated() {
-            let bottom = k + 1 < starts.count ? starts[k + 1] : top - usual * 1.5
-            var cells = Array(repeating: [TextLine](), count: columns.count)
-            for piece in body where piece.line.rect.maxY <= top + 1.5 && piece.line.rect.maxY > bottom + 1.5 {
-                cells[piece.column].append(piece.line)
+        func startsRow(_ p: (line: TextLine, column: Int)) -> Bool { p.column == dateColumn && isDate(p.line.text) }
+        for c in columns.indices { columns[c].holdsDates = c == dateColumn }
+        guard body.contains(where: startsRow) else { return ([], columns) }
+        // The columns that hold money: nearly everything in them is an amount
+        let money = Set(columns.indices.filter { c in
+            let texts = body.filter { $0.column == c }.map(\.line.text)
+            return c != dateColumn && !texts.isEmpty && texts.filter(isAmount).count * 10 >= texts.count * 9
+        })
+        func isZero(_ t: String) -> Bool { StatementImport.amount(t, currency: "USD")?.isZero ?? false }
+
+        // The lines of one row sit closer together than rows do: the text is gathered into blocks at the
+        // wider gaps. That holds whether a row's date sits beside its first line or halfway down its lines.
+        let ordered = body.sorted { $0.line.rect.midY > $1.line.rect.midY }
+        var leading = height
+        var steps: [CGFloat] = []
+        for (upper, lower) in zip(ordered, ordered.dropFirst()) {
+            let step: CGFloat = upper.line.rect.midY - lower.line.rect.midY
+            if step >= height * 0.6 { steps.append(step) }
+        }
+        if let least = steps.min() { leading = least }
+        var blocks: [[(line: TextLine, column: Int)]] = []
+        for piece in ordered {
+            if let last = blocks.last?.last, last.line.rect.midY - piece.line.rect.midY <= leading * 1.25 {
+                blocks[blocks.count - 1].append(piece)
+            } else {
+                blocks.append([piece])
             }
-            rows.append(cells.map { pieces in
-                pieces.sorted { abs($0.rect.midY - $1.rect.midY) < 2 ? $0.rect.minX < $1.rect.minX : $0.rect.midY > $1.rect.midY }
-                    .map(\.text).joined(separator: " ")
-            })
+        }
+        var between: [CGFloat] = []
+        for (upper, lower) in zip(blocks, blocks.dropFirst()) {
+            between.append(upper[upper.count - 1].line.rect.midY - lower[0].line.rect.midY)
+        }
+        between.sort()
+        let usual = between.isEmpty ? height * 2 : between[between.count / 2]
+
+        var grouped: [[(line: TextLine, column: Int)]] = []
+        var open = false          // whether the row above can still take more lines
+        var lastY: CGFloat = 0
+        for block in blocks {
+            let starts = block.filter(startsRow).map(\.line.rect.maxY).sorted(by: >)
+            if starts.count == 1 {
+                grouped.append(block)
+                open = true
+            } else if starts.count > 1 {
+                // Rows too close to tell apart by their gaps: each starts at its date
+                for (k, top) in starts.enumerated() {
+                    let bottom = k + 1 < starts.count ? starts[k + 1] : -CGFloat.greatestFiniteMagnitude
+                    grouped.append(block.filter { $0.line.rect.maxY <= top + 1.5 && $0.line.rect.maxY > bottom + 1.5 })
+                }
+                open = true
+            } else {
+                // No date: more about the row above (a wrapped line, a detail line with no money of its own).
+                // A line with its own figure at the end of the row is a total ("Balance carried forward"), and
+                // nothing after it, or far below the last row (a page's footer), belongs to a row.
+                let end = block.max { $0.column < $1.column }!
+                let total = money.contains(end.column) && isAmount(end.line.text) && !isZero(end.line.text)
+                if open, !total, lastY - block.first!.line.rect.midY <= usual * 1.6 {
+                    grouped[grouped.count - 1] += block
+                } else {
+                    open = false
+                }
+            }
+            lastY = block.last!.line.rect.midY
+        }
+        func inReadingOrder(_ a: TextLine, _ b: TextLine) -> Bool {
+            abs(a.rect.midY - b.rect.midY) < 2 ? a.rect.minX < b.rect.minX : a.rect.midY > b.rect.midY
+        }
+        var rows: [[String]] = []
+        for row in grouped {
+            var cells: [String] = []
+            for c in columns.indices {
+                let cell: [TextLine] = row.filter { $0.column == c }.map(\.line).sorted(by: inReadingOrder)
+                // A detail line under the row repeats the money columns with nothing in them: the row's own figure stays
+                // (figures side by side on one line are a column read wrongly, and are left for the person to see)
+                let lines = Set(cell.map { ($0.rect.midY / 2).rounded() }).count
+                if money.contains(c), cell.count > 1, lines == cell.count, cell.allSatisfy({ isAmount($0.text) }) {
+                    cells.append((cell.first { !isZero($0.text) } ?? cell[0]).text)
+                } else {
+                    cells.append(cell.map(\.text).joined(separator: " "))
+                }
+            }
+            rows.append(cells)
         }
         return (rows, columns)
     }

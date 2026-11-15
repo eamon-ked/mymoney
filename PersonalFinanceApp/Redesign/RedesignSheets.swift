@@ -76,7 +76,7 @@ extension Redesign {
             case .lend(_, .borrow): "Borrow more"
             case .lend(_, .payBack): "Pay them back"
             case .importStatement: "Import a statement"
-            case .newAccount(let loan): loan ? "Add a loan or card" : "Add account"
+            case .newAccount(let loan, _): loan ? "Add what you owe" : "Add account"
             case .newCash: "Add cash"
             case .newCategory: "New budget category"
             case .editCategory: "Edit category"
@@ -122,7 +122,7 @@ extension Redesign {
             case .finishLoan(let id): if let a = app.record(id) { FinishLoanForm(loan: a) }
             case .lend(let id, let action): LendForm(person: app.record(id), action: action)
             case .importStatement(let id): ImportStatement(accountId: id)
-            case .newAccount(let loan): AddAccountForm(startsWithLoan: loan)
+            case .newAccount(let loan, let kind): AddAccountForm(startsWithLoan: loan, startKind: kind)
             case .newCash: AddAccountForm(startsWithLoan: false, startKind: .cash)
             case .newCategory: CategoryForm(editing: nil)
             case .editCategory(let id): CategoryForm(editing: app.record(id))
@@ -537,8 +537,8 @@ extension Redesign {
                        id: "add-I moved money between my accounts") { app.open(.entry(.transfer)) }
                 choice("I have cash", "Notes and coins in your wallet or at home", "banknote",
                        id: "add-I have cash") { app.open(.newCash) }
-                choice("I have a loan or credit card", "Add what you owe and the monthly payment", "building.columns",
-                       id: "add-I have a loan or credit card") { app.open(.newAccount(loan: true)) }
+                choice("I owe money", "To a person, a loan or a credit card", "building.columns",
+                       id: "add-I owe money") { app.open(.newAccount(loan: true)) }
                 choice("A balance is wrong", "Set an account to what your bank shows", "slider.horizontal.3",
                        id: "add-A balance is wrong") { app.open(.entry(.adjustment)) }
                 Button { app.open(.help) } label: {

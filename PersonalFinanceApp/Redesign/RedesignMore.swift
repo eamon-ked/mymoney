@@ -32,7 +32,7 @@ extension Redesign {
             }
             .padding(.bottom, 24)
             group("Automation") {
-                row("wave.3.right", "Siri & automatic capture", "Apple Pay, bank messages and Siri") { app.show(.capture) }
+                row("wave.3.right", "Automatic capture", "Bank messages, Apple Pay and Siri") { app.show(.capture) }
             }
             .padding(.bottom, 24)
             group("Personal") {
@@ -108,6 +108,10 @@ extension Redesign {
                     case .privacyMode: PrivacyModePage()
                     case .help: HelpPage()
                     case .capture: CapturePage()
+                    case .captureBank: CapturePage(section: .bank)
+                    case .captureApplePay: CapturePage(section: .applePay)
+                    case .captureSiri: CapturePage(section: .siri)
+                    case .captureActivity: CapturePage(section: .activity)
                     case .data: DataPage()
                     case .plus: PlusPage()
                     case .categories: CategoriesPage()
@@ -152,7 +156,11 @@ extension Redesign {
             case .privacy: "Privacy & Security"
             case .privacyMode: "Privacy Mode"
             case .help: "Help & Support"
-            case .capture: "Siri & automatic capture"
+            case .capture: "Automatic capture"
+            case .captureBank: "Bank messages"
+            case .captureApplePay: "Apple Pay"
+            case .captureSiri: "Siri"
+            case .captureActivity: "What came in"
             case .data: "Backup & your data"
             case .plus: "Nokael Plus"
             case .categories: "Categories"
@@ -539,6 +547,18 @@ extension Redesign {
             }
             .rdPanel(padding: 0)
             .padding(.bottom, 24)
+
+            // Only after the app has crashed: the report stays here unless the person shares it
+            if let report = ProblemReports.latest {
+                ShareLink(item: report) {
+                    Label("Share the last crash report", systemImage: "exclamationmark.bubble").rdText(.label)
+                        .foregroundStyle(Theme.primary).frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .rdPanel(padding: 0)
+                .accessibilityIdentifier("shareCrashReport")
+                Redesign.footnote("Nokael Money stopped unexpectedly. The report says where, with your iOS and app version. It holds none of your accounts or amounts, and goes only where you send it.")
+                    .padding(.top, 8).padding(.horizontal, 4).padding(.bottom, 24)
+            }
 
             Button(role: .destructive) { confirmErase = true } label: { Text("Delete all data on this iPhone").foregroundStyle(Theme.destructive) }
                 .buttonStyle(QuietButtonStyle())

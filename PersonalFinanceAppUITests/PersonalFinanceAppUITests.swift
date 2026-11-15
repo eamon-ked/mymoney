@@ -184,7 +184,7 @@ final class JourneyUITests: XCTestCase {
     func testBankMessagesJoinedThenSeparatedAndRestored() {
         let viaApp = "AED210.00 transferred via Example Personal Internet Banking / Mobile App from acc. no. XXX450002. Avl. bal. AED 31.70."
         let confirmation = "Confirmation recd. from SECOND NATIONAL BANK PJSC: AED 210.00 transferred to SAMIRA OKELLO has been credited."
-        launch(["-demoData", "-captureMessages", viaApp + "|||" + confirmation, "-screen", "capture"])
+        launch(["-demoData", "-captureMessages", viaApp + "|||" + confirmation, "-screen", "captureActivity"])
         // The newest record is the confirmation, which joined the first
         let newest = app.buttons["captureTrace.0"]
         XCTAssertTrue(newest.waitForExistence(timeout: 10), "The records are listed")
@@ -223,6 +223,37 @@ final class JourneyUITests: XCTestCase {
         XCTAssertTrue(restore.waitForExistence(timeout: 5))
         restore.tap()
         expect("Restored.", "The deleted entry is back")
+    }
+
+    /// Automatic capture: each way of capturing has its own screen, and a pasted message says in a word what would happen
+    func testCaptureOverviewAndMessageTest() {
+        launch(["-demoData", "-plus", "-screen", "capture"])
+        for (id, title) in [("captureApplePay", "Apple Pay"), ("captureSiri", "Siri"), ("captureBank", "Bank messages")] {
+            let row = app.buttons[id]
+            XCTAssertTrue(row.waitForExistence(timeout: 5), "No \(title) row")
+            row.tap()
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), "\(title) didn't open")
+            if id == "captureApplePay" {
+                XCTAssertTrue(app.buttons["addApplePayAutomation"].exists, "No Apple Pay button")
+                XCTAssertTrue(app.staticTexts["Tap Automation."].exists, "No steps to turn the automation on")
+            }
+            if id != "captureBank" {
+                app.navigationBars[title].buttons.firstMatch.tap()
+                sleep(1)
+            }
+        }
+        XCTAssertTrue(app.buttons["addBankAutomation"].exists, "The one-tap setup leads the screen")
+        XCTAssertTrue(app.staticTexts["Tap Automation."].exists, "No steps to turn the bank automation on")
+        let field = app.descendants(matching: .any)["captureTestMessage"]
+        for _ in 0..<4 where !(field.exists && field.isHittable) { app.swipeUp() }
+        field.tap()
+        field.typeText("AED210.00 transferred via Example Personal Internet Banking / Mobile App from acc. no. XXX450002. Avl. bal. AED 31.70.")
+        let done = app.toolbars.buttons["Done"]
+        if done.waitForExistence(timeout: 1) { done.tap() }
+        tapScrolling(app.buttons["captureTestButton"], "Test it")
+        let verdict = app.descendants(matching: .any)["captureVerdict"]
+        XCTAssertTrue(verdict.waitForExistence(timeout: 10), "The test gives a result")
+        XCTAssertTrue(verdict.label.contains("Detected") || verdict.label.contains("Needs review"), verdict.label)
     }
 
     /// "Add another account" tapped by mistake: Back returns to the list, Cancel goes to Home,
@@ -451,10 +482,33 @@ final class JourneyUITests: XCTestCase {
         XCTAssertTrue(app.textFields["amountField"].waitForExistence(timeout: 5))
     }
 
+    /// Something they owe is one step from Accounts: Add Debt asks who, then only that one's fields
+    @MainActor
+    func testAddingADebtYouOwe() {
+        launch(["-demoData", "-plus", "-tab", "accounts"])
+        app.buttons["globalAdd"].tap()
+        XCTAssertTrue(app.buttons["Add Debt"].waitForExistence(timeout: 5), "Accounts' + offers Add Debt")
+        app.buttons["Add Debt"].tap()
+        XCTAssertTrue(app.buttons["A person"].waitForExistence(timeout: 5), "It asks who is owed")
+        app.buttons["A person"].tap()
+        XCTAssertFalse(app.buttons["They owe me"].exists, "No second question about which way it goes")
+        type("Rin", into: "loanName")
+        type("300", into: "loanOwed")
+        app.buttons["saveLoan"].tap()
+        expect("Rin", "The person shows on Accounts")
+        expect("Add something you owe", "What you owe has its own add button")
+        // Home's More… leads to the same form
+        tab("Home")
+        app.buttons["globalAdd"].tap()
+        app.buttons["More…"].tap()
+        tapScrolling(app.buttons["add-I owe money"], "I owe money")
+        XCTAssertTrue(app.buttons["A credit card"].waitForExistence(timeout: 5), "More… opens the same form")
+    }
+
     @MainActor
     func testMoreOpensEveryPage() {
         launch(["-demoData", "-plus", "-tab", "more"])
-        for row in ["Activity", "Reports", "Money ahead", "Siri & automatic capture", "My Profile", "Settings",
+        for row in ["Activity", "Reports", "Money ahead", "Automatic capture", "My Profile", "Settings",
                     "Privacy & Security", "Backup & your data", "Nokael Plus", "Help & Support"] {
             tapScrolling(button(row), row)
             XCTAssertTrue(app.navigationBars[row].waitForExistence(timeout: 5), "\(row) didn't open")

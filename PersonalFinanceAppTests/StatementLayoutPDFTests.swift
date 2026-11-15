@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import UIKit
+import PDFKit
 import NokaelCore
 @testable import PersonalFinanceApp
 
@@ -126,6 +127,112 @@ struct StatementLayoutPDFTests {
             """, named: "s.csv")
         #expect(review.balanceCheck == BalanceCheck(rows: 5, addUp: 4))
         #expect(review.rows.count == 6)
+    }
+
+    /// Column names in two languages, each date halfway down its row's lines, a detail line with no money
+    /// under a purchase, amounts to three places, a total carried forward, and a page number at the foot
+    /// of a page that also holds right-to-left text set in a broken font
+    @Test func datesHalfwayDownTheirRowsAndDetailLinesWithNoMoney() async throws {
+        var items = [Text(text: "Account Statement TO±©¥ب اâZP¥ا vc¢", x: 40, y: 40)]
+        func names(_ texts: [String], y: CGFloat) {
+            for (name, x) in zip(texts, [40.0, 100.0, 280.0, 405.0, 472.0, 538.0]) { items.append(Text(text: name, x: x, y: y)) }
+        }
+        names(["Date", "Transaction", "Reference no", "Debit", "Credit", "Balance"], y: 100)
+        names(["التاريخ", "المعاملة", "رقم المرجع", "مدين", "دائن", "الرصيد"], y: 112)
+        func figures(_ debit: String, _ credit: String, _ balance: String, y: CGFloat) {
+            for (figure, x) in zip([debit, credit, balance], [430.0, 500.0, 570.0]) where !figure.isEmpty {
+                items.append(Text(text: figure, x: x, y: y, right: true))
+            }
+        }
+        func lines(_ texts: [String], from y: CGFloat) {
+            for (i, text) in texts.enumerated() { items.append(Text(text: text, x: 100, y: y + CGFloat(i) * 9)) }
+        }
+        lines(["OPENING BALANCE"], from: 128); figures("0.000", "0.000", "5,000.000", y: 128)
+        // A purchase, and under it a line of its own about the card
+        items += [Text(text: "01/10/2026", x: 40, y: 142), Text(text: "POSB0001aXq", x: 280, y: 142)]
+        lines(["Card Purchase"], from: 142); figures("12.000", "0.000", "4,988.000", y: 142)
+        lines(["Card ending 1234,"], from: 156); figures("0.000", "0.000", "0.000", y: 156)
+        // Three lines, the date beside the middle one
+        lines(["Transfer in", "Amina Njeri -", "Family support"], from: 170)
+        items += [Text(text: "02/10/2026", x: 40, y: 179), Text(text: "IPPC0002bYr", x: 280, y: 179)]
+        figures("0.000", "1,500.000", "6,488.000", y: 179)
+        // Four lines, the date between the second and third
+        lines(["Bill payment", "Maji Safi Water", "Account 5567", "October"], from: 202)
+        items += [Text(text: "03/10/2026", x: 40, y: 215.5), Text(text: "BILL0003cZs", x: 280, y: 215.5)]
+        figures("300.500", "0.000", "6,187.500", y: 215.5)
+        lines(["Balance carried forward"], from: 243); figures("", "", "6,187.500", y: 243)
+        items.append(Text(text: "Page 1 of 2", x: 280, y: 820))
+
+        let (grid, read) = try await read(Self.pdf(items), currency: "AED")
+        #expect(grid.first == ["Date", "Transaction", "Reference no", "Debit", "Credit", "Balance"])
+        #expect(grid.count == 4)
+        #expect(read.map(\.amount) == [money("-12", "AED"), money("1500", "AED"), money("-300.5", "AED")])
+        #expect(read.map(\.description) == ["Card Purchase Card ending 1234,", "Transfer in Amina Njeri - Family support",
+                                            "Bill payment Maji Safi Water Account 5567 October"])
+        let layout = try #require(StatementImport.layout(in: StatementImport.csvText(grid), currency: "AED", calendar: Self.calendar))
+        #expect(layout.check == BalanceCheck(rows: 2, addUp: 2))
+    }
+
+    /// A PDF written out by hand the way a report server writes one: each cell's text drawn inside
+    /// the cell's own clipping box, in a standard font
+    static func reportPDF(_ cells: [(text: String, x: Double, y: Double, box: (x: Double, width: Double))]) -> Data {
+        var content = ""
+        for cell in cells {
+            let text = cell.text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "(", with: "\\(").replacingOccurrences(of: ")", with: "\\)")
+            content += "q \(cell.box.x) \(cell.y - 4) \(cell.box.width) 13 re W n\nBT /F1 8 Tf 0 0 0 rg 300 TL \(cell.x) \(cell.y) Td (\(text)) Tj T* ET\nQ\n"
+        }
+        let objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                       "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 640 860] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+                       "<< /Length \(content.utf8.count) >>\nstream\n\(content)endstream",
+                       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"]
+        var pdf = "%PDF-1.4\n"
+        var offsets: [Int] = []
+        for (i, object) in objects.enumerated() {
+            offsets.append(pdf.utf8.count)
+            pdf += "\(i + 1) 0 obj\n\(object)\nendobj\n"
+        }
+        let start = pdf.utf8.count
+        pdf += "xref\n0 \(objects.count + 1)\n0000000000 65535 f \n"
+        for offset in offsets { pdf += String(format: "%010d 00000 n \n", offset) }
+        pdf += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(start)\n%%EOF\n"
+        return Data(pdf.utf8)
+    }
+
+    /// Amounts that reach the edge of their cells, which PDFKit's own reading mixes up:
+    /// the page's drawing instructions give each cell as it was written, and the rows follow their balance
+    @Test func amountsThatReachTheEdgeOfTheirCells() async throws {
+        let boxes: [(x: Double, width: Double)] = [(15.6, 68), (159.6, 104), (267.6, 140), (411.6, 68), (483.6, 68), (555.6, 68)]
+        let lefts = [15.6, 159.6, 267.6]
+        func width(_ text: String) -> Double { Double(text.count) * 4.45 }   // digits and marks in 8-point Helvetica, near enough
+        var cells: [(text: String, x: Double, y: Double, box: (x: Double, width: Double))] = []
+        for (i, name) in ["DATE", "REF NO", "PARTICULARS", "DEBIT", "CREDIT", "BALANCE"].enumerated() {
+            cells.append((name, boxes[i].x + (boxes[i].width - width(name) * 1.3) / 2, 620, boxes[i]))   // centred over its column
+        }
+        let rows = [("03-Apr-2026", "FT0001AAAA\\S01", "CARD PAYMENT - 5567", "1,099.62", "0.00", "8,079.83"),
+                    ("04-Apr-2026", "FT0002BBBB", "CASH WITHDRAWAL", "1,100.00", "0.00", "6,979.83"),
+                    ("04-Apr-2026", "FT0003CCCC", "SHOP PURCHASE - MAMA NJERI", "100.00", "0.00", "6,879.83"),
+                    ("07-Apr-2026", "FT0004DDDD", "SALARY - KAZI LTD", "0.00", "12,500.00", "19,379.83"),
+                    ("09-Apr-2026", "FT0005EEEE", "SHOP PURCHASE", "20.02", "0.00", "19,359.81")]
+        for (r, row) in rows.enumerated() {
+            let y = 581.0 - Double(r) * 22
+            for (c, text) in [row.0, row.1, row.2].enumerated() { cells.append((text, lefts[c], y, boxes[c])) }
+            // Right-aligned so the last figure touches the box's edge
+            for (c, text) in [row.3, row.4, row.5].enumerated() {
+                cells.append((text, boxes[c + 3].x + boxes[c + 3].width + 0.8 - width(text), y, boxes[c + 3]))
+            }
+        }
+        cells.append(("SOKO LA JUMLA", 267.6, 581.0 - 2 * 22 - 9, boxes[2]))
+        let data = Self.reportPDF(cells)
+
+        let page = try #require(PDFDocument(data: data)?.page(at: 0))
+        let drawn = try #require(StatementPDFDrawn.textLines(on: page)).map(\.text)
+        for row in rows { #expect(drawn.contains(row.3) && drawn.contains(row.5) && drawn.contains(row.1)) }
+
+        let (grid, read) = try await read(data, currency: "AED")
+        #expect(grid.count == 6)
+        #expect(read.map(\.amount) == [money("-1099.62", "AED"), money("-1100", "AED"), money("-100", "AED"),
+                                       money("12500", "AED"), money("-20.02", "AED")])
+        #expect(read[2].description == "SHOP PURCHASE - MAMA NJERI SOKO LA JUMLA")
     }
 
     static func day(_ y: Int, _ m: Int, _ d: Int) -> Date {

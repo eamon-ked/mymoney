@@ -120,6 +120,46 @@ struct CaptureTrace: Codable, Equatable, Identifiable {
         return steps.last.map { "\($0.title): \($0.detail)" } ?? ""
     }
 
+    /// What became of it, in a word a person can read without knowing how messages are read
+    enum Verdict: Equatable {
+        case detected, review, ignored
+
+        var title: String {
+            switch self {
+            case .detected: "Detected"
+            case .review: "Needs review"
+            case .ignored: "Ignored"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .detected: "checkmark.circle.fill"
+            case .review: "questionmark.circle"
+            case .ignored: "minus.circle"
+            }
+        }
+    }
+
+    static let toCheck = " · To check: "
+
+    var verdict: Verdict {
+        if steps.contains(where: { $0.mark != .done }) { return .ignored }
+        return steps.last?.detail.contains(Self.toCheck) == true ? .review : .detected
+    }
+
+    /// Why it was ignored, what to check, or where it went
+    var explanation: String {
+        if let stop = steps.first(where: { $0.mark != .done }) {
+            return stop.mark == .failed ? stop.detail : "\(stop.title): not tried"
+        }
+        guard let last = steps.last?.detail else { return "" }
+        if let range = last.range(of: Self.toCheck) {
+            return last[range.upperBound...] + ". " + last[..<range.lowerBound]
+        }
+        return last
+    }
+
     var encoded: String? {
         (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) }
     }

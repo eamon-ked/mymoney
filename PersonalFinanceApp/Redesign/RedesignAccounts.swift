@@ -326,6 +326,8 @@ extension Redesign {
 // MARK: - Adding accounts, cards and loans
 
 extension Redesign {
+    /// Adds an account, or, when `startsWithLoan`, something they owe: first "Who do you owe?" (a person,
+    /// a loan or a card), then only that one's fields
     struct AddAccountForm: View {
         let startsWithLoan: Bool
         var startKind: AccountKind?
@@ -343,23 +345,34 @@ extension Redesign {
         @State private var problem: String?
 
         private let kinds: [AccountKind] = [.bank, .cash, .savings, .creditCard, .loan, .investment, .lent, .otherAsset]
+        /// Who they owe, in the order people think of it
+        static let owedTo: [(kind: AccountKind, name: String)] = [(.lent, "A person"), (.loan, "A loan"), (.creditCard, "A credit card")]
 
         var body: some View {
             VStack(alignment: .leading, spacing: 16) {
-                Field(label: "Type") {
-                    Choice(value: $kind, options: kinds) { Redesign.kindName($0) }
+                if startsWithLoan {
+                    Field(label: "Who do you owe?") {
+                        Pills(options: Self.owedTo.map(\.name),
+                              selection: Binding(get: { Self.owedTo.first { $0.kind == kind }?.name ?? "A loan" },
+                                                 set: { name in kind = Self.owedTo.first { $0.name == name }?.kind ?? .loan }))
+                    }
+                    .accessibilityIdentifier("owedTo")
+                } else {
+                    Field(label: "Type") {
+                        Choice(value: $kind, options: kinds) { Redesign.kindName($0) }
+                    }
                 }
-                if kind == .lent {
+                if kind == .lent && !startsWithLoan {
                     Pills(options: ["They owe me", "I owe them"], selection: Binding(get: { iOwe ? "I owe them" : "They owe me" },
                                                                                    set: { iOwe = $0 == "I owe them" }))
                 }
                 Field(label: kind == .lent ? "Their name" : "Name") {
                     TextField(kind == .loan ? "e.g. Car loan" : kind == .creditCard ? "e.g. Cashback card" : kind == .cash ? "e.g. Wallet"
                               : kind == .lent ? "e.g. Sam" : "e.g. Everyday account", text: $name)
-                        .accessibilityIdentifier(kind.isLiability ? "loanName" : "accountName")
+                        .accessibilityIdentifier(kind.isLiability || startsWithLoan ? "loanName" : "accountName")
                 }
                 AmountBox(label: kind.isLiability ? "Owed today in \(app.currency)" : kind == .lent ? (iOwe ? "You owe them, in \(app.currency)" : "They owe you, in \(app.currency)")
-                          : "Current balance in \(app.currency)", text: $balance, identifier: kind.isLiability ? "loanOwed" : "openingBalance")
+                          : "Current balance in \(app.currency)", text: $balance, identifier: kind.isLiability || startsWithLoan ? "loanOwed" : "openingBalance")
                 if kind != .cash && kind != .lent {
                     Field(label: kind.isLiability ? "Bank or lender, with the last four digits (optional)" : "Bank, with the last four digits (optional)") {
                         TextField("e.g. City Bank 4821", text: $institution)
@@ -384,12 +397,12 @@ extension Redesign {
                 }
                 Text(explanation).rdText(.caption).foregroundStyle(Theme.muted).lineSpacing(3)
                 Problem(text: problem)
-                Button(kind.isLiability ? "Add \(kind == .loan ? "loan" : "card")" : "Add account", action: save)
+                Button(kind.isLiability ? "Add \(kind == .loan ? "loan" : "card")" : startsWithLoan ? "Add what you owe" : "Add account", action: save)
                     .buttonStyle(PrimaryButtonStyle())
-                    .accessibilityIdentifier(kind.isLiability ? "saveLoan" : "addAccount")
+                    .accessibilityIdentifier(kind.isLiability || startsWithLoan ? "saveLoan" : "addAccount")
             }
             .onAppear {
-                if startsWithLoan { kind = .loan } else if let startKind { kind = startKind }
+                if startsWithLoan { kind = startKind ?? .loan; iOwe = true } else if let startKind { kind = startKind }
                 fundingId = app.moneyAccounts.first { $0.id == app.store.settings.lastUsedAccountId }?.id ?? app.moneyAccounts.first?.id
             }
         }
@@ -398,6 +411,7 @@ extension Redesign {
             switch kind {
             case .loan: "Not the original loan: what's left to pay. A loan is money you owe, never counted as cash. With a payment day, the payment joins your bills and is kept aside in safe to spend."
             case .creditCard: "The balance from your banking app or statement. Card spending counts as spending; paying the card is a transfer, not new spending."
+            case .lent where startsWithLoan: "What you owe a friend or family member. It counts in your net worth, not in safe to spend."
             case .lent: "A friend or family member: what they owe you, or what you owe them. It counts in your net worth, not in safe to spend."
             case .savings, .investment, .otherAsset: "Counts in your net worth. Savings aren't safe to spend unless you choose that on the account."
             default: "This balance is added to your total cash and safe to spend."
@@ -409,7 +423,7 @@ extension Redesign {
             let title = name.trimmingCharacters(in: .whitespaces)
             guard !title.isEmpty else { problem = kind == .lent ? "Add their name." : "Give the account a name."; return }
             guard let owed = balance.isEmpty ? Money.zero(app.currency) : app.parse(balance), !owed.isNegative else {
-                problem = kind.isLiability ? "Enter what you owe, or 0." : "Enter the current balance, or 0."; return
+                problem = kind.isLiability || startsWithLoan ? "Enter what you owe, or 0." : "Enter the current balance, or 0."; return
             }
             let monthly = payment.isEmpty ? nil : app.parse(payment)
             if !payment.isEmpty && monthly?.isPositive != true { problem = "Enter the monthly payment as a number."; return }

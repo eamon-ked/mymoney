@@ -696,12 +696,21 @@ extension Redesign {
                     }
                     if ["All", "Loans", "Cards"].contains(filter) {
                         let owed = (filter != "Cards" ? app.loans : []) + (filter != "Loans" ? app.cards : [])
-                        if filter == "All" && !owed.isEmpty { Redesign.overline("What you owe").padding(.top, 16) }
+                        if filter == "All" { Redesign.overline("What you owe").padding(.top, 16) }
                         VStack(spacing: 12) {
                             if filter != "Cards" { ForEach(app.loans) { AccountRow(account: $0) } }
                             if filter != "Loans" { ForEach(app.cards) { CardFaceButton(card: $0) } }
-                            if owed.isEmpty && filter != "All" {
+                            if filter == "All" {
                                 Button { app.open(.newAccount(loan: true)) } label: {
+                                    Label("Add something you owe", systemImage: "plus.circle")
+                                        .rdText(.label).foregroundStyle(Theme.primary)
+                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(.horizontal, 4)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("addOwed")
+                            } else if owed.isEmpty {
+                                Button { app.open(.newAccount(loan: true, kind: filter == "Cards" ? .creditCard : .loan)) } label: {
                                     EmptyNote(text: filter == "Cards" ? "No credit cards. Tap to add one." : "No loans. Tap to add one.")
                                 }
                                 .buttonStyle(.plain)

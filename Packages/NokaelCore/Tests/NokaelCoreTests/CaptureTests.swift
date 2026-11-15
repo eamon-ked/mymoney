@@ -8,6 +8,25 @@ struct CaptureTests {
 
     func read(_ text: String) -> Capture? { AlertParser.read(text, homeCurrency: "AED", date: now) }
 
+    // MARK: - Card amounts from Shortcuts
+
+    @Test("A card amount is read the same way in any country",
+          arguments: [("AED 45.00", "AED", "45", "AED"), ("$45.00", "USD", "45", "USD"), ("$45.00", "CAD", "45", "CAD"),
+                      ("45,00 €", "EUR", "45", "EUR"), ("1.234,56 €", "EUR", "1234.56", "EUR"), ("£1,234.56", "GBP", "1234.56", "GBP"),
+                      ("45.5", "INR", "45.5", "INR"), ("1 234,50", "SEK", "1234.5", "SEK"), ("KWD 1.234", "KWD", "1.234", "KWD"),
+                      ("¥1,200", "JPY", "1200", "JPY"), ("€12.00", "AED", "12", "EUR"),
+                      ("-AED 45.00", "AED", "-45", "AED"), ("AED -45.00", "AED", "-45", "AED"), ("($20.00)", "USD", "-20", "USD")])
+    func cardAmounts(text: String, home: String, value: String, currency: String) throws {
+        let money = try #require(AlertParser.cardAmount(text, homeCurrency: home))
+        #expect(money.decimal == Decimal(string: value))
+        #expect(money.currency == currency)
+    }
+
+    @Test("Text that isn't an amount is turned away", arguments: ["", "Visa", "Corner Cafe", "0", "AED"])
+    func cardAmountRefusals(text: String) {
+        #expect(AlertParser.cardAmount(text, homeCurrency: "AED") == nil)
+    }
+
     // MARK: - Reading alerts
 
     @Test func readsUAEPurchaseAlerts() throws {

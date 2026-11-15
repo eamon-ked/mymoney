@@ -57,6 +57,7 @@ struct NokaelMoneyApp: App {
         BackgroundRefresh.register()
         NokaelShortcuts.updateAppShortcutParameters()
         AmountFieldSelection.install()
+        ProblemReports.shared.start()
     }
 
     var body: some Scene {

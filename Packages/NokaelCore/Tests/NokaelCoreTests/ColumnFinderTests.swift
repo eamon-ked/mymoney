@@ -103,4 +103,18 @@ struct ColumnFinderTests {
         let layout = try #require(StatementImport.layout(in: csv, currency: "KES", calendar: calendar))
         #expect(layout.guess == StatementColumns(date: 0, description: 3, amount: 4))
     }
+
+    /// "Reference no" names a code: what each row was for sits under "Transaction", even when it repeats
+    @Test func aReferenceNumberIsNotTheDescription() throws {
+        let csv = """
+        Date,Transaction,Reference no,Debit,Credit,Balance
+        01/10/2026,Card Purchase,POSB0001aXq,12.000,0.000,4988.000
+        02/10/2026,Card Purchase,POSB0002bYr,40.000,0.000,4948.000
+        03/10/2026,Transfer in Amina Njeri,IPPC0003cZs,0.000,1500.000,6448.000
+        """
+        let layout = try #require(StatementImport.layout(in: csv, currency: "AED", calendar: calendar))
+        #expect(layout.guess == StatementColumns(date: 0, description: 1, debit: 3, credit: 4, balance: 5))
+        let rows = try StatementImport.read(csv, currency: "AED", calendar: calendar)
+        #expect(rows.map(\.amount) == [Money(-12, currency: "AED"), Money(-40, currency: "AED"), Money(1500, currency: "AED")])
+    }
 }

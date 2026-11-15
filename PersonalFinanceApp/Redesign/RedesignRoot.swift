@@ -282,6 +282,7 @@ extension Redesign {
                             Image(systemName: selected && tab == .home ? "house.fill" : tab.symbol)
                                 .font(.system(size: 19, weight: selected ? .semibold : .regular))
                             Text(tab.rawValue).rdText(.nav).fontWeight(selected ? .semibold : .medium)
+                                .lineLimit(1).minimumScaleFactor(0.7)
                         }
                         .frame(maxWidth: .infinity, minHeight: 54)
                         .foregroundStyle(selected ? Theme.primary : Theme.foreground.opacity(0.6))
@@ -299,6 +300,8 @@ extension Redesign {
                 }
             }
             .padding(6)
+            // Five labels share one row, so they stop growing where they'd no longer fit, as the system tab bar does
+            .dynamicTypeSize(...DynamicTypeSize.xxLarge)
             .background(.ultraThinMaterial, in: Capsule())
             .background(dark ? Color(hex: 0x252D24, opacity: 0.6) : .white.opacity(0.3), in: Capsule())
             .overlay(Capsule().stroke(.white.opacity(dark ? 0.15 : 0.7), lineWidth: 1))
@@ -331,6 +334,7 @@ extension Redesign {
         private var items: [Item] {
             let own: [Item] = switch app.createAction {
             case .account: [Item(label: "Lend Money", symbol: "person.2", sheet: .lend(nil, .lend)),
+                            Item(label: "Add Debt", symbol: "building.columns", sheet: .newAccount(loan: true)),
                             Item(label: "Add Cash", symbol: "banknote", sheet: .newCash),
                             Item(label: "Add Account", symbol: "creditcard", sheet: .newAccount(loan: false))]
             case .category: [Item(label: "Add Category", symbol: "square.grid.2x2", sheet: .newCategory)]

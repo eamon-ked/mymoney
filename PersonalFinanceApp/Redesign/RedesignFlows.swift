@@ -647,16 +647,23 @@ extension Redesign {
     /// iOS doesn't let apps read Wallet or messages, so the person sets up two Shortcuts automations once; this page
     /// walks through them, lists the cards it has learned, picks which SMS senders count as banks, and tries a message.
     struct CapturePage: View {
+        /// The overview, or one way of capturing, each on its own screen
+        enum Section { case overview, bank, applePay, siri, activity }
+
+        var section: Section = .overview
         @Environment(AppModel.self) private var app
         @Environment(\.openURL) private var openURL
         @State private var newSender = ""
         @State private var testText = ""
         @State private var testSender = ""
         @State private var testRun: CaptureTrace?
+        @State private var testSteps = false
         @State private var confirmClear = false
         @State private var traceProblem: String?
         @State private var openTrace: UUID?
         @State private var byHand = false
+        @State private var addingBank = false
+        @State private var applePaySteps: Bool?
 
         private var settings: SettingsRecord { app.store.settings }
         /// The person's choice, else the phone's country if we know its banks, else the country of their currency
@@ -670,57 +677,140 @@ extension Redesign {
 
         var body: some View {
             VStack(alignment: .leading, spacing: 0) {
-                if !app.isPlus {
-                    LinkRow(symbol: "wallet.pass", title: "Apple Pay and bank SMS capture",
-                            detail: "Adding by voice with Siri is free. Saving Apple Pay purchases and bank alerts automatically comes with Nokael Plus.",
-                            badge: "PLUS") { app.open(.paywall(.autoCapture)) }
-                        .rdPanel(padding: 0)
-                        .padding(.bottom, 24)
+                switch section {
+                case .overview: overview
+                case .bank:
+                    bankAlerts
+                    yourBanks
+                    tryIt
+                case .applePay: applePay
+                case .siri: siri
+                case .activity: history
                 }
-                siri
-                applePay
-                sms
-                tryIt
-                history
             }
         }
 
+        // MARK: Overview
+
+        @ViewBuilder private var overview: some View {
+            if !app.isPlus {
+                LinkRow(symbol: "wallet.pass", title: "Apple Pay and bank messages",
+                        detail: "Siri is free. Saving Apple Pay purchases and bank alerts automatically comes with Nokael Plus.",
+                        badge: "PLUS") { app.open(.paywall(.autoCapture)) }
+                    .rdPanel(padding: 0)
+                    .padding(.bottom, 24)
+            }
+            Text("Choose how purchases get into Nokael Money. Each one is set up once.")
+                .rdText(.body).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4).padding(.bottom, 16)
+            VStack(spacing: 0) {
+                LinkRow(symbol: "message", title: "Bank messages",
+                        detail: seen(app.store.lastBankMessage?.date, "Last message", none: "No message received yet")) {
+                    app.show(.captureBank)
+                }
+                .accessibilityIdentifier("captureBank")
+                line
+                LinkRow(symbol: "wallet.pass", title: "Apple Pay",
+                        detail: seen(app.store.lastCardPurchase?.date, "Last purchase", none: "No purchase received yet")) {
+                    app.show(.captureApplePay)
+                }
+                .accessibilityIdentifier("captureApplePay")
+                line
+                LinkRow(symbol: "waveform", title: "Siri", detail: "Ready to use, nothing to set up") { app.show(.captureSiri) }
+                    .accessibilityIdentifier("captureSiri")
+            }
+            .rdPanel(padding: 0)
+            Redesign.footnote("Anything Nokael isn't sure of waits on To check for you. A payment that arrives by Apple Pay and by bank message is saved once.")
+                .padding(.top, 10).padding(.horizontal, 4).padding(.bottom, 24)
+            let traces = app.store.captureTraces
+            if !traces.isEmpty {
+                LinkRow(symbol: "clock.arrow.circlepath", title: "What came in", detail: summary(traces)) { app.show(.captureActivity) }
+                    .accessibilityIdentifier("captureActivity")
+                    .rdPanel(padding: 0)
+                    .padding(.bottom, 24)
+            }
+        }
+
+        /// "Last message 15 minutes ago": only what reached the app, never a guess that the automation is on
+        private func seen(_ date: Date?, _ label: String, none: String) -> String {
+            date.map { "\(label) \($0.formatted(.relative(presentation: .named)))" } ?? none
+        }
+
+        /// "This week: 5 saved, 2 ignored"
+        private func summary(_ traces: [CaptureTrace]) -> String {
+            let week = traces.filter { $0.date > app.store.now().addingTimeInterval(-7 * 86_400) }
+            guard !week.isEmpty else { return "Nothing this week" }
+            let ignored = week.filter { $0.verdict == .ignored }.count
+            let saved = week.count - ignored
+            return ignored == 0 ? "This week: \(saved) saved" : "This week: \(saved) saved, \(ignored) ignored"
+        }
+
+        /// One panel: the button that adds the shared shortcut, then the steps in Shortcuts to switch on the
+        /// automation it brings (Shortcuts adds it switched off). By hand replaces the steps for older iOS.
+        private func setUp(button: String, id: String, link: URL, steps: [String], after: String,
+                           byHand: Bool, toggle: @escaping () -> Void, manual: [String]) -> some View {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Set it up once").rdText(.cardTitle)
+                Button(button) { Task { openURL(await Self.resolved(link)) } }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier(id)
+                Steps(steps: byHand ? manual : steps)
+                if !byHand {
+                    Text(after).rdText(.detail).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                }
+                Button(byHand ? "Use the shortcut instead" : "Set it up by hand instead") { withAnimation { toggle() } }
+                    .rdText(.detail).foregroundStyle(Theme.primary)
+            }
+            .rdPanel()
+        }
+
+        private var line: some View { Rectangle().fill(Theme.border.opacity(0.5)).frame(height: 1).padding(.leading, 64) }
+
+        // MARK: Siri
+
         private var siri: some View {
             VStack(alignment: .leading, spacing: 0) {
-                Redesign.overline("Siri")
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Ready to use, nothing to create", systemImage: "checkmark.circle").rdText(.detailStrong).foregroundStyle(Theme.primary)
-                    Text("Just say “Hey Siri” and one of these:").rdText(.detail).foregroundStyle(Theme.muted)
+                    Label("Already on, nothing to set up", systemImage: "checkmark.circle").rdText(.detailStrong).foregroundStyle(Theme.primary)
+                    Text("Say “Hey Siri” and one of these:").rdText(.detail).foregroundStyle(Theme.muted)
                     ForEach(["“Log spending in Nokael Money”, then “45 at the supermarket”",
                              "“What's safe to spend in Nokael Money”",
                              "“Add income in Nokael Money”"], id: \.self) { phrase in
                         Label(phrase, systemImage: "waveform").rdText(.detail)
                     }
-                    Text("Want a button for it? Open Nokael Money in Shortcuts, then press and hold one to add it to your Home Screen or Action button.")
-                        .rdText(.caption).foregroundStyle(Theme.muted).padding(.top, 4)
-                    ShortcutsLink().shortcutsLinkStyle(.automaticOutline)
                 }
                 .rdPanel()
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Want a button for one? This lists them in Shortcuts; press and hold one to add it to your Home Screen or Action button.")
+                        .rdText(.detail).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                    ShortcutsLink().shortcutsLinkStyle(.automaticOutline)
+                }
+                .padding(.top, 16).padding(.horizontal, 4)
                 Redesign.footnote("Entries from Siri use your last account and the category you used before for that shop. Anything Nokael had to guess is marked for review.")
-                    .padding(.top, 10).padding(.horizontal, 4).padding(.bottom, 24)
+                    .padding(.top, 16).padding(.horizontal, 4).padding(.bottom, 24)
             }
         }
 
+        // MARK: Apple Pay
+
         private var applePay: some View {
-            VStack(alignment: .leading, spacing: 0) {
-                Redesign.overline("Apple Pay")
-                VStack(alignment: .leading, spacing: 14) {
-                    Steps(steps: [
-                        "Open Shortcuts, tap Automation, then +.",
-                        "Choose Transaction. Select all your cards and choose Run Immediately.",
-                        "Tap New Blank Automation and add “Log Card Purchase” from Nokael Money.",
-                        "Set Amount, Merchant and Card to the matching Shortcut Input values, then tap Done.",
-                    ])
-                    Button("Open Shortcuts") { openURL(URL(string: "shortcuts://")!) }.buttonStyle(QuietButtonStyle())
-                }
-                .rdPanel()
+            let showSteps = applePaySteps ?? false
+            return VStack(alignment: .leading, spacing: 0) {
+                lastSeen(app.store.lastCardPurchase.map { ($0.date, $0.summary) }, label: "Last card purchase",
+                         none: "No card purchase has reached Nokael Money yet.")
+                    .padding(.bottom, 16)
+                setUp(button: "Add the Apple Pay shortcut", id: "addApplePayAutomation", link: Self.applePayShortcut,
+                      steps: AppGuide.applePaySetupSteps, after: "Then pay with Apple Pay once. It shows at the top of this page.",
+                      byHand: showSteps, toggle: { applePaySteps = !showSteps }, manual: [
+                          "Open Shortcuts, tap Automation, then +.",
+                          "Choose Transaction. Select all your cards and choose Run Immediately.",
+                          "Tap New Blank Automation and add “Log Card Purchase” from Nokael Money.",
+                          "Set Amount, Merchant and Card to the matching Shortcut Input values, then tap Done.",
+                      ])
                 let links = app.store.fetch(CardLinkRecord.self).sorted { $0.hint < $1.hint }
                 if !links.isEmpty {
+                    Redesign.overline("Your cards").padding(.top, 24)
                     VStack(spacing: 0) {
                         ForEach(Array(links.enumerated()), id: \.element.hint) { i, link in
                             HStack {
@@ -738,79 +828,129 @@ extension Redesign {
                     }
                     .padding(.horizontal, 16)
                     .rdPanel(padding: 0)
-                    .padding(.top, 12)
                 }
-                lastSeen(app.store.lastCardPurchase.map { ($0.date, $0.summary) }, label: "Last card purchase",
-                         none: "No card purchase has reached Nokael Money yet. If you've paid with your iPhone or Watch since setting this up, open the automation and check it's on, set to Run Immediately, and has your cards selected.")
-                Redesign.footnote("Each tap of your iPhone or Watch is saved for review. When a new card is used, check the account once and choose “Always use this account”.")
+                Redesign.footnote(links.isEmpty
+                                  ? "Each tap of your iPhone or Watch is saved for review. The first time a card is used, choose its account once."
+                                  : "A new card appears here the first time you use it. Forget one to choose its account again.")
                     .padding(.top, 10).padding(.horizontal, 4).padding(.bottom, 24)
             }
         }
 
-        @ViewBuilder private var sms: some View {
-            let banks = BankSenders.banks(region: region)
-            let chosen = Set(settings.bankSenders)
-            let known = Set(banks.flatMap(\.senders))
-            let own = settings.bankSenders.filter { !known.contains($0) }
-            VStack(alignment: .leading, spacing: 12) {
-                Redesign.overline("Your banks").padding(.bottom, -12)
-                Field(label: "Country") {
-                    Choice(value: Binding(get: { region }, set: { value in try? app.store.updateSettings { $0.bankRegion = value } }),
-                           options: Self.regions.map(\.code)) { code in Self.regions.first { $0.code == code }?.name ?? code }
-                }
-                ForEach(banks) { bank in
-                    ToggleRow(title: bank.name, detail: bank.senders.joined(separator: ", "),
-                              isOn: Binding(get: { bank.senders.contains(where: chosen.contains) }, set: { setSenders(bank.senders, on: $0) }))
-                }
-                if banks.isEmpty {
-                    Text("No suggested banks for this country yet. Add the name your bank's alerts come from below.")
-                        .rdText(.detail).foregroundStyle(Theme.muted)
-                }
-                ForEach(own, id: \.self) { sender in
-                    HStack {
-                        Text(sender).rdText(.cardTitle)
-                        Spacer()
-                        Button("Remove") { setSenders([sender], on: false) }.rdText(.detail).foregroundStyle(Theme.destructive)
-                    }
-                    .padding(.horizontal, 16).frame(minHeight: 54).rdPanel(padding: 0)
-                }
-                Field(label: "Add a sender") {
-                    HStack {
-                        TextField("e.g. MyBankAlert", text: $newSender).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        Button("Add") {
-                            setSenders([newSender.trimmingCharacters(in: .whitespaces)], on: true)
-                            newSender = ""
+        // MARK: Bank messages
+
+        private var bankAlerts: some View {
+            VStack(alignment: .leading, spacing: 0) {
+                lastSeen(app.store.lastBankMessage.map { ($0.date, $0.summary) }, label: "Last message",
+                         none: "No bank message has reached Nokael Money yet.")
+                    .padding(.bottom, 16)
+                // One ready-made shortcut for every country: it brings an automation for each common currency
+                setUp(button: "Add the bank alerts shortcut", id: "addBankAutomation", link: Self.bankAlertShortcut,
+                      steps: AppGuide.bankSetupSteps(keyword: Optional(BankSenders.keyword(region: region)).flatMap { $0 == "Card" ? nil : $0 }),
+                      after: "Then add your bank below. Its next message shows at the top of this page.",
+                      byHand: byHand, toggle: { byHand.toggle() }, manual: manualSteps)
+                Spacer().frame(height: 24)
+            }
+        }
+
+        /// The banks whose messages count: the ones chosen, then a way to add another, suggested or typed
+        @ViewBuilder private var yourBanks: some View {
+            let suggested = BankSenders.banks(region: region)
+            let chosen = settings.bankSenders
+            // Chosen senders, grouped under their bank's name where we know it
+            let named = BankSenders.banks(region: region).filter { $0.senders.contains(where: chosen.contains) }
+            let known = Set(named.flatMap(\.senders))
+            let own = chosen.filter { !known.contains($0) }
+            VStack(alignment: .leading, spacing: 0) {
+                Redesign.overline("Your banks")
+                VStack(spacing: 0) {
+                    ForEach(named) { bank in
+                        bankRow(bank.name, detail: bank.senders.filter(chosen.contains).joined(separator: ", ")) {
+                            setSenders(bank.senders, on: false)
                         }
-                        .foregroundStyle(Theme.primary)
-                        .disabled(newSender.trimmingCharacters(in: .whitespaces).isEmpty)
+                        Redesign.hairline
                     }
+                    ForEach(own, id: \.self) { sender in
+                        bankRow(sender, detail: nil) { setSenders([sender], on: false) }
+                        Redesign.hairline
+                    }
+                    Button { withAnimation { addingBank.toggle() } } label: {
+                        Label(addingBank ? "Done adding" : "Add a bank", systemImage: addingBank ? "checkmark" : "plus")
+                            .rdText(.label).foregroundStyle(Theme.primary)
+                            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("addBank")
                 }
-                Redesign.footnote("Type the name your bank's alerts come from exactly as it appears in Messages. Messages from anyone else are ignored. With no banks chosen, any message that reads like a purchase is saved.")
-                    .padding(.horizontal, 4)
+                .padding(.horizontal, 16)
+                .rdPanel(padding: 0)
+                if chosen.isEmpty {
+                    Redesign.footnote("With no bank added, any message that reads like a purchase is saved. Add your bank so messages from anyone else are ignored.")
+                        .padding(.top, 10).padding(.horizontal, 4)
+                }
+                if addingBank {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Field(label: "The name your bank's messages come from") {
+                            HStack {
+                                TextField("e.g. MyBank or +4412345", text: $newSender)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .accessibilityIdentifier("newSender")
+                                Button("Add") {
+                                    setSenders([newSender.trimmingCharacters(in: .whitespaces)], on: true)
+                                    newSender = ""
+                                }
+                                .foregroundStyle(Theme.primary)
+                                .disabled(newSender.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                        }
+                        Text("Type it exactly as it shows at the top of the message in Messages.")
+                            .rdText(.caption).foregroundStyle(Theme.muted)
+                        Field(label: "Or pick from banks in") {
+                            Choice(value: Binding(get: { region }, set: { value in try? app.store.updateSettings { $0.bankRegion = value } }),
+                                   options: Self.regions.map(\.code)) { code in Self.regions.first { $0.code == code }?.name ?? code }
+                        }
+                        let unpicked = suggested.filter { !$0.senders.contains(where: chosen.contains) }
+                        if !unpicked.isEmpty {
+                            VStack(spacing: 0) {
+                                ForEach(Array(unpicked.enumerated()), id: \.element.id) { i, bank in
+                                    Button { setSenders(bank.senders, on: true) } label: {
+                                        HStack {
+                                            Text(bank.name).rdText(.cardTitle)
+                                            Spacer()
+                                            Image(systemName: "plus.circle").foregroundStyle(Theme.primary)
+                                        }
+                                        .frame(minHeight: 50).contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Add \(bank.name)")
+                                    if i < unpicked.count - 1 { Redesign.hairline }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .rdPanel(padding: 0)
+                        } else if suggested.isEmpty {
+                            Text("No suggested banks for this country yet. Type your bank's sender above.")
+                                .rdText(.detail).foregroundStyle(Theme.muted)
+                        }
+                    }
+                    .padding(.top, 16)
+                }
             }
             .padding(.bottom, 24)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Redesign.overline("Bank SMS alerts")
-                VStack(alignment: .leading, spacing: 14) {
-                    // One ready-made shortcut for every country: it listens for the ways banks write currencies
-                    Button("Add the bank alerts automation") { Task { openURL(await Self.resolved(Self.bankAlertShortcut)) } }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("addBankAutomation")
-                    Text("Opens Shortcuts with it ready: tap Add Shortcut, and turn on its automation if Shortcuts asks. It runs when a message mentions money.")
-                        .rdText(.detail).foregroundStyle(Theme.muted)
-                    Button(byHand ? "Hide the steps" : "Set it up by hand instead") { withAnimation { byHand.toggle() } }
-                        .rdText(.detail).foregroundStyle(Theme.primary)
-                    if byHand { Steps(steps: manualSteps) }
-                }
-                .rdPanel()
-                lastSeen(app.store.lastBankMessage.map { ($0.date, $0.summary) }, label: "Last alert",
-                         none: "No alert has reached Nokael Money yet. If your bank has texted since you set this up, open the automation and check it's on and set to Run Immediately.")
-                Redesign.footnote("Messages are read on this iPhone and never leave it. Only the purchase is saved, not the message. One-time codes, declined payments and offers are ignored.")
-                    .padding(.top, 10).padding(.horizontal, 4).padding(.bottom, 24)
-            }
         }
 
+        private func bankRow(_ name: String, detail: String?, remove: @escaping () -> Void) -> some View {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(name).rdText(.cardTitle)
+                    if let detail { Text(detail).rdText(.caption).foregroundStyle(Theme.muted) }
+                }
+                Spacer()
+                Button("Remove", action: remove).rdText(.detail).foregroundStyle(Theme.destructive)
+                    .accessibilityLabel("Remove \(name)")
+            }
+            .frame(minHeight: 54)
+        }
+
+        /// Paste a message and see what would happen to it, in a word, with the detail one tap away
         private var tryIt: some View {
             VStack(alignment: .leading, spacing: 12) {
                 Redesign.overline("Test a message").padding(.bottom, -12)
@@ -818,28 +958,51 @@ extension Redesign {
                     TextField("Message", text: $testText, axis: .vertical).lineLimit(3...6).padding(.vertical, 12)
                         .accessibilityIdentifier("captureTestMessage")
                 }
-                Field(label: "Sender, as it shows in Messages (optional)") {
-                    TextField("e.g. ADCBAlert", text: $testSender).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Field(label: "Who it's from, as it shows in Messages (optional)") {
+                    TextField("e.g. MyBank", text: $testSender).textInputAutocapitalization(.never).autocorrectionDisabled()
                 }
                 Button("Test it") { Task { await test() } }
                     .buttonStyle(QuietButtonStyle())
                     .disabled(testText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("captureTestButton")
-                if let testRun { TraceSteps(trace: testRun, hidden: hidesTraces).rdPanel() }
-                Redesign.footnote("Goes through every step a real alert does, including your banks, Nokael Plus, duplicates and which account, without Apple Intelligence. Nothing is saved.")
+                if let testRun { testResult(testRun) }
+                Redesign.footnote("Nothing is saved. Messages are read on this iPhone and never leave it; only the purchase is kept, not the message.")
                     .padding(.horizontal, 4)
             }
             .padding(.bottom, 24)
         }
 
+        private func testResult(_ run: CaptureTrace) -> some View {
+            let verdict = run.verdict
+            let read = verdict == .ignored ? nil : run.read
+            return VStack(alignment: .leading, spacing: 10) {
+                Label(verdict.title, systemImage: verdict.symbol)
+                    .rdText(.cardTitle).foregroundStyle(verdict == .ignored ? Theme.muted : Theme.primary)
+                    .accessibilityIdentifier("captureVerdict")
+                if let read {
+                    Text(private: MoneyFormat.string(read.amount)).rdText(.figure)
+                    if !read.name.isEmpty {
+                        Text(private: (read.spent ? "" : "From ") + read.name).rdText(.body)
+                    }
+                }
+                Text(private: hidesTraces && verdict != .ignored ? "Hidden in Privacy Mode." : run.explanation)
+                    .rdText(.detail).foregroundStyle(Theme.muted).fixedSize(horizontal: false, vertical: true)
+                Button(testSteps ? "Hide each step" : "Show each step") { withAnimation { testSteps.toggle() } }
+                    .rdText(.detail).foregroundStyle(Theme.primary)
+                if testSteps { TraceSteps(trace: run, hidden: hidesTraces) }
+            }
+            .rdPanel()
+        }
+
         /// The steps name amounts, shops, accounts and references, so any Privacy Mode hides them
         private var hidesTraces: Bool { app.hidesAmounts || app.hidesDetails }
 
-        /// What became of the last few alerts and taps, step by step
+        // MARK: What came in
+
+        /// What became of the last few alerts and taps: a word for each, and the steps on a tap
         @ViewBuilder private var history: some View {
             let traces = app.store.captureTraces
             VStack(alignment: .leading, spacing: 0) {
-                Redesign.overline("What happened to each one")
                 if traces.isEmpty {
                     Text("Nothing has reached Nokael Money yet. Each bank message and Wallet tap will show here with what became of it.")
                         .rdText(.detail).foregroundStyle(Theme.muted).rdPanel()
@@ -850,11 +1013,12 @@ extension Redesign {
                                 withAnimation(.snappy) { openTrace = openTrace == trace.id ? nil : trace.id }
                             } label: {
                                 HStack(spacing: 10) {
-                                    Image(systemName: trace.saved ? "checkmark.circle.fill" : "exclamationmark.circle")
-                                        .foregroundStyle(trace.saved ? Theme.primary : Theme.muted)
+                                    Image(systemName: trace.verdict.symbol)
+                                        .foregroundStyle(trace.verdict == .ignored ? Theme.muted : Theme.primary)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("\(trace.source.title) · \(trace.date.formatted(.relative(presentation: .named)))").rdText(.detailStrong)
-                                        Text(private: hidesTraces ? "Hidden in Privacy Mode." : trace.headline).rdText(.caption)
+                                        Text("\(trace.verdict.title) · \(trace.source.title) · \(trace.date.formatted(.relative(presentation: .named)))")
+                                            .rdText(.detailStrong)
+                                        Text(private: hidesTraces ? "Hidden in Privacy Mode." : trace.explanation).rdText(.caption)
                                             .foregroundStyle(Theme.muted).lineLimit(openTrace == trace.id ? nil : 2)
                                     }
                                     .multilineTextAlignment(.leading)
@@ -943,9 +1107,12 @@ extension Redesign {
             }
         }
 
-        /// A shared shortcut carrying the Message trigger and the Read Bank Message action. The link
+        /// A shared shortcut with the Read Bank Message action; the person adds its Message automation. The link
         /// goes through our site (legal-docs/_redirects), so a new version ships without an app update.
         static let bankAlertShortcut = URL(string: "https://mymoney-legal-docs.pages.dev/s/bank-alerts")!
+
+        /// The same for Apple Pay: the Log Card Purchase action, run by the person's Transaction automation
+        static let applePayShortcut = URL(string: "https://mymoney-legal-docs.pages.dev/s/apple-pay")!
 
         /// Where our redirect points now. Opened directly, an iCloud shortcut link goes straight to
         /// Shortcuts; reached through a redirect in Safari it stops on the web page instead.
@@ -1019,10 +1186,12 @@ extension Redesign {
 #if DEBUG
 extension Redesign {
     /// Screenshot helpers: -tab budget|accounts|bills|more|activity|reports and
-    /// -screen forecast|reports|payday|choose|guide|capture|settings|add [-addKind income]|ask|debtpay|loan|paywall|import|person
+    /// -screen forecast|reports|payday|choose|guide|capture|applepay|bankalerts|settings|add [-addKind income]|ask|debtpay|loan|paywall|import|person
     enum DebugScreens {
         @MainActor static func open(in app: AppModel) {
             let defaults = UserDefaults.standard
+            // -openEntry <id>: opens an entry the way a tapped notification does
+            if let id = defaults.string(forKey: "openEntry").flatMap(UUID.init(uuidString:)) { AppRouter.shared.open(.entry(id)) }
             switch defaults.string(forKey: "tab") {
             case "budget": app.go(.budget)
             case "accounts": app.go(.accounts)
@@ -1045,6 +1214,12 @@ extension Redesign {
             case "forecast": app.show(.forecast)
             case "reports": app.show(.reports)
             case "capture": app.show(.capture)
+            case "applepay": app.show(.capture); app.show(.captureApplePay)
+            case "bankalerts": app.show(.capture); app.show(.captureBank)
+            case "captureBank": app.show(.capture); app.show(.captureBank)
+            case "captureActivity": app.show(.capture); app.show(.captureActivity)
+            case "captureApplePay": app.show(.capture); app.show(.captureApplePay)
+            case "captureSiri": app.show(.capture); app.show(.captureSiri)
             case "settings": app.show(.settings)
             case "payday": app.open(.payday)
             case "choose": app.open(.whatHappened)

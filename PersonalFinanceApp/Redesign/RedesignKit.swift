@@ -223,9 +223,12 @@ extension Redesign {
             var body: some View {
                 configuration.label
                     .rdText(.label)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20).padding(.vertical, 6)
                     .frame(maxWidth: .infinity, minHeight: 48)
                     .foregroundStyle(Theme.onPrimary)
-                    .background(Theme.primary, in: Capsule())
+                    // A pill at one line; at large text sizes the label wraps and the corners stay the same
+                    .background(Theme.primary, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .opacity(isEnabled ? 1 : 0.4)
                     .scaleEffect(configuration.isPressed ? 0.98 : 1)
             }

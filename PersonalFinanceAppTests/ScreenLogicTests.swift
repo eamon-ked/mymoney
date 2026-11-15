@@ -191,4 +191,64 @@ struct ScreenLogicTests {
         router.open(.bills)
         #expect(router.pending == .bills)
     }
+
+    /// Capture results read as one word: ignored with why, needs review with what to check, or detected
+    @Test("The guide answers questions about adding a debt with how to add one, not how to pay one",
+          arguments: ["How do I add a debt", "I owe my brother money", "add my car loan", "where do I add a credit card"])
+    func guideFindsAddingADebt(question: String) {
+        #expect(AppGuide.match(question).first?.id == "addLoan")
+    }
+
+    @Test("The guide sends setup questions to the right automation, and problems to the fix",
+          arguments: [("How do I set up Apple Pay", "applePay"), ("save my wallet purchases automatically", "applePay"),
+                      ("read my bank sms", "bankMessages"), ("bank alert messages", "bankMessages"),
+                      ("my apple pay automation isn't working", "automationOff"),
+                      ("bank messages are not saving", "automationOff"), ("the automation is disabled", "automationOff")])
+    func guideFindsAutomations(question: String, topic: String) {
+        #expect(AppGuide.match(question).first?.id == topic)
+    }
+
+    @Test func automationStepsSayWhichAutomationToTurnOn() {
+        let pay = AppGuide.applePaySetupSteps.joined(separator: " ")
+        #expect(pay.contains("Add Shortcut") && pay.contains("Library") && pay.contains("Automation") && pay.contains("Wallet pass"))
+        let bank = AppGuide.bankSetupSteps(keyword: "SAR").joined(separator: " ")
+        #expect(bank.contains("Message Containing") && bank.contains("SAR"))
+        // No country is assumed when the bank's currency isn't known
+        #expect(!AppGuide.bankSetupSteps(keyword: nil).joined().contains("AED"))
+        // A currency the shared shortcut doesn't cover gets an automation of its own that runs it
+        let other = AppGuide.bankSetupSteps(keyword: "CAD").joined(separator: " ")
+        #expect(other.contains("CAD") && other.contains("+") && other.contains(AppGuide.bankShortcutName))
+    }
+
+    @Test("Crash reports: only the newest five are kept, newest last")
+    func crashReportsKeepTheNewest() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("reports-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for day in 1...7 {
+            ProblemReports.save(Data("{\"n\":\(day)}".utf8), at: Date(timeIntervalSince1970: Double(day) * 86_400), in: folder)
+        }
+        let kept = ProblemReports.reports(in: folder)
+        #expect(kept.count == ProblemReports.kept)
+        #expect(try Data(contentsOf: kept.last!) == Data("{\"n\":7}".utf8))
+        #expect(try Data(contentsOf: kept.first!) == Data("{\"n\":3}".utf8))
+    }
+
+    @Test func captureVerdicts() {
+        var ignored = CaptureTrace(date: today, source: .sms)
+        ignored.add(CaptureTrace.reachedTitle, .done, "From Example Bank")
+        ignored.add(CaptureTrace.readTitle, .failed, "It reads like a personal message, not a bank alert")
+        ignored.add("Saved", .notReached, "Not tried")
+        #expect(ignored.verdict == .ignored)
+        #expect(ignored.explanation == "It reads like a personal message, not a bank alert")
+
+        var review = CaptureTrace(date: today, source: .sms)
+        review.add(CaptureTrace.savedTitle, .done, "To Checking in Groceries · To check: Check which account this was")
+        #expect(review.verdict == .review)
+        #expect(review.explanation == "Check which account this was. To Checking in Groceries")
+
+        var saved = CaptureTrace(date: today, source: .applePay)
+        saved.add(CaptureTrace.savedTitle, .done, "To Checking in Groceries")
+        #expect(saved.verdict == .detected)
+        #expect(saved.explanation == "To Checking in Groceries")
+    }
 }

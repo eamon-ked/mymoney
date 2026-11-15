@@ -720,7 +720,14 @@ extension Redesign {
                 }
         }
 
-        @ViewBuilder private func topicBody(_ topic: GuideTopic) -> some View {
+        /// The bank steps for this person's currency, the same ones the bank page shows
+        private var bankKeyword: String? {
+            let s = app.store.settings
+            return AppGuide.bankKeyword(region: AppGuide.bankRegion(chosen: s.bankRegion, phone: Locale.current.region?.identifier, currency: s.currency))
+        }
+
+        @ViewBuilder private func topicBody(_ general: GuideTopic) -> some View {
+            let topic = AppGuide.personalised(general, bankKeyword: bankKeyword)
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(topic.steps.enumerated()), id: \.offset) { i, step in
                     HStack(alignment: .firstTextBaseline, spacing: 10) {

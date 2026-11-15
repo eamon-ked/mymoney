@@ -212,12 +212,23 @@ struct ScreenLogicTests {
         let pay = AppGuide.applePaySetupSteps.joined(separator: " ")
         #expect(pay.contains("Add Shortcut") && pay.contains("Library") && pay.contains("Automation") && pay.contains("Wallet pass"))
         let bank = AppGuide.bankSetupSteps(keyword: "SAR").joined(separator: " ")
-        #expect(bank.contains("Message Containing") && bank.contains("SAR"))
+        #expect(bank.contains("Message Containing") && !bank.contains("SAR"))
         // No country is assumed when the bank's currency isn't known
         #expect(!AppGuide.bankSetupSteps(keyword: nil).joined().contains("AED"))
         // A currency the shared shortcut doesn't cover gets an automation of its own that runs it
         let other = AppGuide.bankSetupSteps(keyword: "CAD").joined(separator: " ")
         #expect(other.contains("CAD") && other.contains("+") && other.contains(AppGuide.bankShortcutName))
+    }
+
+    @Test func helpShowsTheBankStepsForThePersonsCurrency() throws {
+        let topic = try #require(AppGuide.topics.first { $0.id == "bankMessages" })
+        let canada = AppGuide.personalised(topic, bankKeyword: "CAD").steps
+        #expect(canada.contains { $0.contains("CAD") && $0.contains("+") })
+        #expect(canada.first == topic.steps.first && canada.last == topic.steps.last)
+        #expect(AppGuide.personalised(topic, bankKeyword: "AED").steps == topic.steps)
+        #expect(AppGuide.personalised(topic, bankKeyword: nil).steps == topic.steps)
+        // The person's chosen country wins over the phone's
+        #expect(AppGuide.bankRegion(chosen: "AE", phone: "GB", currency: "GBP") == "AE")
     }
 
     @Test("Crash reports: only the newest five are kept, newest last")

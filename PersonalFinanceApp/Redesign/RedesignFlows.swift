@@ -668,11 +668,7 @@ extension Redesign {
         private var settings: SettingsRecord { app.store.settings }
         /// The person's choice, else the phone's country if we know its banks, else the country of their currency
         private var region: String {
-            if let chosen = settings.bankRegion { return chosen }
-            let phone = Locale.current.region?.identifier ?? ""
-            if !BankSenders.banks(region: phone).isEmpty { return phone }
-            let byCurrency = ["AED": "AE", "SAR": "SA", "INR": "IN", "QAR": "QA", "KWD": "KW", "OMR": "OM", "BHD": "BH"]
-            return byCurrency[settings.currency] ?? phone
+            AppGuide.bankRegion(chosen: settings.bankRegion, phone: Locale.current.region?.identifier, currency: settings.currency)
         }
 
         var body: some View {
@@ -845,7 +841,7 @@ extension Redesign {
                     .padding(.bottom, 16)
                 // One ready-made shortcut for every country: it brings an automation for each common currency
                 setUp(button: "Add the bank alerts shortcut", id: "addBankAutomation", link: Self.bankAlertShortcut,
-                      steps: AppGuide.bankSetupSteps(keyword: Optional(BankSenders.keyword(region: region)).flatMap { $0 == "Card" ? nil : $0 }),
+                      steps: AppGuide.bankSetupSteps(keyword: AppGuide.bankKeyword(region: region)),
                       after: "Then add your bank below. Its next message shows at the top of this page.",
                       byHand: byHand, toggle: { byHand.toggle() }, manual: manualSteps)
                 Spacer().frame(height: 24)

@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import NokaelCore
 
 /// Something the guide can open for the person
 enum GuideAction: Hashable {
@@ -198,14 +199,38 @@ enum AppGuide {
     /// shortcut doesn't cover gets an automation of its own.
     static func bankSetupSteps(keyword: String?) -> [String] {
         let open = ["Tap Add Shortcut.", "Tap \u{2039} at the top left to go to Library.", "Tap Automation."]
-        guard let keyword else {
-            return open + ["Turn on the \u{201C}When I Get a Message Containing\u{201D} one with your currency, such as \u{2018}EUR\u{2019} or \u{2018}£\u{2019}."]
-        }
-        guard sharedMessageKeywords.contains(keyword) else {
+        if let keyword, !sharedMessageKeywords.contains(keyword) {
             return open + ["Tap +, choose Message, enter \u{201C}\(keyword)\u{201D} in Message Contains, choose Run Immediately and tap Next.",
                            "Pick \u{201C}\(bankShortcutName)\u{201D}."]
         }
-        return open + ["Turn on \u{201C}When I Get a Message Containing \u{2018}\(keyword)\u{2019}\u{201D}."]
+        return open + ["Turn on \u{201C}When I Get a Message Containing\u{201D} for your currency."]
+    }
+
+    /// Whose banks to show: the person's choice, else the phone's country if we know its banks, else the
+    /// country of their currency. The bank page and Help both use it, so their steps agree.
+    static func bankRegion(chosen: String?, phone: String?, currency: String) -> String {
+        if let chosen { return chosen }
+        let phone = phone ?? ""
+        if !BankSenders.banks(region: phone).isEmpty { return phone }
+        let byCurrency = ["AED": "AE", "SAR": "SA", "INR": "IN", "QAR": "QA", "KWD": "KW", "OMR": "OM", "BHD": "BH"]
+        return byCurrency[currency] ?? phone
+    }
+
+    /// The word bank messages in that country contain, or nil when the country isn't known
+    static func bankKeyword(region: String) -> String? {
+        let keyword = BankSenders.keyword(region: region)
+        return keyword == "Card" ? nil : keyword
+    }
+
+    /// A topic with the steps for this person's currency, where they differ from the general ones
+    static func personalised(_ topic: GuideTopic, bankKeyword: String?) -> GuideTopic {
+        guard topic.id == "bankMessages" else { return topic }
+        let general = bankSetupSteps(keyword: nil), mine = bankSetupSteps(keyword: bankKeyword)
+        guard let start = topic.steps.firstIndex(of: general[0]) else { return topic }
+        var steps = topic.steps
+        steps.replaceSubrange(start..<start + general.count, with: mine)
+        return GuideTopic(id: topic.id, title: topic.title, symbol: topic.symbol, steps: steps, tip: topic.tip,
+                          action: topic.action, actionTitle: topic.actionTitle, keywords: topic.keywords)
     }
 
     /// Best topics for what the person typed, most relevant first

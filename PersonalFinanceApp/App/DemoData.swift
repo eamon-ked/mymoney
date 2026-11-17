@@ -16,7 +16,11 @@ enum DemoData {
         let cal = store.calendar
         let today = store.now()
         func day(_ offset: Int) -> Date { cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: today))!.addingTimeInterval(12 * 3600) }
-        func aed(_ v: Decimal) -> Money { Money(v, currency: "AED") }
+        // -demoCurrency USD (for App Store screenshots) halves the amounts so they look usual there; AED by default for the tests
+        let currency = UserDefaults.standard.string(forKey: "demoCurrency") ?? "AED"
+        let scale: Decimal = currency == "AED" ? 1 : 0.5
+        try? store.updateSettings { $0.currency = currency }
+        func aed(_ v: Decimal) -> Money { Money(v * scale, currency: currency) }
 
         try? store.addStarterCategories()
         let s = store.snapshot

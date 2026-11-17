@@ -580,10 +580,14 @@ public enum StatementImport {
     public static func accountNumber(in text: String) -> String? {
         let rows = csvRows(text)
         let top = rows.prefix(while: { columns(header: $0) == nil }).prefix(15)
-        for cell in top.flatMap({ $0 }) {
-            let lower = cell.lowercased()
-            guard lower.contains("account number") || lower.contains("account no") || lower.contains("iban") else { continue }
-            if let number = longNumbers(cell).first { return number }
+        for row in top {
+            for (i, cell) in row.enumerated() {
+                let lower = cell.lowercased()
+                guard lower.contains("account number") || lower.contains("account no") || lower.contains("iban") else { continue }
+                if let number = longNumbers(cell).first { return number }
+                // From a PDF the number often lands in the next cell: "Account Number:" | "70345126560001 AED"
+                if let number = row.dropFirst(i + 1).lazy.compactMap({ longNumbers($0).first }).first { return number }
+            }
         }
         return nil
     }

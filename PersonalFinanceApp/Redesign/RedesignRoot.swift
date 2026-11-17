@@ -100,6 +100,7 @@ extension Redesign {
             .sheet(isPresented: $showingTour, onDismiss: { seenTour = true }) {
                 WelcomeTour().environment(app)
             }
+            .onOpenURL { url in if let route = AppRoute(url: url) { router.open(route) } }
             .onChange(of: router.pending, initial: true) { _, route in
                 guard let route else { return }
                 switch route {
@@ -115,6 +116,7 @@ extension Redesign {
                 case .backup: app.go(.more); app.show(.data)
                 case .importStatement: app.go(.accounts); app.open(.importStatement(nil))
                 case .person(let id): app.open(.account(id))
+                case .breakdown: app.go(.home); app.open(.breakdown)
                 case .tab(let t):
                     switch t {
                     case .home: app.go(.home)

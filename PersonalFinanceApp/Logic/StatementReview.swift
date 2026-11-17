@@ -144,6 +144,10 @@ final class StatementReview {
             lockedPDF = nil
             needsPassword = false
             load(StatementImport.csvText(grid), named: name)
+            // The table leaves out what's above it, where banks print the account number
+            if ownNumber == nil, let heading = StatementPDF.heading(from: data, password: password) {
+                ownNumber = StatementImport.accountNumber(in: heading)
+            }
         } catch StatementPDF.Problem.locked {
             lockedPDF = data
             fileName = name
@@ -448,7 +452,8 @@ final class StatementReview {
         let number = StatementImport.otherOwnAccount(in: row.description, ownNumber: ownNumber)
             ?? StatementImport.longNumbers(row.description).first { $0 != ownNumber }
         do {
-            let record = try store.addAccount(name: number.map { "Account …\($0.suffix(4))" } ?? "Other account", kind: .savings,
+            let known = snapshot.accounts.compactMap { $0.accountNumber.flatMap(AccountNumber.normalized) }
+            let record = try store.addAccount(name: number.map { "Account ••\(AccountNumber.shortEnding($0, among: known))" } ?? "Other account", kind: .savings,
                                               balance: .zero(store.currency), openingDate: row.date)
             if let number { try store.setAccountNumber(record.id, number) }
             for r in inbox where ownTransfers.contains(r.id) {
@@ -479,25 +484,96 @@ final class StatementReview {
 
     // MARK: - Balances
 
-    /// The app's balance at the end of the statement against the statement's own closing balance
-    var closingCheck: ReconciliationCheck? {
-        guard let balances, let closing = balances.closing else { return nil }
-        return Reconciler.check(ledger: snapshot.ledger, accountId: accountId,
-                                statementDate: snapshot.endOfDay(balances.lastDay), statementBalance: closing)
+    /// Entries the person said to keep although the statement doesn't show them
+    private(set) var kept: Set<UUID> = []
+
+    /// The account's entries for the statement's dates that it doesn't show: some not posted yet, some worth a look
+    var gaps: StatementGaps? {
+        guard let balances, !rows.isEmpty else { return nil }
+        let all = snapshot.entries(touching: accountId).filter { $0.kind != .openingBalance }
+        // An earlier correction is never a statement row, but one inside these dates may have hidden a mistake
+        let records = all.filter { ![.reconciliation, .adjustment].contains($0.kind) }
+        let recorded = records.map { record in
+            RecordedMovement(entryId: record.id, date: record.date,
+                             amount: record.lines.filter { $0.accountId == accountId }
+                                .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency),
+                             memo: record.memo)
+        }
+        let onStatement = Set(StatementImport.match(rows, with: recorded, calendar: store.calendar).values)
+            .union(StatementImport.possibleMatches(rows, with: recorded, matched: [:], calendar: store.calendar).values)
+        let candidates = all.filter { !kept.contains($0.id) }.map { record in
+            let card = record.cardHint.map { !$0.hasPrefix("account ") } ?? false
+            let size = record.lines.filter { $0.accountId == accountId }
+                .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency)
+            return StatementGaps.Candidate(id: record.id, date: record.date, size: size, automatic: record.sourceRaw != nil,
+                                           cardPurchase: record.kind == .expense && (card || record.source == .applePay))
+        }
+        return StatementGaps.find(candidates, matched: onStatement, firstDay: balances.firstDay, lastDay: balances.lastDay,
+                                  calendar: store.calendar)
     }
 
-    /// Starts the account from the statement and, if it still differs, corrects it to the closing balance
+    /// What the account holds in entries the statement doesn't show yet
+    private func waitingTotal(_ gaps: StatementGaps?) -> Money {
+        let ids = Set(gaps?.waiting ?? [])
+        return snapshot.entries(touching: accountId).filter { ids.contains($0.id) }
+            .flatMap(\.lines).filter { $0.accountId == accountId }
+            .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency)
+    }
+
+    /// What one entry did to this account, the way the statement would show it: money in positive,
+    /// money out negative, whatever kind of entry it is
+    func effect(of entryId: UUID) -> Money? {
+        guard let record = snapshot.entries(touching: accountId).first(where: { $0.id == entryId }) else { return nil }
+        return record.lines.filter { $0.accountId == accountId }
+            .map { Money(minorUnits: $0.minorUnits, currency: $0.currency) }.sum(store.currency)
+    }
+
+    /// The account's balance today, which includes what isn't on the statement yet
+    var balanceToday: Money { snapshot.balance(accountId) }
+
+    /// The app's balance at the end of the statement against the statement's own closing balance,
+    /// leaving out what hasn't reached the statement yet
+    var closingCheck: ReconciliationCheck? {
+        guard let balances, let closing = balances.closing else { return nil }
+        let raw = Reconciler.check(ledger: snapshot.ledger, accountId: accountId,
+                                   statementDate: snapshot.endOfDay(balances.lastDay), statementBalance: closing)
+        let calculated = raw.calculated - waitingTotal(gaps)
+        return ReconciliationCheck(accountId: accountId, statementDate: raw.statementDate, calculated: calculated,
+                                   statement: closing, difference: closing - calculated, unreconciled: raw.unreconciled)
+    }
+
+    /// Starts the account from the statement and, if it still differs, corrects it to the closing balance.
+    /// What hasn't reached the statement yet is left out, never corrected away.
     func matchStatement() {
         guard let balances else { return }
         do {
             try store.anchorOpening(accountId, statementOpening: balances.opening, firstDay: balances.firstDay)
             if let closing = balances.closing, closingCheck?.matches == false {
+                let gaps = gaps
                 try store.reconcile(accountId: accountId, statementDate: snapshot.endOfDay(balances.lastDay),
-                                    statementBalance: closing, reason: "Matched to the statement")
+                                    statementBalance: closing + waitingTotal(gaps), reason: "Matched to the statement",
+                                    leavingOut: Set(gaps?.waiting ?? []))
             }
         } catch {
             self.error = StoreError.from(error).errorDescription
         }
+    }
+
+    /// The person checked an entry the statement doesn't show and it's right
+    func keep(_ entryId: UUID) { kept.insert(entryId) }
+
+    /// An entry the statement doesn't show was a mistake
+    func delete(_ entryId: UUID) {
+        do { try store.void(entryId) } catch { self.error = StoreError.from(error).errorDescription }
+    }
+
+    /// The statement is for a different account number than the one saved for this account
+    var numberMismatch: String? {
+        guard let ownNumber, let saved = account?.accountNumber.flatMap(AccountNumber.normalized),
+              !AccountNumber.agrees(saved, ownNumber) else { return nil }
+        let theirs = AccountNumber.shortEnding(ownNumber, among: [saved])
+        let ours = AccountNumber.shortEnding(saved, among: [ownNumber])
+        return "This statement is for account ••\(theirs), but \(account?.name ?? "this account") is ••\(ours). Check it's the right account before adding."
     }
 
     /// The same row of the same statement always gets the same key, so a

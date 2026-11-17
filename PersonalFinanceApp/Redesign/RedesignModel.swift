@@ -121,7 +121,7 @@ extension Redesign {
         /// What to show: people's balances are positive either way, with "Owes you" or "You owe" beside them
         var shown: Decimal { kind == .lent ? abs(balance) : balance }
         var caption: String { isLiability ? "You owe" : kind == .lent ? (youOwe ? "You owe" : "Owes you") : "Balance" }
-        var reference: String { number.isEmpty ? Redesign.kindName(kind) : "•••• \(number)" }
+        var reference: String { number.isEmpty ? Redesign.kindName(kind) : "••\(number)" }
     }
 
     static func kindName(_ kind: AccountKind) -> String {
@@ -212,7 +212,7 @@ extension Redesign {
         case account(UUID), bill(UUID), link(UUID), category(UUID), transaction(UUID)
         case payDebt(UUID, occurrence: UUID?), editDebtPayment(UUID), entryAsDebtPayment(UUID)
         case debtTerms(UUID), reconcile(UUID), accountType(UUID), startingAmount(UUID), finishLoan(UUID), lend(UUID?, LendAction)
-        case importStatement(UUID?), newAccount(loan: Bool, kind: AccountKind? = nil), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
+        case importStatement(UUID?), newAccount(loan: Bool, kind: AccountKind? = nil, number: String? = nil), newCash, newCategory, editCategory(UUID), moveMoney(UUID)
         case loansInCategory(UUID), goal(UUID), reserve(UUID?, goal: Bool), goalMoney(UUID, adding: Bool)
         case payday, help, intelligence, ask, paywall(PlusFeature), billLink(UUID)
         var id: Self { self }
@@ -375,7 +375,17 @@ extension Redesign {
         /// Card endings the person linked, else digits in the bank's name ("Visa 4821")
         private func cardDigits() -> [UUID: String] {
             var digits: [UUID: String] = [:]
-            for link in store.fetch(CardLinkRecord.self) {
+            // The account's own number first, with as many digits as it takes to tell it from the others
+            // (or the digits a bank message showed, once the person said whose they are)
+            let links = store.fetch(CardLinkRecord.self)
+            var numbers = snapshot.accounts.compactMap { r in r.accountNumber.flatMap(AccountNumber.normalized).map { (r.id, $0) } }
+            for link in links where link.hint.hasPrefix("account ") && !numbers.contains(where: { $0.0 == link.accountId }) {
+                if let d = AccountNumber.normalized(link.hint) { numbers.append((link.accountId, d)) }
+            }
+            for (id, number) in numbers {
+                digits[id] = AccountNumber.shortEnding(number, among: numbers.map(\.1).filter { $0 != number })
+            }
+            for link in links where digits[link.accountId] == nil {
                 let d = String(link.hint.filter(\.isNumber).suffix(4))
                 if d.count == 4 { digits[link.accountId] = d }
             }

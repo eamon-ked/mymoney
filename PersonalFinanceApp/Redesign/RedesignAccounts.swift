@@ -18,6 +18,8 @@ extension Redesign {
         @Environment(AppModel.self) private var app
         @State private var section = "Transactions"
         @State private var name = ""
+        @State private var number = ""
+        @FocusState private var numberFocused: Bool
         @State private var confirmArchive = false
 
         var body: some View {
@@ -85,9 +87,11 @@ extension Redesign {
                 .rdPanel(padding: 20)
 
                 if account.isLiability, let record { DebtSection(debt: record) }
-                if account.kind == .lent && account.balance > 0 {
+                if account.kind == .lent && account.balance > 0, let record {
+                    // Asking first, writing it off last
+                    OweReminder(person: record).padding(.top, 16)
                     Button("They won't pay it back") { app.open(.lend(account.id, .forgive)) }
-                        .buttonStyle(QuietButtonStyle()).padding(.top, 16)
+                        .buttonStyle(QuietButtonStyle()).padding(.top, 10)
                         .accessibilityIdentifier("forgive")
                 }
 
@@ -150,9 +154,19 @@ extension Redesign {
                         .onSubmit(rename)
                         .onAppear { name = r.name }
                 }
+                if r.kind.isBalanceSheet && r.kind != .lent && !app.hidesAccountNames {
+                    AccountNumberField(text: $number, accountId: r.id)
+                        .focused($numberFocused)
+                        .onAppear { number = r.accountNumber ?? "" }
+                        .onChange(of: numberFocused) { _, focused in if !focused { saveNumber() } }
+                        .onSubmit(saveNumber)
+                        .onDisappear(perform: saveNumber)
+                }
                 DetailCard {
                     DetailRow(label: "Type", value: Redesign.kindName(r.kind))
-                    DetailRow(label: "Number", value: app.hidesAccountNames ? "Hidden" : account.number.isEmpty ? "Not given" : "•••• \(account.number)")
+                    if app.hidesAccountNames || !(r.kind.isBalanceSheet && r.kind != .lent) {
+                        DetailRow(label: "Last digits", value: app.hidesAccountNames ? "Hidden" : account.number.isEmpty ? "Not given" : "••\(account.number)")
+                    }
                     if let bank = r.institution, !bank.isEmpty { DetailRow(label: "Bank", value: app.hidesAccountNames ? "Hidden" : bank) }
                     DetailRow(label: "Currency", value: r.currency)
                 }
@@ -174,6 +188,18 @@ extension Redesign {
                 app.attempt(closing: false) { try app.store.updateAccount(r) { $0[keyPath: key] = value } }
                     .map { app.toast = Toast(message: $0, isError: true) }
             })
+        }
+
+        /// Optional: an empty field clears it, too few digits leave it as it was
+        private func saveNumber() {
+            guard let r = app.record(account.id), !app.hidesAccountNames else { return }
+            let typed = number.trimmingCharacters(in: .whitespaces)
+            let normal = AccountNumber.normalized(typed)
+            guard typed.isEmpty || normal != nil, normal != r.accountNumber else { return }
+            app.attempt(normal == nil ? "Last digits removed." : "Last digits saved.", closing: false) {
+                try app.store.setAccountNumber(account.id, typed: normal)
+            }
+            .map { app.toast = Toast(message: $0, isError: true) }
         }
 
         private func rename() {
@@ -331,11 +357,14 @@ extension Redesign {
     struct AddAccountForm: View {
         let startsWithLoan: Bool
         var startKind: AccountKind?
+        /// Digits from a bank message, when adding the account it named
+        var startNumber: String? = nil
         @Environment(AppModel.self) private var app
         @State private var kind: AccountKind = .bank
         @State private var name = ""
         @State private var balance = ""
         @State private var institution = ""
+        @State private var number = ""
         @State private var payment = ""
         @State private var rate = ""
         @State private var dueDay: Int?
@@ -374,9 +403,10 @@ extension Redesign {
                 AmountBox(label: kind.isLiability ? "Owed today in \(app.currency)" : kind == .lent ? (iOwe ? "You owe them, in \(app.currency)" : "They owe you, in \(app.currency)")
                           : "Current balance in \(app.currency)", text: $balance, identifier: kind.isLiability || startsWithLoan ? "loanOwed" : "openingBalance")
                 if kind != .cash && kind != .lent {
-                    Field(label: kind.isLiability ? "Bank or lender, with the last four digits (optional)" : "Bank, with the last four digits (optional)") {
-                        TextField("e.g. City Bank 4821", text: $institution)
+                    Field(label: kind.isLiability ? "Bank or lender (optional)" : "Bank (optional)") {
+                        TextField("e.g. City Bank", text: $institution)
                     }
+                    AccountNumberField(text: $number, accountId: nil)
                 }
                 if kind.isLiability {
                     Field(label: kind == .creditCard ? "You pay each month (optional)" : "Monthly instalment (optional)") {
@@ -403,11 +433,20 @@ extension Redesign {
             }
             .onAppear {
                 if startsWithLoan { kind = startKind ?? .loan; iOwe = true } else if let startKind { kind = startKind }
+                if let startNumber, number.isEmpty { number = startNumber }
                 fundingId = app.moneyAccounts.first { $0.id == app.store.settings.lastUsedAccountId }?.id ?? app.moneyAccounts.first?.id
             }
         }
 
         private var explanation: String {
+            let base = baseExplanation
+            // A debt remembered late: the money may be long spent, so nothing in the accounts moves
+            return kind.isLiability || kind == .lent
+                ? base + " Your accounts don't change, so you can add it even if the money is already spent."
+                : base
+        }
+
+        private var baseExplanation: String {
             switch kind {
             case .loan: "Not the original loan: what's left to pay. A loan is money you owe, never counted as cash. With a payment day, the payment joins your bills and is kept aside in safe to spend."
             case .creditCard: "The balance from your banking app or statement. Card spending counts as spending; paying the card is a transfer, not new spending."
@@ -425,6 +464,10 @@ extension Redesign {
             guard let owed = balance.isEmpty ? Money.zero(app.currency) : app.parse(balance), !owed.isNegative else {
                 problem = kind.isLiability || startsWithLoan ? "Enter what you owe, or 0." : "Enter the current balance, or 0."; return
             }
+            let typedNumber = number.trimmingCharacters(in: .whitespaces)
+            if !typedNumber.isEmpty && AccountNumber.normalized(typedNumber) == nil {
+                problem = "Enter at least the last \(AccountNumber.minimumDigits) digits of the number, or leave it empty."; return
+            }
             let monthly = payment.isEmpty ? nil : app.parse(payment)
             if !payment.isEmpty && monthly?.isPositive != true { problem = "Enter the monthly payment as a number."; return }
             guard let bps = DebtTerms.rateBps(from: rate.isEmpty ? "0" : rate) else {
@@ -435,12 +478,49 @@ extension Redesign {
                                   : kind == .lent ? "Added to People." : "Account added.") {
                 let r = try app.store.addAccount(name: title, kind: kind, balance: kind == .lent && iOwe ? owed.negated : owed, openingDate: Date(),
                                                  institution: institution.isEmpty ? nil : institution)
+                if let digits = AccountNumber.normalized(typedNumber), kind != .cash, kind != .lent {
+                    try app.store.setAccountNumber(r.id, typed: digits)
+                }
                 if kind == .loan, categoryId != nil { try app.store.setLoanCategory(categoryId, for: r.id) }
                 if kind.isLiability, let monthly {
                     try app.store.saveDebtTerms(DebtTerms(annualRateBps: bps, monthlyPayment: monthly, dueDay: dueDay),
                                                 for: r.id, paidFrom: dueDay == nil ? nil : fundingId)
                 }
             }
+        }
+    }
+
+    /// The account's own number, always optional. Banks' messages show a few of its digits, so the
+    /// app can tell which account they're about. Warns when it can't be told from another account's.
+    struct AccountNumberField: View {
+        @Binding var text: String
+        let accountId: UUID?
+        @Environment(AppModel.self) private var app
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Field(label: "Last digits (optional)") {
+                    TextField("e.g. 4521", text: $text)
+                        .keyboardType(.numbersAndPunctuation)
+                        .textContentType(.none)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .accessibilityIdentifier("accountNumber")
+                }
+                Redesign.footnote(note)
+            }
+        }
+
+        private var note: String {
+            let typed = text.trimmingCharacters(in: .whitespaces)
+            if !typed.isEmpty, AccountNumber.normalized(typed) == nil {
+                return "Enter at least the last \(AccountNumber.minimumDigits) digits."
+            }
+            if !typed.isEmpty, let other = app.store.accountNumberClashes(typed, for: accountId).first {
+                let ending = String((AccountNumber.normalized(typed) ?? typed).suffix(AccountNumber.minimumDigits))
+                return "Your other account \(app.accountLabel(other.id)) also ends in \(ending). Add more digits, as many as your bank's messages show, so the app can tell them apart."
+            }
+            return "As many digits as your bank's messages show. Helps match messages and statements to this account. Stays on this phone."
         }
     }
 
@@ -880,6 +960,8 @@ extension Redesign {
         @State private var hasDueDate = false
         @State private var dueDate = Date()
         @State private var problem: String?
+        /// Lent long ago, or borrowed and already spent: no account in the app changes
+        @State private var outside = false
 
         private var chosen: LedgerAccountRecord? { person ?? app.record(personId) }
         /// Who can be picked: anyone for new money, only those who owe for a repayment
@@ -910,7 +992,17 @@ extension Redesign {
                 AmountBox(label: "Amount in \(app.currency)", text: $amount,
                           owed: [.repaid, .payBack, .forgive].contains(action) ? owed?.decimal : nil, identifier: "lentAmount")
                 if action != .forgive {
-                    AccountChoice(label: action.isOut ? "From" : "Into", selection: $accountId, accounts: accounts)
+                    Toggle(isOn: $outside.animation(.snappy)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Not through my accounts").rdText(.detail)
+                            Text(outsideHint).rdText(.caption).foregroundStyle(Theme.muted)
+                        }
+                    }
+                    .tint(Theme.primary)
+                    .accessibilityIdentifier("lentOutside")
+                    if !outside {
+                        AccountChoice(label: action.isOut ? "From" : "Into", selection: $accountId, accounts: accounts)
+                    }
                 }
                 Field(label: "Date") { DatePicker("", selection: $date, in: ...Date(), displayedComponents: .date).labelsHidden() }
                 if action == .lend || action == .borrow {
@@ -934,8 +1026,22 @@ extension Redesign {
             }
         }
 
+        private var outsideHint: String {
+            switch action {
+            case .lend: "Lent a while back, from money you don't track here"
+            case .borrow: "The money is already spent, or never reached your accounts"
+            case .repaid: "They paid you in cash you've spent, or into an account you don't track"
+            default: "Paid from money you don't track here"
+            }
+        }
+
         private var footnote: String {
             let who = chosen.map { app.accountLabel($0.id) } ?? "they"
+            if outside && action != .forgive {
+                return action == .lend || action == .payBack
+                    ? "Only changes what \(who) owes. Your account balances stay as they are. Pick the date it happened."
+                    : "Only changes what's owed. Your account balances stay as they are. Pick the date it happened."
+            }
             switch action {
             case .lend: return "Moves money from your account to what \(who) owes you. It isn't spending, and it's left out of safe to spend until it's paid back."
             case .repaid: return "Moves what they paid back into your account. It isn't income."
@@ -952,6 +1058,15 @@ extension Redesign {
             problem = app.attempt("Saved.") {
                 let p = try chosen ?? app.store.lentAccount(named: name)
                 switch action {
+                case _ where outside && action != .forgive:  // a where on several patterns would only cover the last
+                    let name = p.name
+                    let (delta, memo): (Money, String) = switch action {
+                    case .lend: (value, "Lent to \(name), not from an account")
+                    case .payBack: (value, "Paid \(name) back, not from an account")
+                    case .repaid: (value.negated, "Paid back by \(name), not into an account")
+                    default: (value.negated, "Borrowed from \(name), not into an account")
+                    }
+                    try app.store.changeOwed(delta, person: p.id, date: date, memo: memo)
                 case .lend, .payBack, .repaid, .borrow:
                     guard let accountId else { throw StoreError.invalid("Choose the account.") }
                     switch action {

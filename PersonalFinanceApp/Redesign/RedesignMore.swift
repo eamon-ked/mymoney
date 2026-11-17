@@ -689,30 +689,50 @@ extension Redesign {
         var body: some View {
             let s = app.snapshot
             let all = s.accountRecords.filter { $0.kind.isCategory && !$0.isSystem }
+            Redesign.footnote("Turn off the categories you don't use. They leave your budget and the add screen, and their plan goes back to \"not planned\". What you spent in them stays in your history.")
+                .padding(.bottom, 16)
             section("Spending", all.filter { $0.kind == .expense && !$0.archived })
             section("Income", all.filter { $0.kind == .income && !$0.archived })
-            let archived = all.filter(\.archived)
-            if !archived.isEmpty { section("Archived", archived) }
+            let off = all.filter(\.archived)
+            if !off.isEmpty { section("Turned off", off) }
             Button("New category") { app.open(.newCategory) }.buttonStyle(PrimaryButtonStyle()).padding(.top, 8)
+        }
+
+        private func inUse(_ c: LedgerAccountRecord) -> Binding<Bool> {
+            Binding(get: { !c.archived }, set: { on in
+                withAnimation(.snappy) {
+                    app.attempt(on ? "\(c.name) is back on." : "\(c.name) turned off.", closing: false) {
+                        try app.store.setCategoryInUse(c.id, on)
+                    }.map { app.toast = Toast(message: $0, isError: true) }
+                }
+            })
         }
 
         @ViewBuilder private func section(_ title: String, _ items: [LedgerAccountRecord]) -> some View {
             Redesign.overline(title)
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { i, c in
-                    Button { app.open(.editCategory(c.id)) } label: {
-                        HStack(spacing: 12) {
-                            IconBox(AppModel.look(c), small: true)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(c.name).rdText(.cardTitle)
-                                if c.kind == .expense { Text(c.group.isEmpty ? "Other" : c.group).rdText(.caption).foregroundStyle(Theme.muted) }
+                    HStack(spacing: 12) {
+                        Button { app.open(.editCategory(c.id)) } label: {
+                            HStack(spacing: 12) {
+                                IconBox(AppModel.look(c), small: true)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(c.name).rdText(.cardTitle).foregroundStyle(c.archived ? Theme.muted : Theme.foreground)
+                                    if c.kind == .expense { Text(c.group.isEmpty ? "Other" : c.group).rdText(.caption).foregroundStyle(Theme.muted) }
+                                }
+                                Spacer()
                             }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(Theme.muted)
+                            .padding(.vertical, 10).contentShape(Rectangle())
                         }
-                        .padding(.vertical, 10).contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        // One tap turns a category off or back on, without opening it. The app's own
+                        // categories (money sent to people, loan payments) are always on.
+                        if c.systemRole == nil {
+                        Toggle("", isOn: inUse(c)).labelsHidden().tint(Theme.primary)
+                            .accessibilityLabel("Use \(c.name)")
+                            .accessibilityIdentifier("categoryOn-\(c.name)")
+                        }
                     }
-                    .buttonStyle(.plain)
                     if i < items.count - 1 { Redesign.hairline }
                 }
                 if items.isEmpty { Redesign.footnote("None yet.").padding(.vertical, 12) }

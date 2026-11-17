@@ -30,6 +30,8 @@ extension Redesign {
         @State private var frequency: Frequency = .monthly(every: 1)
         @State private var paysBill = false
         @State private var problem: String?
+        /// A transfer of more than the account holds, waiting for the person to say it's right
+        @State private var short: (holds: Money, after: Money)?
         @State private var saving = false
         @State private var loaded = false
         @State private var categoryTouched = false
@@ -167,6 +169,15 @@ extension Redesign {
                 }
             }
             .onAppear(perform: load)
+            .alert("More than \(app.accountLabel(accountId)) has", isPresented: Binding(get: { short != nil }, set: { if !$0 { short = nil } })) {
+                Button("Move it anyway") { short = nil; submit(allowingShort: true) }
+                    .accessibilityIdentifier("moveAnyway")
+                Button("Cancel", role: .cancel) { short = nil }
+            } message: {
+                if let short {
+                    Text(private: "The app shows \(app.money(short.holds)) in \(app.accountLabel(accountId)), so this would leave \(app.money(short.after)). If money came in that the app didn't hear about, move it anyway, or record that money first.")
+                }
+            }
         }
 
         // MARK: Describe it
@@ -494,7 +505,9 @@ extension Redesign {
 
         // MARK: Saving
 
-        private func submit() {
+        private func submit() { submit(allowingShort: false) }
+
+        private func submit(allowingShort: Bool) {
             problem = nil
             var form = EntryForm(kind: addKind, amount: money, accountId: accountId, toAccountId: toAccountId, categoryId: categoryId,
                                  memo: memo, notes: kind == .adjustment ? "" : notes, date: date, reason: reason,
@@ -518,6 +531,9 @@ extension Redesign {
                 }
                 form.parts = split
                 form.categoryId = split.first?.categoryId
+            }
+            if !allowingShort, let shortfall = form.shortfall(in: app.snapshot, replacing: editing?.id) {
+                short = shortfall; return
             }
             saving = true
             problem = app.save(form, replacing: editing?.id)
@@ -695,10 +711,53 @@ extension Redesign {
                     Label("Looks right", systemImage: "checkmark.circle")
                 }
                 .buttonStyle(QuietButtonStyle())
-                linkOffer(record)
+                if unknownNumber(record) != nil { accountAnswer(record) } else { linkOffer(record) }
             }
             .rdPanel()
             .padding(.top, 16)
+        }
+
+        /// The account or card digits a bank message showed, when nobody has said whose they are yet
+        private func unknownNumber(_ record: EntryRecord) -> (hint: String, label: String, isAccount: Bool)? {
+            guard let hint = record.cardHint, app.store.linkedAccount(forCard: hint) == nil else { return nil }
+            let isAccount = hint.hasPrefix("account ")
+            if isAccount {
+                let digits = String(hint.dropFirst(8))
+                guard app.store.accountMatching(digits: digits) == nil else { return nil }
+                return (hint, "••\(digits)", true)
+            }
+            guard record.reviewReason?.contains(hint) == true else { return nil }
+            return (hint, hint.count == 4 && hint.allSatisfy(\.isNumber) ? "Card ••\(hint)" : hint, false)
+        }
+
+        /// "••810001 is:" and the person's accounts: one tap says whose it is, for this and later messages
+        @ViewBuilder private func accountAnswer(_ record: EntryRecord) -> some View {
+            if let number = unknownNumber(record) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(number.isAccount ? "\(number.label) is:" : "\(number.label) is on:").rdText(.detailStrong)
+                        .padding(.top, 4)
+                    ForEach(number.isAccount ? app.moneyAccounts : app.accounts.filter { $0.kind.holdsMoney || $0.kind == .creditCard }) { account in
+                        Button { answer(record, number: number, account: account.id) } label: {
+                            Text(app.accountLabel(account.id)).frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .accessibilityIdentifier("numberIs-\(app.accountLabel(account.id))")
+                    }
+                    if number.isAccount {
+                        Button("Add an account…") {
+                            app.open(.newAccount(loan: false, number: String(number.hint.dropFirst(8))))
+                        }
+                        .rdText(.detail).foregroundStyle(Theme.primary).frame(minHeight: 44)
+                        .accessibilityIdentifier("numberIsNew")
+                    }
+                }
+            }
+        }
+
+        private func answer(_ record: EntryRecord, number: (hint: String, label: String, isAccount: Bool), account: UUID) {
+            problem = app.attempt("Done. \(number.label) is \(app.accountLabel(account)), for this and later messages.") {
+                try app.store.linkCard(number.hint, to: account)
+            }
         }
 
         /// The bank messages that made or joined this entry: what each said, and a way to make a joined one
@@ -745,7 +804,7 @@ extension Redesign {
         @ViewBuilder private func linkOffer(_ record: EntryRecord) -> some View {
             let account = record.lines.compactMap { app.record($0.accountId) }.first { $0.kind.isBalanceSheet && $0.kind != .lent }
             if let hint = record.cardHint, let account, app.store.linkedAccount(forCard: hint) != account.id {
-                let card = hint.count == 4 && hint.allSatisfy(\.isNumber) ? "card ending \(hint)"
+                let card = hint.count == 4 && hint.allSatisfy(\.isNumber) ? "card ••\(hint)"
                     : hint.hasPrefix("account ") ? "account ••\(hint.dropFirst(8))" : hint
                 Button {
                     problem = app.attempt("Done. \(card.prefix(1).uppercased() + card.dropFirst()) will go to \(app.accountLabel(account.id)).") {

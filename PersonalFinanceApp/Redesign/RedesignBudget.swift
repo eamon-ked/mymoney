@@ -233,9 +233,9 @@ extension Redesign {
                 Problem(text: problem)
                 Button(editing == nil ? "Add category" : "Save", action: save).buttonStyle(PrimaryButtonStyle())
                 if let editing {
-                    Button(editing.archived ? "Restore category" : "Archive category") {
-                        problem = app.attempt(editing.archived ? "Category restored." : "Category archived.") {
-                            try app.store.updateAccount(editing) { $0.archived.toggle() }
+                    Button(editing.archived ? "Turn category back on" : "Turn category off") {
+                        problem = app.attempt(editing.archived ? "Category is back on." : "Category turned off. What you spent in it stays in your history.") {
+                            try app.store.setCategoryInUse(editing.id, editing.archived)
                         }
                     }
                     .buttonStyle(QuietButtonStyle())

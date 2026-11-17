@@ -616,8 +616,22 @@ final class LedgerStore {
         for record in fetch(EntryRecord.self, #Predicate { $0.cardHint == hint && $0.date >= since })
         where record.status == .posted && record.sourceRaw != nil {
             let id = record.lines.contains(where: { $0.accountId == accountId }) ? record.id : moveGuessed(record, to: accountId)
-            if let id { _ = pairOwnTransfer(id) }
+            if let id {
+                settleAccountQuestion(id, digits: hint.filter(\.isNumber))
+                _ = pairOwnTransfer(id)
+            }
         }
+        try commit()
+    }
+
+    /// The person said whose these digits are: the entry's question about them is answered. Any other
+    /// question it has (a possible double payment) stays.
+    private func settleAccountQuestion(_ entryId: UUID, digits: String) {
+        guard let record = entryRecord(entryId), record.needsReview, !digits.isEmpty,
+              record.reviewReason?.contains(digits) == true else { return }
+        record.needsReview = false
+        record.reviewReason = nil
+        record.updatedAt = now()
     }
 
     /// An unchecked automatic entry in a guessed account goes to the account the person just said its number is
@@ -646,20 +660,55 @@ final class LedgerStore {
         if let linked = linkedAccount(forCard: Self.accountLinkKey(digits)) { return linked }
         let own = fetch(LedgerAccountRecord.self).filter { $0.kind.isBalanceSheet && $0.kind != .lent && !$0.archived }
         func trailingDigits(_ text: String) -> String { String(text.reversed().prefix { $0.isNumber }.reversed()) }
-        // A saved account number is the surest; it decides before any name ending in the same digits
-        let numbered = own.filter { account in
-            guard let number = account.accountNumber?.filter(\.isNumber), !number.isEmpty else { return false }
-            return number.hasSuffix(digits)
+        // A saved account number is the surest; it decides before any name ending in the same digits.
+        // Every digit both show is compared, and two that could both fit mean asking, never a guess.
+        let numbered = own.compactMap { a in a.accountNumber.flatMap(AccountNumber.normalized).map { (id: a.id, number: $0) } }
+        let fits = numbered.filter { AccountNumber.agrees($0.number, digits) }
+        if fits.count == 1 { return fits[0].id }
+        guard fits.isEmpty else { return nil }
+        // "Account …0001" made from an imported statement, or digits typed with the bank's name ("City Bank 4821"),
+        // when the account has no number of its own that says otherwise
+        let unnumbered = own.filter { $0.accountNumber.flatMap(AccountNumber.normalized) == nil }
+        let named = unnumbered.compactMap { a -> (id: UUID, number: String)? in
+            let tail = trailingDigits(a.name)
+            if tail.count >= AccountNumber.minimumDigits { return (a.id, tail) }
+            return a.institution.map(trailingDigits).flatMap(AccountNumber.normalized).map { (a.id, $0) }
         }
-        if numbered.count == 1 { return numbered[0].id }
-        guard numbered.isEmpty else { return nil }
-        // "Account …0001" made from an imported statement, when the alert shows at least those digits
-        // and the account has no number of its own that says otherwise
-        let named = own.filter { account in
-            let tail = trailingDigits(account.name)
-            return account.accountNumber?.isEmpty != false && tail.count >= 4 && digits.hasSuffix(tail)
+        let guesses = named.filter { AccountNumber.agrees($0.number, digits) }
+        return guesses.count == 1 ? guesses[0].id : nil
+    }
+
+    /// The person's own account number for an account, typed or read from a statement; nil clears it
+    func setAccountNumber(_ accountId: UUID, typed text: String?) throws {
+        guard let record = account(accountId) else { throw StoreError.notFound }
+        let number = text.flatMap(AccountNumber.normalized)
+        guard number != record.accountNumber else { return }
+        record.accountNumber = number
+        record.updatedAt = now()
+        try commit()
+        guard let number else { return }
+        // Recent automatic entries whose digits now point here move to it, and halves of a move join up
+        let since = now().addingTimeInterval(-3 * 86_400)
+        for entry in fetch(EntryRecord.self, #Predicate { $0.date >= since })
+        where entry.status == .posted && entry.sourceRaw != nil && entry.needsReview {
+            guard let hint = entry.cardHint, hint.hasPrefix("account "),
+                  AccountNumber.agrees(number, String(hint.dropFirst(8))),
+                  accountMatching(digits: String(hint.dropFirst(8))) == accountId else { continue }
+            let id = entry.lines.contains(where: { $0.accountId == accountId }) ? entry.id : moveGuessed(entry, to: accountId)
+            if let id {
+                settleAccountQuestion(id, digits: String(hint.dropFirst(8)))
+                _ = pairOwnTransfer(id)
+            }
         }
-        return named.count == 1 ? named[0].id : nil
+        try commit()
+    }
+
+    /// Other accounts whose numbers can't be told apart from this one
+    func accountNumberClashes(_ text: String, for accountId: UUID?) -> [LedgerAccountRecord] {
+        let others = fetch(LedgerAccountRecord.self).filter { $0.id != accountId && !$0.archived && $0.kind.isBalanceSheet }
+        let numbered = others.compactMap { a in a.accountNumber.flatMap(AccountNumber.normalized).map { (id: a.id, number: $0) } }
+        let ids = Set(AccountNumber.clashes(text, with: numbered))
+        return others.filter { ids.contains($0.id) }
     }
 
     func linkAccount(digits: String, to accountId: UUID) throws {
@@ -693,7 +742,8 @@ final class LedgerStore {
 
     /// Marks everything up to the statement date reconciled. If the ledger and
     /// statement differ, an adjustment is posted only with a reason.
-    func reconcile(accountId: UUID, statementDate: Date, statementBalance: Money, reason: String?) throws {
+    func reconcile(accountId: UUID, statementDate: Date, statementBalance: Money, reason: String?,
+                   leavingOut: Set<UUID> = []) throws {
         guard let account = account(accountId) else { throw StoreError.notFound }
         let check = Reconciler.check(ledger: snapshot.ledger, accountId: accountId, statementDate: statementDate,
                                      statementBalance: statementBalance)
@@ -705,7 +755,8 @@ final class LedgerStore {
                 }
             } catch { throw StoreError.from(error) }
         }
-        let ids = Set(check.unreconciled.map(\.id))
+        // Entries the statement doesn't show yet stay open, to be checked against the next one
+        let ids = Set(check.unreconciled.map(\.id)).subtracting(leavingOut)
         for record in fetch(EntryRecord.self) where ids.contains(record.id) {
             // Only this account's side: the other side of a transfer waits for its own statement
             if record.reconciledInIds.isEmpty, record.cleared == .reconciled {
@@ -727,6 +778,22 @@ final class LedgerStore {
     }
 
     // MARK: - Budget
+
+    /// Turns a category on or off. Off, it leaves the budget and the add screen, and its plan from this month on
+    /// goes back to "not planned"; what was spent in it stays in the history. On, it comes back with no plan.
+    func setCategoryInUse(_ categoryId: UUID, _ inUse: Bool) throws {
+        guard let category = account(categoryId), category.kind.isCategory, !category.isSystem else { throw StoreError.notFound }
+        guard category.systemRole == nil else { throw StoreError.invalid("The app uses \(category.name) itself, so it stays on.") }
+        guard category.archived == inUse else { return }
+        try inOneSave {
+            if !inUse {
+                let thisMonth = snapshot.monthKey
+                let months = Set(fetch(AllocationRecord.self).filter { $0.categoryId == categoryId && $0.month >= thisMonth }.map(\.month))
+                for month in months { try setAllocation(.zero(category.currency), categoryId: categoryId, month: month) }
+            }
+            try updateAccount(category) { $0.archived = !inUse }
+        }
+    }
 
     /// Sets a category's plan for a month by recording the change from the current amount
     func setAllocation(_ amount: Money, categoryId: UUID, month: String) throws {
@@ -1520,10 +1587,7 @@ final class LedgerStore {
 
     /// Remembers the bank's number for an account, read from its statement
     func setAccountNumber(_ accountId: UUID, _ number: String) throws {
-        guard let record = account(accountId) else { throw StoreError.notFound }
-        record.accountNumber = number
-        record.updatedAt = now()
-        try commit()
+        try setAccountNumber(accountId, typed: number)
     }
 
     /// A statement reaching back before the balance an account was added with: that balance already
@@ -1721,6 +1785,25 @@ final class LedgerStore {
         do {
             return try post(EntryFactory.transfer(amount, from: from.info, to: person.info, date: date,
                                                   memo: memo.isEmpty ? "Lent to \(person.name)" : memo))
+        } catch { throw StoreError.from(error) }
+    }
+
+    /// Money owed to or by someone that never went through an account in the app: lent long ago, or borrowed
+    /// and already spent. Only what's owed changes; every account balance stays as it is.
+    /// `delta` is the change in what they owe you: positive when you lent or paid them back, negative when
+    /// you borrowed or they paid you back.
+    @discardableResult
+    func changeOwed(_ delta: Money, person personId: UUID, date: Date, memo: String) throws -> UUID {
+        guard let person = account(personId), person.kind == .lent else { throw StoreError.notFound }
+        guard !delta.isZero else { throw StoreError.invalid("Enter an amount greater than zero.") }
+        let owed = snapshot.balance(person.id)
+        // Paying back can't go past what's owed, either way
+        if delta.isNegative, owed.isPositive { try checkOwedBy(person, covers: delta.magnitude) }
+        if delta.isPositive, owed.isNegative, -owed < delta {
+            throw StoreError.invalid("You owe \(person.name) \(MoneyFormat.string(-owed)). Lower the amount.")
+        }
+        do {
+            return try post(EntryFactory.adjustment(delta, account: person.info, equity: equityAccount.info, date: date, reason: memo))
         } catch { throw StoreError.from(error) }
     }
 

@@ -62,3 +62,18 @@ public struct WidgetSummary: Codable, Equatable, Sendable {
         try JSONEncoder().encode(self).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }
+
+/// The places a widget or Control Center button can open in the app. The app reads them back with
+/// `AppRoute(url:)`; the scheme is registered in the app's Info.plist.
+public enum WidgetLink: String, CaseIterable, Sendable {
+    case breakdown, bills, addExpense = "add-expense"
+
+    public static let scheme = "nokaelmoney"
+
+    public var url: URL { URL(string: "\(Self.scheme)://\(rawValue)")! }
+
+    public init?(url: URL) {
+        guard url.scheme == Self.scheme, let host = url.host(), let link = WidgetLink(rawValue: host) else { return nil }
+        self = link
+    }
+}

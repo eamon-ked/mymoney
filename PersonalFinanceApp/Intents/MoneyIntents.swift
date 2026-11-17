@@ -16,7 +16,7 @@ struct LogSpendingIntent: AppIntent {
     /// Money is read out or changed: the phone has to be unlocked first, even when Siri is allowed on the Lock Screen
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
     static let title: LocalizedStringResource = "Log Spending"
-    static let description = IntentDescription("Say what you spent, like \"45 at Carrefour\" or \"got 500 from Sam\".")
+    static let description = IntentDescription("Say what you spent, like \"45 at the supermarket\" or \"got 500 from Sam\".")
 
     @Parameter(title: "What happened", requestValueDialog: "What did you spend?")
     var sentence: String
@@ -52,7 +52,7 @@ struct LogSpendingIntent: AppIntent {
         }
         #endif
         guard let capture else {
-            return .result(dialog: "I didn't catch an amount. Try \"45 at Carrefour\".")
+            return .result(dialog: "I didn't catch an amount. Try \"45 at the supermarket\".")
         }
         let outcome = try await CaptureService.record(capture, in: store, isPlus: services.plus.isPlus, choices: choices)
         WidgetSync.update(store.snapshot, isPlus: services.plus.isPlus)

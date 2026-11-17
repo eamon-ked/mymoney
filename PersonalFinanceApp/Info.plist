@@ -6,6 +6,17 @@
 	<array>
 		<string>nokael.refresh</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>nokael.PersonalFinanceApp</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>nokaelmoney</string>
+			</array>
+		</dict>
+	</array>
 	<key>INAlternativeAppNames</key>
 	<array>
 		<dict>

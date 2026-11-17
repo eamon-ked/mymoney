@@ -151,6 +151,7 @@ extension Redesign {
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("Which account is the statement for?").rdText(.heading)
+                        Redesign.footnote("The statement is read on this device and never uploaded.")
                         if !app.isPlus {
                             Redesign.footnote("Your first statement for each account is free. More imports come with Nokael Plus.")
                         }
@@ -240,18 +241,22 @@ extension Redesign {
             Text("Bring in \(app.hidesAccountNames ? "this account" : review.account?.name ?? "this account")'s statement").rdText(.heading)
             Text("Download a statement from your bank's website or app as a CSV or PDF file, then choose it here. Rows you've already recorded are recognised and left alone.")
                 .rdText(.body).foregroundStyle(Theme.muted)
+            Label("Read on this device. Your statement is never uploaded, and the app never signs in to your bank.", systemImage: "lock")
+                .rdText(.detail).foregroundStyle(Theme.muted)
+                .accessibilityIdentifier("statementStaysHere")
             if let reading = review.reading {
                 HStack(spacing: 10) {
                     ProgressView()
                     Text(reading).rdText(.detail).foregroundStyle(Theme.muted)
                 }
             } else if review.needsPassword {
-                Field(label: "\(review.fileName) has a password") {
+                Field(label: "\(review.fileName) is locked") {
                     SecureField("Password", text: $password)
                         .textContentType(.password).submitLabel(.go)
                         .onSubmit(unlock)
                         .accessibilityIdentifier("statementPassword")
                 }
+                Redesign.footnote("Enter the file's own password, the one your bank gave for opening statements. It's used once to open the file on this device and isn't saved. This is never your bank login.")
                 Problem(text: review.error)
                 Button("Open", action: unlock).buttonStyle(PrimaryButtonStyle()).disabled(password.isEmpty)
                 Button("Choose another file") { choosingFile = true }.rdText(.label).foregroundStyle(Theme.primary)
@@ -260,7 +265,7 @@ extension Redesign {
                 Button("Choose file") { choosingFile = true }.buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("chooseStatement")
                 Problem(text: review.error)
             }
-            Redesign.explainer("The app works out which column is which from what's in them, in any language. If it picks the wrong ones, you can choose them. The file stays on this iPhone.")
+            Redesign.explainer("The app works out which column is which from what's in them, in any language. If it picks the wrong ones, you can choose them. The file stays on this device.")
         }
 
         private func unlock() {
@@ -289,6 +294,10 @@ extension Redesign {
         }
 
         @ViewBuilder private var rows: some View {
+            if let mismatch = review.numberMismatch {
+                Label { Text(private: mismatch) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.amber) }
+                    .rdText(.detail).rdPanel()
+            }
             DetailCard {
                 DetailRow(label: "File", value: review.fileName)
                 Redesign.hairline
@@ -404,8 +413,57 @@ extension Redesign {
             }
         }
 
+        /// One entry the statement doesn't show, as a short line, signed the way the statement would show it
+        private func gapLine(_ id: UUID) -> String? {
+            guard let t = app.transaction(id), let effect = review.effect(of: id) else { return nil }
+            return "\(app.day(t.date)) · \(app.name(of: t)) · \(signed(effect))"
+        }
+
+        /// "+AED 69.00" or "−AED 20.00": which way the money went, always spelled out
+        private func signed(_ amount: Money) -> String {
+            amount.isZero ? app.money(amount) : "\(amount.isNegative ? "−" : "+")\(app.money(amount.magnitude))"
+        }
+
+        /// Entries the statement doesn't show: not posted yet, and ones worth a look
+        @ViewBuilder private var gapsPanel: some View {
+            if let gaps = review.gaps {
+                let waiting = gaps.waiting.compactMap { id in gapLine(id).map { (id, $0) } }
+                let missing = gaps.missing.compactMap { id in gapLine(id).map { (id, $0) } }
+                if !missing.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Not on this statement").rdText(.detailStrong)
+                        Redesign.footnote("These are in the app for the statement's dates, but the statement doesn't show them. If one is the same money saved twice, delete it.")
+                        ForEach(missing, id: \.0) { id, line in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(private: line).rdText(.detail)
+                                HStack(spacing: 12) {
+                                    Button("Keep") { review.keep(id) }.buttonStyle(QuietButtonStyle())
+                                        .accessibilityIdentifier("keepGap")
+                                    Button { review.delete(id) } label: { Text("Delete").foregroundStyle(Theme.destructive) }
+                                        .buttonStyle(QuietButtonStyle())
+                                        .accessibilityIdentifier("deleteGap")
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .rdPanel()
+                }
+                if !waiting.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Not on the statement yet").rdText(.detailStrong)
+                        Redesign.footnote("Card payments take a few days to post, and the last day may have more since the statement was made. They're left out of the check below.")
+                        ForEach(waiting, id: \.0) { _, line in Text(private: line).rdText(.detail) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .rdPanel()
+                }
+            }
+        }
+
         /// The statement's closing balance against the app's on the same day, with a way to match them
         @ViewBuilder private var balanceCheck: some View {
+            gapsPanel
             if let check = review.closingCheck, let day = review.balances?.lastDay {
                 VStack(alignment: .leading, spacing: 8) {
                     if check.matches {
@@ -414,11 +472,21 @@ extension Redesign {
                         } icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.primary) }
                         .rdText(.detail)
                     } else {
-                        Text(private: "Your statement ends at \(app.money(check.statement)) on \(app.day(day)). The app has \(app.money(check.calculated)).")
+                        Text(private: "Your statement ends at \(app.money(check.statement)) on \(app.day(day)). For the same entries, the app has \(app.money(check.calculated)).")
                             .rdText(.detail)
+                        if review.gaps?.missing.isEmpty == false {
+                            Redesign.footnote("Check the entries above first: they may explain the difference.")
+                        }
+                        Redesign.footnote(check.difference.isNegative
+                            ? "Using the statement's balance takes \(app.money(check.difference.magnitude)) off this account."
+                            : "Using the statement's balance adds \(app.money(check.difference)) to this account.")
                         Button("Use the statement's balance") { review.matchStatement() }
                             .rdText(.label).foregroundStyle(Theme.primary)
                             .accessibilityIdentifier("matchStatement")
+                    }
+                    // The account page shows today's balance, which also counts what the statement doesn't have yet
+                    if review.balanceToday != check.calculated {
+                        Redesign.footnote("The account shows \(app.money(review.balanceToday)) today, because it also counts entries that aren't on this statement yet.")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

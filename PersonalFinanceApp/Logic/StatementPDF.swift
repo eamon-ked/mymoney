@@ -38,6 +38,14 @@ enum StatementPDF {
 
     /// Rows and cells from every page, the column names once at the top.
     /// `progress` is told the page being read and how many there are.
+    /// The words above the table on the first page ("Account Number: …"), which the table itself leaves out.
+    /// Plain page text only: never the word-by-word reading that some fonts break.
+    static func heading(from data: Data, password: String?) -> String? {
+        guard let document = PDFDocument(data: data) else { return nil }
+        if document.isLocked { guard let password, document.unlock(withPassword: password) else { return nil } }
+        return document.page(at: 0)?.string
+    }
+
     @MainActor
     static func grid(from data: Data, password: String?, progress: (Int, Int) -> Void = { _, _ in }) async throws -> [[String]] {
         guard let document = PDFDocument(data: data) else { throw Problem.unreadable }

@@ -5,7 +5,7 @@
 //  The main journeys, driven through the real interface: setup on a fresh
 //  in-memory store, then each money-changing flow on the demo household,
 //  checking the numbers afterwards.
-//  Demo: Emirates NBD Current 10,791 · Wio Savings 27,000 · car loan 36,500 at 4.99%, 1,850 a month ·
+//  Demo: Everyday Current 10,791 · Savings 27,000 · car loan 36,500 at 4.99%, 1,850 a month ·
 //  personal loan 11,165 · "Japan trip" goal 6,000 of 15,000 · Rent 6,500 due in 3 days
 //
 
@@ -378,12 +378,78 @@ final class JourneyUITests: XCTestCase {
         app.buttons["globalAdd"].tap()
         app.buttons["Transfer Money"].tap()
         type("1000", into: "amountField")
-        choose("Wio Savings", in: "To account")
+        choose("Savings", in: "To account")
         tapScrolling(app.buttons["saveEntry"], "Save")
         waitUntilGone(app.textFields["amountField"])
         tab("Accounts")
         expect("AED 9,791", "Current drops by 1,000")
         expect("AED 28,000", "Savings rises by 1,000")
+    }
+
+    /// An account number is optional; two that end alike are pointed out so the person can add digits
+    @MainActor
+    func testAccountNumberIsOptionalAndClashesAreShown() {
+        launch(["-demoData", "-plus", "-tab", "accounts"])
+        for (name, number) in [("Spending pot", "5550 1234 640001"), ("Rainy day", "0001")] {
+            app.buttons["globalAdd"].tap()
+            XCTAssertTrue(app.buttons["Add Account"].waitForExistence(timeout: 3))
+            app.buttons["Add Account"].tap()
+            type(name, into: "accountName")
+            let field = app.textFields["accountNumber"]
+            for _ in 0..<4 where !field.isHittable { app.swipeUp() }
+            type(number, into: "accountNumber")
+            if number == "0001" {
+                expect("also ends in 0001", "Two numbers ending alike are pointed out")
+            }
+            tapScrolling(app.buttons["addAccount"], "Add account")
+            sleep(1)
+        }
+        // Without a number it still saves: the field is optional
+        app.buttons["globalAdd"].tap()
+        app.buttons["Add Account"].tap()
+        type("No number", into: "accountName")
+        tapScrolling(app.buttons["addAccount"], "Add account")
+        expect("No number", "An account saves without a number")
+    }
+
+    /// A category is turned off from Budget in two taps, and comes back the same way
+    @MainActor
+    func testACategoryIsTurnedOffFromBudget() {
+        launch(["-demoData", "-plus", "-tab", "budget"])
+        // The link sits at the top of Budget: tap it where it is, without scrolling it away
+        let choose = app.buttons["Choose categories"]
+        XCTAssertTrue(choose.waitForExistence(timeout: 5), "Budget links to the categories")
+        sleep(1)
+        choose.tap()
+        let shopping = app.switches["categoryOn-Shopping"]
+        if !shopping.waitForExistence(timeout: 3) { choose.tap() }
+        XCTAssertTrue(shopping.waitForExistence(timeout: 5), "The categories page opens with switches")
+        for _ in 0..<4 where !shopping.isHittable { app.swipeUp() }
+        XCTAssertEqual(shopping.value as? String, "1")
+        shopping.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).tap()
+        expect("TURNED OFF", "A turned-off category moves to its own list")
+        XCTAssertEqual(app.switches["categoryOn-Shopping"].value as? String, "0")
+    }
+
+    /// The widget's links (WidgetLink in NokaelCore) and the Control Center button open their places
+    @MainActor
+    func testWidgetLinksOpenTheirPlaces() {
+        launch(["-demoData", "-plus"])
+        app.open(URL(string: "nokaelmoney://breakdown")!)
+        XCTAssertTrue(app.navigationBars["Safe to spend"].waitForExistence(timeout: 5), "The amount opens the breakdown")
+        app.terminate()
+
+        launch(["-demoData", "-plus"])
+        app.open(URL(string: "nokaelmoney://bills")!)
+        sleep(2)
+        // + offers Add Bill only on the Bills tab
+        app.buttons["globalAdd"].tap()
+        XCTAssertTrue(app.buttons["Add Bill"].waitForExistence(timeout: 3), "The bills open Bills")
+        app.terminate()
+
+        launch(["-demoData", "-plus"])
+        app.open(URL(string: "nokaelmoney://add-expense")!)
+        XCTAssertTrue(app.navigationBars["Add expense"].waitForExistence(timeout: 5), "+ opens Add Expense")
     }
 
     @MainActor

@@ -560,10 +560,25 @@ extension Redesign {
         @State private var range = "30 days"
         @State private var chosen = Date()
 
+        /// Only the lengths that show something new: once one reaches back past the first entry, longer ones look the same
+        private func ranges(_ s: FinanceSnapshot) -> [String] {
+            let all = [("30 days", 30), ("90 days", 90), ("1 year", 365)]
+            guard let first = s.firstRecordedDay else { return ["30 days"] }
+            let recorded = (s.calendar.dateComponents([.day], from: first, to: s.today).day ?? 0) + 1
+            var shown: [String] = []
+            for (name, days) in all {
+                shown.append(name)
+                if days >= recorded { break }
+            }
+            return shown
+        }
+
         var body: some View {
             let s = app.snapshot
-            let length = ["30 days": 30, "90 days": 90, "1 year": 365][range] ?? 30
-            let history = s.netWorthHistory(days: length)
+            let options = ranges(s)
+            let current = options.contains(range) ? range : options[0]
+            let length = ["30 days": 30, "90 days": 90, "1 year": 365][current] ?? 30
+            let shown = s.netWorthHistory(days: length).filter { point in s.firstRecordedDay.map { point.day >= $0 } ?? false }
             let day = min(s.calendar.startOfDay(for: chosen), s.today)
             let worth = s.netWorth(on: day)
             let known = s.firstRecordedDay.map { day >= $0 } ?? false
@@ -571,20 +586,33 @@ extension Redesign {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Today").rdText(.detail).foregroundStyle(Theme.muted)
                 app.amount(s.netWorth.total.decimal).rdText(.balance)
+                if let start = shown.first, let end = shown.last, start.day < end.day {
+                    let change = end.total - start.total
+                    Text(private: change.isZero ? "No change since \(app.day(start.day))"
+                         : "\(change.isNegative ? "Down" : "Up") \(app.money(change.magnitude)) since \(app.day(start.day))")
+                        .rdText(.detail).foregroundStyle(change.isNegative ? Theme.destructive : Theme.primary)
+                }
                 Text("What you own less what you owe, at the end of the day.").rdText(.caption).foregroundStyle(Theme.muted)
             }
             .padding(.vertical, 24).padding(.horizontal, 4)
 
-            Pills(options: ["30 days", "90 days", "1 year"], selection: $range)
+            if options.count > 1 {
+                Pills(options: options, selection: Binding(get: { current }, set: { range = $0 }))
+            }
             Group {
-                if app.hidesCharts || app.hidesAmounts { ChartHidden(height: 180) } else { chart(history, from: s.firstRecordedDay) }
+                if app.hidesCharts || app.hidesAmounts { ChartHidden(height: 180) }
+                else if shown.count < 2 { Redesign.footnote("The line starts once there are two days of entries.").frame(height: 60) }
+                else { chart(shown, chosen: day) }
             }
             .rdPanel(padding: 14)
             .padding(.top, 16)
+            if shown.count >= 2 && !(app.hidesCharts || app.hidesAmounts) {
+                Redesign.footnote("Touch the line to see any day.").padding(.top, 8).padding(.horizontal, 4)
+            }
 
             DatePicker("On", selection: $chosen, in: ...Date(), displayedComponents: .date)
                 .rdText(.body)
-                .padding(.top, 24).padding(.bottom, 8).padding(.horizontal, 4)
+                .padding(.top, 16).padding(.bottom, 8).padding(.horizontal, 4)
             DetailCard {
                 DetailRow(label: "You owned", value: app.money(worth.assets))
                 DetailRow(label: "You owed", value: app.money(worth.liabilities))
@@ -596,19 +624,61 @@ extension Redesign {
                 .padding(.top, 12)
         }
 
-        private func chart(_ history: [(day: Date, total: Money)], from first: Date?) -> some View {
-            let shown = history.filter { point in first.map { point.day >= $0 } ?? false }
+        private func value(_ m: Money) -> Double { (m.decimal as NSDecimalNumber).doubleValue }
+
+        private func chart(_ shown: [(day: Date, total: Money)], chosen: Date) -> some View {
+            // Fitted to the line, not to zero, so a change of a few hundred doesn't look flat
+            let values = shown.map { value($0.total) }
+            let low = values.min() ?? 0, high = values.max() ?? 0
+            let pad = max((high - low) * 0.15, max(abs(high), 1) * 0.01)
+            let picked = shown.first { app.snapshot.calendar.isDate($0.day, inSameDayAs: chosen) }
             return Chart {
                 ForEach(shown, id: \.day) { point in
-                    LineMark(x: .value("Day", point.day), y: .value("Net worth", (point.total.decimal as NSDecimalNumber).doubleValue))
+                    AreaMark(x: .value("Day", point.day), yStart: .value("Low", low - pad), yEnd: .value("Net worth", value(point.total)))
+                        .interpolationMethod(.stepEnd)
+                        .foregroundStyle(LinearGradient(colors: [Theme.primary.opacity(0.18), Theme.primary.opacity(0.02)],
+                                                        startPoint: .top, endPoint: .bottom))
+                    LineMark(x: .value("Day", point.day), y: .value("Net worth", value(point.total)))
                         .interpolationMethod(.stepEnd)
                         .foregroundStyle(Theme.primary)
                 }
+                if let picked {
+                    RuleMark(x: .value("Chosen", picked.day)).foregroundStyle(Theme.muted.opacity(0.5))
+                    PointMark(x: .value("Chosen", picked.day), y: .value("Net worth", value(picked.total)))
+                        .foregroundStyle(Theme.primary).symbolSize(60)
+                }
             }
-            .chartYAxis { AxisMarks { AxisValueLabel().font(.caption).foregroundStyle(Theme.muted) } }
-            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { AxisValueLabel(format: .dateTime.day().month(.abbreviated)).font(.caption).foregroundStyle(Theme.muted) } }
+            .chartYScale(domain: (low - pad)...(high + pad))
+            .chartYAxis { AxisMarks(values: .automatic(desiredCount: 3)) { AxisValueLabel().font(.caption).foregroundStyle(Theme.muted) } }
+            // First and last day only, centred under their points, so no label is cut short
+            .chartXAxis {
+                AxisMarks(values: [shown.first!.day, shown.last!.day]) { mark in
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated),
+                                   anchor: mark.index == 0 ? .topLeading : .topTrailing)
+                        .font(.caption).foregroundStyle(Theme.muted)
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                            guard let frame = proxy.plotFrame else { return }
+                            let x = drag.location.x - geo[frame].origin.x
+                            if let date: Date = proxy.value(atX: x) {
+                                let day = app.snapshot.calendar.startOfDay(for: date)
+                                let first = shown.first!.day, last = shown.last!.day
+                                let clamped = min(max(day, first), last)
+                                if !app.snapshot.calendar.isDate(clamped, inSameDayAs: self.chosen) {
+                                    self.chosen = clamped
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                }
+                            }
+                        })
+                }
+            }
             .frame(height: 180)
             .accessibilityLabel("Net worth over the past days")
+            .accessibilityValue(picked.map { "\(app.fullDay($0.day)): \(app.money($0.total))" } ?? "")
         }
     }
 }

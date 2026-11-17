@@ -76,7 +76,7 @@ extension Redesign {
             case .lend(_, .borrow): "Borrow more"
             case .lend(_, .payBack): "Pay them back"
             case .importStatement: "Import a statement"
-            case .newAccount(let loan, _): loan ? "Add what you owe" : "Add account"
+            case .newAccount(let loan, _, _): loan ? "Add what you owe" : "Add account"
             case .newCash: "Add cash"
             case .newCategory: "New budget category"
             case .editCategory: "Edit category"
@@ -122,7 +122,7 @@ extension Redesign {
             case .finishLoan(let id): if let a = app.record(id) { FinishLoanForm(loan: a) }
             case .lend(let id, let action): LendForm(person: app.record(id), action: action)
             case .importStatement(let id): ImportStatement(accountId: id)
-            case .newAccount(let loan, let kind): AddAccountForm(startsWithLoan: loan, startKind: kind)
+            case .newAccount(let loan, let kind, let number): AddAccountForm(startsWithLoan: loan, startKind: kind, startNumber: number)
             case .newCash: AddAccountForm(startsWithLoan: false, startKind: .cash)
             case .newCategory: CategoryForm(editing: nil)
             case .editCategory(let id): CategoryForm(editing: app.record(id))

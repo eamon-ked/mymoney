@@ -1,4 +1,4 @@
-# App Store Metadata — Nokael Money 2.1.3
+# App Store Metadata — Nokael Money 2.1.4
 
 Each field sits in its own fenced block so it can be copied into App Store Connect as is. Character counts are checked by script (see the end of this file).
 
@@ -17,7 +17,7 @@ Personal Finance & Net Worth
 ## Keywords (100 max)
 
 ```
-expense,tracker,manager,cashflow,forecast,payday,debt,loan,bills,reconcile,ai,local,goals,planner
+expense,tracker,manager,cashflow,forecast,payday,debt,split,bills,reconcile,ai,local,goals,planner
 ```
 
 ## Promotional Text (170 max)
@@ -64,7 +64,8 @@ BACKUPS AND EXPORT
 Save a full backup file wherever you like, such as the Files app or iCloud Drive, and restore it any time. Export your transactions as a CSV file.
 
 PRIVATE BY DESIGN
-• Your data stays on your iPhone. There is no account and no server.
+• Nokael Money is not a bank and isn't linked to one. It never signs in to your bank and never moves money.
+• Your data stays on your iPhone. There is no account and no server. Statements you import are read on your iPhone and never uploaded.
 • We don't collect, see or share anything. No ads and no tracking.
 • Lock the app with Face ID and hide amounts with Privacy Mode.
 
@@ -101,6 +102,29 @@ A whole new Nokael Money: redesigned from top to bottom to be calmer and easier 
 • More for free: export, 3 savings goals, 3 months of reports and your first statement import for each account
 ```
 
+## App Review Information › Notes (4,000 max)
+
+```
+Hello App Review,
+
+We're writing about guideline 5.1.1(ix), raised on version 2.1.3 (submission f6a4e1d3-cb59-40c3-8522-bb53aa22a96f). We believe it was applied in error, and we ask that it be removed for this app.
+
+THE FLAGGED SCREENS
+The two screenshots attached to that rejection show the statement import. On that screen the user picks a statement file they have already downloaded from their own bank. The app reads the file on the device to list the user's own spending. The import does not connect to any bank, does not ask for bank login details, does not use any account-aggregation service and does not send the file anywhere. If a PDF statement is password-protected, the user types the file's own password; it is used once on the device to open the file and is not stored. Functionally this is the same as opening a PDF or CSV in any document or spreadsheet app. In 2.1.4 the screen says this in plain words.
+
+WHY 5.1.1(ix) DOES NOT APPLY
+- The app does not provide a service in a regulated field. It is not a bank and does not act for one. It does not hold, move, pay, lend or invest money, and it gives no financial advice. "Transfers" and "money lent" are entries the user records for their own tracking.
+- The app does not collect sensitive user information. We have no servers and no user accounts, and nothing the user enters or imports leaves their device. The privacy label is "Data Not Collected". The app never asks for an account number; an optional "Last digits" field only helps match the user's own bank messages on the device.
+- The guideline exists so that apps which deliver regulated services, or which collect sensitive data, come from a legal entity responsible for them. This app does neither. It is a personal budgeting tool working on files the user already has.
+
+Personal budgeting apps with statement or CSV import, published by individual developers, are available on the App Store today. We ask that this app be reviewed on the same basis.
+
+We're happy to provide a walkthrough of the import flow or answer any questions.
+
+Thank you,
+Eamon Kendrick
+```
+
 ## URLs
 
 - Support URL: `https://github.com/Eamonked/money_issue_report/issues`
@@ -117,15 +141,16 @@ A whole new Nokael Money: redesigned from top to bottom to be calmer and easier 
 
 ## Character counts
 
-Checked with a script on 2 November 2026:
+Checked with a script on 17 November 2026:
 
 | Field | Characters | Limit | Status |
 | --- | --- | --- | --- |
 | Name | 30 | 30 | OK |
 | Subtitle | 28 | 30 | OK |
-| Keywords | 97 | 100 | OK |
+| Keywords | 98 | 100 | OK |
 | Promotional Text | 152 | 170 | OK |
-| Description | 3382 | 4000 | OK |
+| Description | 3556 | 4000 | OK |
+| App Review notes | 2087 | 4000 | OK |
 | What's New in Version 2.1.3 | 878 | 4000 | OK |
 
 Keywords: 14 terms, no spaces.

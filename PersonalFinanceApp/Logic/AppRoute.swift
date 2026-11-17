@@ -3,7 +3,7 @@
 //  Nokael Money
 //
 //  The places the app can be asked to open from outside a screen: a tapped
-//  notification, and anything else later. Whatever the screens look like,
+//  notification, a widget or a Control Center button. Whatever the screens look like,
 //  the root view handles every AppRoute and clears `AppRouter.shared.pending`.
 //
 
@@ -23,6 +23,18 @@ enum AppRoute: Equatable {
     case payday, forecast, backup, importStatement
     /// Money with a person
     case person(UUID)
+    /// How safe to spend is worked out, from the widget's amount
+    case breakdown
+
+    /// A link from a widget or Control Center button
+    init?(url: URL) {
+        switch WidgetLink(url: url) {
+        case .breakdown: self = .breakdown
+        case .bills: self = .bills
+        case .addExpense: self = .addExpense(memo: "")
+        case nil: return nil
+        }
+    }
 }
 
 /// Holds a route until the screens are ready for it, so a reminder tapped

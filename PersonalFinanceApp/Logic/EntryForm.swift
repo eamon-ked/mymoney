@@ -75,6 +75,23 @@ struct EntryForm {
         return amount
     }
 
+    /// A transfer that moves more than the account holds on that day: what it holds, and what it would be left at.
+    /// nil when there's enough, or for a credit card or loan, which can go further into debt. It's a warning only:
+    /// money may have arrived that the app never heard about.
+    /// `replacing` is the entry being edited, which is left out of what the account holds.
+    @MainActor func shortfall(in snapshot: FinanceSnapshot, replacing originalId: UUID? = nil) -> (holds: Money, after: Money)? {
+        guard kind == .transfer, let amount, amount.isPositive,
+              let account = snapshot.account(accountId), account.kind.holdsMoney, account.currency == amount.currency else { return nil }
+        var holds = snapshot.ledger.balance(of: account.id, asOf: snapshot.endOfDay(date))
+        if let original = snapshot.entryRecords.first(where: { $0.id == originalId }), original.status == .posted {
+            for line in original.lines where line.accountId == account.id {
+                holds = holds - Money(minorUnits: line.minorUnits, currency: line.currency)
+            }
+        }
+        let after = holds - amount
+        return after.isNegative ? (holds, after) : nil
+    }
+
     /// The double-entry lines this form records
     /// `replacing` is the entry being edited: a balance correction is worked out as if it weren't there,
     /// since the edit takes its place

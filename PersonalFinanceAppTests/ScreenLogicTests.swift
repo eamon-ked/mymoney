@@ -220,6 +220,14 @@ struct ScreenLogicTests {
         #expect(other.contains("CAD") && other.contains("+") && other.contains(AppGuide.bankShortcutName))
     }
 
+    @Test func widgetLinksOpenTheirPlaces() {
+        #expect(AppRoute(url: WidgetLink.breakdown.url) == .breakdown)
+        #expect(AppRoute(url: WidgetLink.bills.url) == .bills)
+        #expect(AppRoute(url: WidgetLink.addExpense.url) == .addExpense(memo: ""))
+        #expect(AppRoute(url: URL(string: "nokaelmoney://somewhere")!) == nil)
+        #expect(AppRoute(url: URL(string: "https://example.com/bills")!) == nil)
+    }
+
     @Test func helpShowsTheBankStepsForThePersonsCurrency() throws {
         let topic = try #require(AppGuide.topics.first { $0.id == "bankMessages" })
         let canada = AppGuide.personalised(topic, bankKeyword: "CAD").steps

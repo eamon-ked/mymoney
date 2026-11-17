@@ -785,6 +785,15 @@ extension Redesign {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                if app.record(category.id)?.systemRole == nil {
+                Button("Turn off \(category.name)", systemImage: "eye.slash") {
+                    app.attempt("\(category.name) turned off. Turn it back on from Choose categories.", closing: false) {
+                        try app.store.setCategoryInUse(category.id, false)
+                    }.map { app.toast = Toast(message: $0, isError: true) }
+                }
+                }
+            }
         }
 
         private var status: String {
@@ -867,7 +876,7 @@ extension Redesign {
                     attention(all)
 
                     Rectangle().fill(Theme.border.opacity(0.7)).frame(height: 1).padding(.bottom, 16)
-                    SectionHeading(title: "Spending by Category", action: "New category") { app.open(.newCategory) }
+                    SectionHeading(title: "Spending by Category", action: "Choose categories") { app.show(.categories) }
                     Pills(options: BudgetFilter.allCases.map(\.title), selection: $filter).padding(.bottom, 8)
                     let filtered = shown(all)
                     let groups = Dictionary(grouping: filtered, by: \.group)

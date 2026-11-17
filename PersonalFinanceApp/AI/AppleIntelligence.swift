@@ -9,6 +9,7 @@
 
 import Foundation
 import SwiftUI
+import StoreKit
 import NokaelCore
 #if canImport(FoundationModels)
 import FoundationModels
@@ -28,6 +29,7 @@ enum AppleIntelligence {
         case downloading        // model still getting ready
         case unsupportedDevice
         case needsNewerIOS
+        case notInRegion        // not offered in this App Store country or region
 
         var explanation: String {
             switch self {
@@ -37,12 +39,43 @@ enum AppleIntelligence {
             case .downloading: return "Apple Intelligence is still downloading. Try again in a little while."
             case .unsupportedDevice: return "This iPhone doesn't support Apple Intelligence."
             case .needsNewerIOS: return "Needs iOS 26 or later."
+            case .notInRegion: return "Not offered in your App Store country or region. Everything else works the same."
             }
+        }
+    }
+
+    // MARK: - Where it's offered
+
+    /// App Store countries where the AI features are left out (ISO 3166-1 alpha-3, as StoreKit gives them).
+    /// China mainland requires a government filing for AI-generated content, so the app doesn't offer it there.
+    static let regionsWithoutAI: Set<String> = ["CHN"]
+    static let storefrontKey = "appStoreCountry"
+
+    /// Whether the AI features are offered for this App Store country. Until StoreKit has said which
+    /// storefront this is, the iPhone's own region decides, so China mainland is never offered them by mistake.
+    static func offered(storefront: String?, deviceRegion: String?) -> Bool {
+        if let storefront { return !regionsWithoutAI.contains(storefront.uppercased()) }
+        return deviceRegion?.uppercased() != "CN"
+    }
+
+    static var offeredHere: Bool {
+        offered(storefront: UserDefaults.standard.string(forKey: storefrontKey),
+                deviceRegion: Locale.current.region?.identifier)
+    }
+
+    /// Remembers this Apple account's App Store country, now and whenever it changes
+    static func watchStorefront() async {
+        if let country = await Storefront.current?.countryCode {
+            UserDefaults.standard.set(country, forKey: storefrontKey)
+        }
+        for await storefront in Storefront.updates {
+            UserDefaults.standard.set(storefront.countryCode, forKey: storefrontKey)
         }
     }
 
     /// Whether the model itself can run, ignoring the in-app switch
     static var systemStatus: Status {
+        guard offeredHere else { return .notInRegion }
         #if canImport(FoundationModels)
         if #available(iOS 26.0, *) {
             switch SystemLanguageModel.default.availability {

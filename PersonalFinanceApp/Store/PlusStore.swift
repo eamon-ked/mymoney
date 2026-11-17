@@ -18,6 +18,11 @@ enum PlusFeature: String, Identifiable, CaseIterable {
     case autoCapture, statementImport, appleIntelligence, moneyAhead, reports, payoffPlanner, goals, widget
     var id: String { rawValue }
 
+    /// What the paywall lists here: the money assistant only where the AI features are offered
+    static var offered: [PlusFeature] {
+        AppleIntelligence.offeredHere ? allCases : allCases.filter { $0 != .appleIntelligence }
+    }
+
     var title: String {
         switch self {
         case .autoCapture: return "Automatic transaction capture"
@@ -87,6 +92,7 @@ final class PlusStore {
     private(set) var owned: Set<String> = []
     private(set) var loadFailed = false
     private var updates: Task<Void, Never>?
+    private var storefront: Task<Void, Never>?
     private let forced: Bool
 
     /// Until when Plus was last confirmed. A Shortcut can run while the phone is locked or offline, when
@@ -124,6 +130,8 @@ final class PlusStore {
             }
         }
         Task { await refresh(); await loadProducts() }
+        // The AI features are left out in some App Store countries
+        storefront = Task.detached { await AppleIntelligence.watchStorefront() }
     }
 
     func loadProducts() async {

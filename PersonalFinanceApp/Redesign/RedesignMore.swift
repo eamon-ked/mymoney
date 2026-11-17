@@ -767,7 +767,7 @@ extension Redesign {
 
         private var features: some View {
             VStack(alignment: .leading, spacing: 14) {
-                ForEach(PlusFeature.allCases) { f in
+                ForEach(PlusFeature.offered) { f in
                     HStack(alignment: .top, spacing: 12) {
                         IconBox(symbol: f.symbol, small: true)
                         VStack(alignment: .leading, spacing: 3) {
@@ -795,8 +795,8 @@ extension Redesign {
 
         private var plus: PlusStore { app.plus }
         private var features: [PlusFeature] {
-            guard let feature else { return PlusFeature.allCases }
-            return [feature] + PlusFeature.allCases.filter { $0 != feature }
+            guard let feature else { return PlusFeature.offered }
+            return [feature] + PlusFeature.offered.filter { $0 != feature }
         }
 
         var body: some View {

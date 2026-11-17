@@ -52,4 +52,19 @@ struct AIEngineTests {
         #expect(digest.search(text: nil, category: "Groceries", days: nil) != "No matching transactions.")
         #expect(digest.budget(monthKey: nil).contains("Groceries"))
     }
+
+    @Test("China mainland's App Store has no AI features; other countries do")
+    func leftOutInChinaMainland() {
+        #expect(!AppleIntelligence.offered(storefront: "CHN", deviceRegion: "AE"))
+        #expect(AppleIntelligence.offered(storefront: "USA", deviceRegion: "CN"))
+        #expect(AppleIntelligence.offered(storefront: "HKG", deviceRegion: "HK"))
+        #expect(AppleIntelligence.offered(storefront: "ARE", deviceRegion: nil))
+    }
+
+    @Test("Before StoreKit says which App Store, the iPhone's region decides")
+    func fallsBackToDeviceRegion() {
+        #expect(!AppleIntelligence.offered(storefront: nil, deviceRegion: "CN"))
+        #expect(AppleIntelligence.offered(storefront: nil, deviceRegion: "GB"))
+        #expect(AppleIntelligence.offered(storefront: nil, deviceRegion: nil))
+    }
 }

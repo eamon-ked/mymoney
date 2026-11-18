@@ -4,68 +4,139 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Privacy Policy - Nokael Money</title>
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#F7F6F1">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23354E3C'/%3E%3Cpath d='M8 23C8 13 14 8 25 7c0 11-5 17-13 17-1.500 0-3-.3-4-1Zm0 2c2-6 6-10 11-12' fill='none' stroke='%23F7F6F1' stroke-width='1.800' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <style>
+        :root {
+            --green: #354E3C;
+            --green-deep: #26382C;
+            --cream: #F7F6F1;
+            --ink: #26382C;
+            --muted: #586A5D;
+            --line: #DEDFD4;
+            --tint: #ECEEE3;
+            --serif: ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
+            --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        html { -webkit-text-size-adjust: 100%; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
             margin: 0;
-            padding: 20px;
-            background-color: #f5f5f7;
-            color: #1d1d1f;
+            background: var(--cream);
+            color: var(--ink);
+            font-family: var(--sans);
+            font-size: 17px;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
         }
         .container {
-            max-width: 800px;
+            max-width: 720px;
             margin: 0 auto;
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 32px 24px calc(40px + env(safe-area-inset-bottom));
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            color: var(--green);
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .brand svg { width: 22px; height: 22px; }
+        h1, h2 {
+            color: var(--green);
+            font-family: var(--serif);
+            font-weight: 500;
         }
         h1 {
-            color: #007AFF;
-            border-bottom: 2px solid #007AFF;
-            padding-bottom: 10px;
+            margin: 12px 0 16px;
+            font-size: clamp(36px, 7vw, 50px);
+            line-height: 1.08;
+            letter-spacing: -.015em;
+            text-wrap: balance;
         }
         h2 {
-            color: #1d1d1f;
-            margin-top: 30px;
+            margin: 40px 0 8px;
+            font-size: 25px;
+            line-height: 1.25;
         }
-        .summary {
-            background: #f0f6ff;
-            border-left: 4px solid #007AFF;
-            padding: 12px 16px;
-            border-radius: 6px;
+        h3 {
+            margin: 24px 0 4px;
+            color: var(--green);
+            font-size: 17px;
+            font-weight: 600;
+        }
+        p, ul { margin: 0 0 14px; }
+        ul { padding-left: 22px; }
+        li { margin-bottom: 6px; }
+        a {
+            color: var(--green);
+            overflow-wrap: anywhere;
+            text-underline-offset: 3px;
+        }
+        a:focus-visible {
+            outline: 2px solid var(--green);
+            outline-offset: 3px;
+            border-radius: 4px;
         }
         .back-link {
-            display: inline-block;
-            background: #007AFF;
-            color: white;
+            display: table;
+            margin-top: 44px;
+            color: var(--muted);
+            font-size: 15px;
             text-decoration: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            margin-bottom: 20px;
         }
-        .back-link:hover {
-            background: #0056CC;
+        .back-link:hover { color: var(--green); text-decoration: underline; }
+        .summary {
+            padding: 16px 20px;
+            background: var(--tint);
+            border-radius: 12px;
         }
+        table {
+            width: 100%;
+            margin: 12px 0 16px;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px 12px 10px 0;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th { color: var(--green); font-size: 15px; font-weight: 600; }
+        .doc-link {
+            display: block;
+            margin: 12px 0;
+            padding: 15px 20px;
+            background: var(--green);
+            border-radius: 12px;
+            color: var(--cream);
+            font-weight: 500;
+            text-decoration: none;
+        }
+        .doc-link:hover { background: var(--green-deep); }
         .footer {
-            text-align: center;
-            margin-top: 40px;
-            color: #86868b;
-            font-size: 14px;
+            margin-top: 48px;
+            padding-top: 20px;
+            border-top: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 15px;
         }
-        @media (max-width: 600px) {
-            body { padding: 12px; }
-            .container { padding: 20px; }
-        }
+        .footer p { margin: 0 0 4px; }
     </style>
 </head>
 <body>
     <div class="container">
+        <a class="brand" href="https://money.nokael.com/">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 18.500C4 10 10 4.500 20.500 4c.5 10.500-4.500 16-11.500 16-1.600 0-3-.5-4-1.500Z"/><path d="M4 21c2-6 5.500-9.500 10.500-11.500"/></svg>
+            Nokael Money
+        </a>
         <a href="index.html" class="back-link">← Back to Legal Documents</a>
 
         <h1>Privacy Policy for Nokael Money</h1>
-        <p><strong>Last updated: 16 November 2026</strong></p>
+        <p><strong>Last updated: 18 November 2026</strong></p>
 
         <p>Nokael Money ("the App") is a budgeting app for iPhone made by Nokael ("we", "us"). This policy explains what happens to your information when you use the App.</p>
         <p class="summary"><strong>The short version:</strong> your data stays on your iPhone. We don't collect it, we can't see it, and we don't share it.</p>
@@ -80,7 +151,7 @@
 
         <h2>3. Backups and Exports</h2>
         <p>You can create a backup of your data as a JSON file, or export transactions as a CSV file. You choose where to save these files (for example, the Files app, iCloud Drive or another app). Once saved, those files are handled by the place you put them and by that provider's own privacy policy. We never receive them.</p>
-        <p>When you import a bank statement (CSV) or restore a backup, the file is read on your iPhone and is not sent anywhere.</p>
+        <p>When you import a bank statement (a CSV, PDF or text file) or restore a backup, the file is read on your iPhone and is not sent anywhere. If a PDF statement is password-protected, the password you type is used once to open the file on your iPhone. It is not saved or sent anywhere.</p>
 
         <h2>4. Apple Intelligence, Siri and Automatic Capture</h2>
         <p>Some features use Apple Intelligence through Apple's FoundationModels framework. These run on your device. Your data is not sent to us, and the App does not send it to any third-party AI service.</p>
@@ -115,7 +186,7 @@
         <p>If we change this policy, we will update the "Last updated" date above and post the new version at this address. Because we do not collect contact details, we cannot notify you directly.</p>
 
         <h2>13. Contact Us</h2>
-        <p>Questions about this policy? Email <a href="mailto:info@nokael.com">info@nokael.com</a>.</p>
+        <p>Questions about this policy? Email <a href="mailto:money@nokael.com">money@nokael.com</a>.</p>
 
         <div class="footer">
             <p>© 2026 Nokael. All rights reserved.</p>

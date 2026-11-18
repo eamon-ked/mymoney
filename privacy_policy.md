@@ -18,7 +18,7 @@ If you delete the App, its data is removed from your iPhone. We have no copy and
 
 You can create a backup of your data as a JSON file, or export transactions as a CSV file. You choose where to save these files (for example, the Files app, iCloud Drive or another app). Once saved, those files are handled by the place you put them and by that provider's own privacy policy. We never receive them.
 
-When you import a bank statement (CSV) or restore a backup, the file is read on your iPhone and is not sent anywhere.
+When you import a bank statement (a CSV, PDF or text file) or restore a backup, the file is read on your iPhone and is not sent anywhere. If a PDF statement is password-protected, the password you type is used once to open the file on your iPhone. It is not saved or sent anywhere.
 
 ## 4. Apple Intelligence, Siri and Automatic Capture
 
@@ -62,4 +62,4 @@ If we change this policy, we will update the "Last updated" date above and post 
 
 ## 13. Contact Us
 
-Questions about this policy? Email **info@nokael.com**.
+Questions about this policy? Email **money@nokael.com**.

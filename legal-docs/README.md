@@ -60,4 +60,4 @@ Before deploying, update the following:
 
 ## 📞 Support
 
-For questions about these legal documents, contact: info@nokael.com
+For questions about these legal documents, contact: money@nokael.com

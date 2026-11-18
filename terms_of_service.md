@@ -1,6 +1,6 @@
 # Terms of Use for Nokael Money
 
-**Last updated: 26 October 2026**
+**Last updated: 18 November 2026**
 
 ## 1. Acceptance of Terms
 
@@ -20,13 +20,13 @@ The App gives budgeting information only. It does **not** provide financial, tax
 
 The App is free to download. Some features need **Nokael Plus**, available as:
 
-| Plan | Price |
+| Plan | Billing |
 | --- | --- |
-| Monthly | AED 14.99 per month |
-| Yearly | AED 99.99 per year, with a 1-week free trial |
-| Lifetime | AED 249.99, one-time purchase |
+| Monthly | Renews every month |
+| Yearly | Renews every year, with a 1-week free trial |
+| Lifetime | One-time purchase |
 
-Prices are shown in UAE dirhams. Apple shows the price in your local currency before you buy, and prices may vary by country.
+Prices vary by country. Apple shows the price in your local currency before you buy.
 
 ### Subscriptions
 
@@ -80,4 +80,4 @@ If any part of these Terms cannot be enforced, the rest still applies.
 
 ## 13. Contact
 
-Questions about these Terms? Email **info@nokael.com**.
+Questions about these Terms? Email **money@nokael.com**.
